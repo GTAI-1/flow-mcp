@@ -618,7 +618,7 @@ $("#c_go").onclick = async () => {
     $("#c_out").innerHTML = `<video controls playsinline src="${media(out.output)}&t=${Date.now()}" style="width:100%;border-radius:12px;background:#000"></video>
       <p class="empty" style="margin-top:8px">${out.clips.length} clip(s) · ${out.duration.toFixed(1)}s${out.held_last_frame ? ` · last frame held ${out.held_last_frame}s for the narration` : ""}<br>${esc(out.output)}</p>`;
     loadGallery();
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { $("#c_out").innerHTML = `<p class="empty" style="color:var(--bad)">${esc(err.message)}</p>`; toast(err.message, true); }
   b.disabled = false; b.textContent = "Assemble film";
 };
 

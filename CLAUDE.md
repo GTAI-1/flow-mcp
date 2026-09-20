@@ -139,3 +139,5 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   free, any length, cleaned up through ffmpeg loudnorm; the .aiff intermediate is removed). localVoices() filters
   `say -v ?` down to en_* and drops the novelty voices. Premium macOS voices appear automatically once the user
   installs them in System Settings - Claude must not install them (system settings are the user's to change).
+- assemble's defaultClips now accepts scene-NN / clip-NN / edit-NN mp4s (never narration-*, never the output file);
+  if none match it falls back to every other mp4 oldest-first. Studio shows assemble errors inline in #c_out, not just a toast.

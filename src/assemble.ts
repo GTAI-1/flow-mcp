@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -37,14 +37,21 @@ async function probe(file: string): Promise<ClipInfo> {
   };
 }
 
-// Scene clips are scene-NN.mp4 or scene-NN-vK.mp4; with several variants the first one is used.
+// Clips are normally scene-NN.mp4, but a film can also be cut from clips pulled out of Flow (clip-NN) or restyled
+// ones (edit-NN). Narration takes and previously assembled films are never treated as footage.
 function defaultClips(dir: string): string[] {
-  const byScene = new Map<string, string>();
-  for (const f of readdirSync(dir).sort()) {
-    const scene = f.match(/^(scene-\d+)(-v\d+)?\.mp4$/)?.[1];
-    if (scene && !byScene.has(scene)) byScene.set(scene, join(dir, f));
+  const files = readdirSync(dir).filter((f) => /\.mp4$/i.test(f) && !/^narration-/i.test(f));
+  const numbered = new Map<string, string>();
+  for (const f of files.sort()) {
+    const key = f.match(/^((?:scene|clip|edit)-\d+)(-v\d+)?\.mp4$/i)?.[1];
+    if (key && !numbered.has(key)) numbered.set(key, join(dir, f));
   }
-  return [...byScene.values()];
+  if (numbered.size) return [...numbered.values()];
+  // Nothing follows the naming scheme: fall back to every other mp4, oldest first, so a hand-named clip still works.
+  return files
+    .map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs }))
+    .sort((a, b) => a.t - b.t)
+    .map((x) => join(dir, x.f));
 }
 
 // Pulls the spoken track out of a generated clip so Flow's voices can be used as narration.
@@ -79,8 +86,9 @@ export async function speakLocally(text: string, voice: string, target: string):
 
 // Joins the scene clips into one film, keeping their own sound and laying music / voiceover on top.
 export async function assemble(o: AssembleOptions): Promise<{ output: string; clips: string[]; duration: number; held_last_frame: number }> {
-  const clips = o.clips?.length ? o.clips : defaultClips(o.dir);
-  if (!clips.length) throw new Error(`No scene clips found in ${o.dir}. Pass clips explicitly or generate scenes first.`);
+  const out = join(o.dir, o.output_name.replace(/[^\w.-]+/g, "_").replace(/(\.mp4)?$/, ".mp4"));
+  const clips = (o.clips?.length ? o.clips : defaultClips(o.dir)).filter((c) => c !== out);
+  if (!clips.length) throw new Error(`No clips found in ${o.dir}. Generate or download a clip first, or pass clips explicitly.`);
   for (const f of [...clips, o.music, o.voiceover]) if (f && !existsSync(f)) throw new Error(`File not found: ${f}`);
 
   let infos = await Promise.all(clips.map(probe));
@@ -123,7 +131,7 @@ export async function assemble(o: AssembleOptions): Promise<{ output: string; cl
   }
   filters.push(mix.length > 1 ? `${mix.join("")}amix=inputs=${mix.length}:duration=first:dropout_transition=0:normalize=0[a]` : "[clipaudio]anull[a]");
 
-  const output = join(o.dir, o.output_name.replace(/[^\w.-]+/g, "_").replace(/(\.mp4)?$/, ".mp4"));
+  const output = out;
   args.push(
     "-filter_complex", filters.join(";"),
     "-map", "[v]", "-map", "[a]",
