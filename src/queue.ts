@@ -17,6 +17,7 @@ export interface SceneParams {
   chain_from?: string;
   edit_asset?: string;
   agent_scenes?: string[];
+  retries?: number;
   download_quality?: "original" | "upscaled";
   output_dir: string;
   file_stem: string;
@@ -27,6 +28,7 @@ export interface Job {
   status: JobStatus;
   params: SceneParams;
   files: string[];
+  attempts: number;
   credits?: number;
   progress?: string;
   note?: string;
@@ -56,6 +58,7 @@ export class JobQueue {
       status: "queued",
       params,
       files: [],
+      attempts: 0,
       createdAt: new Date().toISOString(),
     };
     this.jobs.set(job.id, job);
@@ -73,6 +76,18 @@ export class JobQueue {
 
   list(): Job[] {
     return [...this.jobs.values()];
+  }
+
+  // Puts a failed or cancelled job back in line with the same settings and file name.
+  retry(id: string): Job | undefined {
+    const job = this.jobs.get(id);
+    if (job && (job.status === "failed" || job.status === "cancelled")) {
+      job.status = "queued";
+      job.error = undefined;
+      job.finishedAt = undefined;
+      void this.work();
+    }
+    return job;
   }
 
   cancel(id: string): Job | undefined {
@@ -102,12 +117,16 @@ export class JobQueue {
         }
         if (job.status !== "queued") continue;
         job.status = "running";
+        job.attempts++;
         try {
           job.files = await this.runner(job);
           job.status = "done";
+          job.error = undefined;
         } catch (err) {
-          job.status = "failed";
           job.error = err instanceof Error ? err.message : String(err);
+          // Only failures Flow itself reports are retried automatically: a timeout may still have spent credits.
+          const retryable = /Flow reported a failed|agent finished without creating/i.test(job.error);
+          job.status = retryable && job.attempts <= (job.params.retries ?? 1) ? "queued" : "failed";
         }
         job.finishedAt = new Date().toISOString();
         this.lastFinished = Date.now();

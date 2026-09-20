@@ -31,6 +31,7 @@ const sceneSchema = z.object({
     .optional()
     .describe("Ingredient/reference media: absolute image paths, or 'asset:<title>' for media or characters already in the Flow project."),
   download_quality: z.enum(["original", "upscaled"]).optional().describe("'upscaled' fetches 1080p video / 2K image (free, slower). Default original."),
+  retries: z.number().int().min(0).max(3).default(1).describe("Automatic retries when Flow itself reports the generation failed."),
   technique: z.string().optional().describe("Id from flow_techniques (e.g. 'orbit-360'); its exact phrase is appended to the prompt. One per scene."),
   chain_previous: z
     .boolean()
@@ -43,13 +44,14 @@ export const shapes = {
   status: { detailed: z.boolean().default(true).describe("false skips the plan/credits readout, which briefly opens Flow's account panel.") },
   generate: {
     project: z.string().min(1).describe("Folder name for the downloaded clips, e.g. 'HotelPromo'."),
-    scenes: z.array(sceneSchema).min(1).max(30),
+    scenes: z.array(sceneSchema).min(1).max(100),
   },
   wait: {
     job_ids: z.array(z.string()).optional(),
     timeout_seconds: z.number().int().min(5).max(900).default(240),
   },
   cancel: { job_id: z.string() },
+  retry: { job_ids: z.array(z.string()).optional().describe("Jobs to re-queue. Default: every failed job.") },
   assets: { kind: z.enum(["image", "video"]).optional() },
   download: {
     project: z.string().min(1).describe("Local folder name under the output root."),
@@ -91,12 +93,13 @@ export const shapes = {
 
 type Args<K extends keyof typeof shapes> = z.infer<z.ZodObject<(typeof shapes)[K]>>;
 
-export const jobView = ({ id, status, params, files, credits, progress, note, error }: Job) => ({
+export const jobView = ({ id, status, params, files, attempts, credits, progress, note, error }: Job) => ({
   id,
   status,
   project: params.output_dir,
   scene: params.file_stem,
   prompt: params.prompt,
+  attempts,
   credits,
   progress,
   files,
@@ -110,6 +113,7 @@ export interface Core {
   generate(a: Args<"generate">): Promise<unknown>;
   wait(a: Args<"wait">): Promise<unknown>;
   cancel(a: Args<"cancel">): Promise<unknown>;
+  retry(a: Args<"retry">): Promise<unknown>;
   assets(a: Args<"assets">): Promise<unknown>;
   download(a: Args<"download">): Promise<unknown>;
   assemble(a: Args<"assemble">): Promise<unknown>;
@@ -186,6 +190,13 @@ export class LocalCore implements Core {
     const job = this.queue.cancel(job_id);
     if (!job) throw new Error(`No job with id ${job_id}. Use flow_status to list jobs.`);
     return jobView(job);
+  }
+
+  async retry({ job_ids }: Args<"retry">) {
+    const ids = job_ids ?? this.queue.list().filter((j) => j.status === "failed").map((j) => j.id);
+    const jobs = ids.map((id) => this.queue.retry(id)).filter((j): j is Job => Boolean(j));
+    if (!jobs.length) throw new Error("No failed jobs to retry.");
+    return { jobs: jobs.map(jobView) };
   }
 
   async assets({ kind }: Args<"assets">) {

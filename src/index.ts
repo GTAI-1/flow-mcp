@@ -71,6 +71,17 @@ server.registerTool(
 );
 
 server.registerTool(
+  "flow_retry",
+  {
+    title: "Retry failed Flow jobs",
+    description: "Put failed jobs back in the queue with the same settings and file names (default: all failed jobs). Scenes already retry once on their own when Flow reports a failure.",
+    inputSchema: shapes.retry,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  (args) => reply(core.retry(args)),
+);
+
+server.registerTool(
   "flow_assets",
   {
     title: "List project media",

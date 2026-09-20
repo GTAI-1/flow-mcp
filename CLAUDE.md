@@ -83,3 +83,7 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   Always/Never, image default aspect + x1–x4 + model, video defaults, `Save`). With confirm=Never a multi-scene prompt
   renders all images in parallel; a `Stop` button and status "Thinking…" show while it works, tiles show "NN% <enriched
   prompt>". New tiles end up newest-first, i.e. reverse scene order. runAgentBatch always restores confirm=Always and Agent off.
+- Retry: queue retries once automatically only when the error says Flow reported a failure (timeouts are not retried: they may
+  have spent credits); `flow_retry` / the Studio Retry button re-queue manually. A REAL failed tile has never been observed,
+  so the failure detection in waitForNewMedia (FAILURE_TEXT on tile text) and any agent-mode per-scene retry are unverified.
+  Capture the DOM of a genuine failed tile before building more on it. Caps: 100 scenes exact, 50 agent.

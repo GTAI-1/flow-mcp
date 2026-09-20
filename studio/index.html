@@ -134,8 +134,8 @@ input[type=range]{width:100%;accent-color:var(--tally);height:36px}
         <div class="card">
           <textarea id="script" style="min-height:190px" placeholder="Paste your whole script. One scene per paragraph, or numbered:&#10;&#10;1. A barista opens the cafe at dawn, slow push-in&#10;2. Close-up of espresso pouring, macro&#10;Scene 3: She hands the cup to a customer, warm smile"></textarea>
           <div class="bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
-            <button class="btn" id="splitReplace">Split into scenes</button>
-            <button class="btn ghost" id="splitAppend">Add to reel</button>
+            <button class="btn" id="splitReplace">Replace reel</button>
+            <button class="btn ghost" id="splitAppend">Append to reel</button>
           </div>
           <p class="empty" id="splitInfo" style="margin-top:12px"></p>
         </div>
@@ -326,8 +326,8 @@ const applyScript = (append) => () => {
   if (!parts.length) return toast("Paste a script first.", true);
   const made = parts.map((prompt) => ({ ...blankScene(), prompt }));
   const keep = append ? S.scenes.filter((x) => x.prompt.trim()) : [];
-  S.scenes = [...keep, ...made].slice(0, 30);
-  $("#splitInfo").textContent = `${parts.length} scene${parts.length === 1 ? "" : "s"} found${keep.length + made.length > 30 ? ", first 30 kept (one batch is capped at 30)" : ""}. Slate settings apply to all of them.`;
+  S.scenes = [...keep, ...made].slice(0, 100);
+  $("#splitInfo").textContent = `${parts.length} scene${parts.length === 1 ? "" : "s"} found${keep.length + made.length > 100 ? ", first 100 kept" : ""}. Slate settings apply to all of them.`;
   renderAll(); $("#scenes").scrollIntoView({ behavior: "smooth" });
 };
 $("#splitReplace").onclick = applyScript(false); $("#splitAppend").onclick = applyScript(true);
@@ -367,7 +367,7 @@ $("#dlLib").onclick = dl("original"); $("#dlLibHd").onclick = dl("upscaled");
 
 function scriptSub() {
   const s = S.slate, per = sceneCost(blankScene());
-  $("#scriptSub").textContent = s.type === "image" ? (s.engine === "agent" ? "up to 30 images · all at once · free" : "up to 30 images · one by one · free") : `one clip per scene · ${isOmni() ? "4–10 s" : "8 s"} each · ${per} credits per clip now`;
+  $("#scriptSub").textContent = s.type === "image" ? (s.engine === "agent" ? "up to 50 images · all at once · free" : "up to 100 images · one by one · free") : `one clip per scene · ${isOmni() ? "4–10 s" : "8 s"} each · ${per} credits per clip now`;
 }
 function estimate() {
   scriptSub();
@@ -384,6 +384,7 @@ $("#roll").onclick = async () => {
     const skipped = list.filter((x) => x.refs.length).length;
     if (skipped && !confirm(`${skipped} scene(s) have reference images, which the agent engine ignores. Continue anyway?`)) return;
     const texts = list.map((x) => { const t = TECH.find((k) => k.id === x.technique); return t ? `${x.prompt.trim().replace(/\.?$/, ".")} ${t.phrase}` : x.prompt.trim(); });
+    if (texts.length > 50) return toast("The agent engine takes up to 50 scenes per batch. Roll the first 50, then the rest.", true);
     try { await api("agent", { project: s.project.trim(), scenes: texts, aspect_ratio: s.aspect, download_quality: s.quality }); toast(`Handed ${texts.length} scenes to Flow's agent.`); poll(); } catch (err) { toast(err.message, true); }
     return;
   }
@@ -409,15 +410,16 @@ function renderStatus(st) {
   $("#hint").innerHTML = f.hint ? `<div class="hint">${esc(f.hint)}</div>` : "";
   $("#pacing").innerHTML = st.pacing ? `<div class="pacing">⏱ ${esc(st.pacing)}</div>` : "";
   const jobs = [...st.jobs].reverse();
-  const sig = JSON.stringify(jobs.map((j) => [j.id, j.status, j.progress, j.files.length, j.credits]));
+  const sig = JSON.stringify(jobs.map((j) => [j.id, j.status, j.progress, j.files.length, j.credits, j.attempts]));
   if (sig !== renderStatus.sig) { if (renderStatus.sig && LIVE) loadGallery(slateFolder()); renderStatus.sig = sig;
-    $("#jobs").innerHTML = jobs.map((j) => `<div class="job"><div class="top"><span class="name">${esc(j.project.split("/").pop())} · ${esc(j.scene)}</span><span class="badge ${j.status}">${j.status}${j.progress ? " " + esc(j.progress) : ""}</span>${j.credits !== undefined ? `<span class="badge">${j.credits} cr</span>` : ""}${j.status === "queued" ? `<button class="btn small ghost" data-cancel="${j.id}">Cancel</button>` : ""}</div>
+    $("#jobs").innerHTML = jobs.map((j) => `<div class="job"><div class="top"><span class="name">${esc(j.project.split("/").pop())} · ${esc(j.scene)}</span><span class="badge ${j.status}">${j.status}${j.progress ? " " + esc(j.progress) : ""}</span>${j.credits !== undefined ? `<span class="badge">${j.credits} cr</span>` : ""}${j.attempts > 1 ? `<span class="badge">try ${j.attempts}</span>` : ""}${j.status === "queued" ? `<button class="btn small ghost" data-cancel="${j.id}">Cancel</button>` : ""}${j.status === "failed" || j.status === "cancelled" ? `<button class="btn small" data-retry="${j.id}">Retry</button>` : ""}</div>
       ${j.status === "running" ? `<div class="meter"><i style="width:${parseInt(j.progress) || 4}%"></i></div>` : ""}
       <p>${esc(j.prompt)}</p>${j.note ? `<p style="color:var(--warn)">${esc(j.note)}</p>` : ""}${j.error ? `<p class="err">${esc(j.error)}</p>` : ""}
       ${j.files.map((p) => (/\.(mp4|webm|mov)$/i.test(p) ? `<video controls playsinline preload="metadata" src="${media(p)}"></video>` : `<img class="out" src="${media(p)}">`)).join("")}</div>`).join("") || `<p class="empty">Nothing queued. Build the reel and hit Roll.</p>`; }
   estimate(); return active;
 }
-$("#jobs").addEventListener("click", async (e) => { const c = e.target.closest("[data-cancel]"); if (c) { try { await api("cancel", { job_id: c.dataset.cancel }); poll(); } catch (err) { toast(err.message, true); } } });
+$("#jobs").addEventListener("click", async (e) => { const r = e.target.closest("[data-retry]"); if (r) { try { await api("retry", { job_ids: [r.dataset.retry] }); poll(); } catch (err) { toast(err.message, true); } return; }
+  const c = e.target.closest("[data-cancel]"); if (c) { try { await api("cancel", { job_id: c.dataset.cancel }); poll(); } catch (err) { toast(err.message, true); } } });
 
 let GAL = [];
 const slateFolder = () => S.slate.project.trim().replace(/[^\w.-]+/g, "_");
