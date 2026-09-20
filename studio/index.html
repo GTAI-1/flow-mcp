@@ -238,6 +238,7 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
             <div><label class="f">Voice</label><select id="n_voice"></select></div>
             <div id="n_durWrap"><label class="f">Take length (s)</label><div class="seg" data-seg="n_duration"></div></div>
           </div>
+          <div id="n_styleWrap"><label class="f">Delivery (optional)</label><input type="text" id="n_style" placeholder="slowly and warmly, like a documentary narrator"></div>
           <p class="empty" id="n_fit" style="margin-top:10px"></p>
           <div class="rowbtns"><button class="btn" id="n_go">Record take</button></div>
           <div id="n_out" style="margin-top:16px"></div>
@@ -339,12 +340,12 @@ const DEFAULTS = {
   tab: "cast",
   frames: { project: "MyFilm", aspect: "16:9", variants: 1, engine: "exact", scenes: [blank()] },
   shots: { project: "MyFilm", model: "Omni 1.1 Flash", aspect: "16:9", duration: 8, resolution: "720p", variants: 1, quality: "original", max: 25, scenes: [blank()] },
-  narrate: { project: "MyFilm", engine: "flow", voice: "Charon", macVoice: "Samantha", duration: 10, text: "" },
+  narrate: { project: "MyFilm", engine: "gemini", voice: "Charon", geminiVoice: "Charon", macVoice: "Samantha", duration: 10, text: "", style: "" },
   cut: { project: "MyFilm", music: null, voiceover: null, hold: true },
 };
 const S = Object.assign(structuredClone(DEFAULTS), JSON.parse(localStorage.getItem("flow-studio-v2") || "{}"));
 const save = () => localStorage.setItem("flow-studio-v2", JSON.stringify(S));
-let TECH = [], VOICES = { flow: [], mac: [] }, CAST = [], LIB = [], GAL = [], castImage = null, pickTarget = null, busy = false;
+let TECH = [], VOICES = { gemini: [], flow: [], mac: [] }, CAST = [], LIB = [], GAL = [], castImage = null, pickTarget = null, busy = false;
 
 /* ---------- tabs ---------- */
 function showTab(name) {
@@ -367,7 +368,7 @@ const SEGS = {
   s_quality: { get: () => S.shots.quality, set: (v) => (S.shots.quality = v), opts: ["original", "upscaled"], labels: { original: "720p", upscaled: "1080p" } },
   s_variants: { get: () => S.shots.variants, set: (v) => (S.shots.variants = +v), opts: [1, 2, 3, 4] },
   n_duration: { get: () => S.narrate.duration, set: (v) => (S.narrate.duration = +v), opts: [4, 6, 8, 10] },
-  n_engine: { get: () => S.narrate.engine, set: (v) => (S.narrate.engine = v), opts: ["flow", "mac"], labels: { flow: "Flow voice · credits", mac: "Mac voice · free" } },
+  n_engine: { get: () => S.narrate.engine, set: (v) => (S.narrate.engine = v), opts: ["gemini", "flow", "mac"], labels: { gemini: "Google voice · free", flow: "Flow voice · credits", mac: "Mac voice · free" } },
 };
 function renderSegs() {
   for (const [key, cfg] of Object.entries(SEGS)) {
@@ -549,37 +550,43 @@ document.addEventListener("click", (e) => {
 
 /* ---------- narrate ---------- */
 function renderNarrate() {
-  const mac = S.narrate.engine === "mac";
-  const list = mac ? VOICES.mac : VOICES.flow;
-  const picked = mac ? S.narrate.macVoice : S.narrate.voice;
+  const eng = S.narrate.engine, mac = eng === "mac", gem = eng === "gemini";
+  const list = mac ? VOICES.mac : gem ? VOICES.gemini ?? [] : VOICES.flow;
+  const picked = mac ? S.narrate.macVoice : gem ? S.narrate.geminiVoice : S.narrate.voice;
   $("#n_voice").innerHTML = list.map((v) => `<option value="${v.name}" ${v.name === picked ? "selected" : ""}>${v.name} — ${v.description}</option>`).join("") || `<option value="">No voices found</option>`;
-  $("#n_durWrap").style.display = mac ? "none" : "";
-  $("#n_engineNote").innerHTML = mac
-    ? `Spoken on this Mac — free, instant, any length. Quality depends on the installed voice: download a <b>Premium</b> English voice in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices and it appears here automatically. ${VOICES.mac.length} voice(s) available.`
-    : "Spoken by Flow. Best quality, but Flow only speaks inside a video, so a throwaway clip is generated and its audio kept — 4–7 credits per take, and the line must fit the take length.";
+  $("#n_durWrap").style.display = eng === "flow" ? "" : "none";
+  $("#n_styleWrap").style.display = gem ? "" : "none";
+  $("#n_engineNote").innerHTML = gem
+    ? (VOICES.gemini_ready
+        ? "Google's own text-to-speech — the same voices Flow uses, free on the AI Studio tier, any length, and no Flow credits."
+        : `<b>Needs a free key.</b> Get one at <b>aistudio.google.com → Get API key</b>, then run in your terminal:<br><code>printf '%s' 'YOUR_KEY' > ~/.flow-mcp/gemini-key &amp;&amp; chmod 600 ~/.flow-mcp/gemini-key</code><br>Same voices as Flow, free, no length limit.`)
+    : mac
+      ? `Spoken on this Mac — free, instant, any length. Quality depends on the installed voice: download a <b>Premium</b> English voice in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices and it appears here automatically. ${VOICES.mac.length} voice(s) available.`
+      : "Spoken by Flow. Flow only speaks inside a video, so a throwaway clip is generated and its audio kept — 4–7 credits per take, and the line must fit the take length.";
   const words = $("#n_text").value.trim().split(/\s+/).filter(Boolean).length;
   const secs = Math.ceil(words / 2.5);
-  $("#n_fit").textContent = !words ? "" : mac
+  $("#n_fit").textContent = !words ? "" : eng !== "flow"
     ? `${words} words ≈ ${secs}s of speech. No length limit.`
     : `${words} words ≈ ${secs}s of speech — take length is ${S.narrate.duration}s.${secs > S.narrate.duration - 1 ? " Too long: shorten the line or pick a longer take." : " Fits."}`;
 }
 $("#n_text").addEventListener("input", () => { S.narrate.text = $("#n_text").value; save(); renderNarrate(); });
-$("#n_voice").addEventListener("change", () => { const mac = S.narrate.engine === "mac"; S.narrate[mac ? "macVoice" : "voice"] = $("#n_voice").value; save(); });
+$("#n_voice").addEventListener("change", () => { const e = S.narrate.engine; S.narrate[e === "mac" ? "macVoice" : e === "gemini" ? "geminiVoice" : "voice"] = $("#n_voice").value; save(); });
+$("#n_style").addEventListener("input", () => { S.narrate.style = $("#n_style").value; save(); });
 $("#n_go").onclick = async () => {
   if (!guard()) return;
   const text = $("#n_text").value.trim(); if (!text) return toast("Write the line first.", true);
-  const mac = S.narrate.engine === "mac";
-  const voice = mac ? S.narrate.macVoice : S.narrate.voice;
-  if (!mac && !confirm(`Record this line in ${voice}? A ${S.narrate.duration}s take costs about ${S.narrate.duration <= 4 ? 4 : S.narrate.duration <= 6 ? 5 : S.narrate.duration <= 8 ? 6 : 7} credits.`)) return;
+  const eng = S.narrate.engine, mac = eng === "mac", gem = eng === "gemini";
+  const voice = mac ? S.narrate.macVoice : gem ? S.narrate.geminiVoice : S.narrate.voice;
+  if (eng === "flow" && !confirm(`Record this line in ${voice}? A ${S.narrate.duration}s take costs about ${S.narrate.duration <= 4 ? 4 : S.narrate.duration <= 6 ? 5 : S.narrate.duration <= 8 ? 6 : 7} credits.`)) return;
   const b = $("#n_go"); b.disabled = true; b.textContent = "Recording…";
   try {
-    const out = await api("narrate", { project: $("#n_project").value.trim() || S.narrate.project, text, voice, duration: S.narrate.duration, engine: S.narrate.engine });
-    if (mac) {
+    const out = await api("narrate", { project: $("#n_project").value.trim() || S.narrate.project, text, voice, duration: S.narrate.duration, engine: eng, style: gem ? $("#n_style").value.trim() || undefined : undefined });
+    if (eng !== "flow") {
       $("#n_out").innerHTML = `<audio controls src="${media(out.output)}&t=${Date.now()}"></audio><p class="empty" style="margin-top:8px">${out.duration.toFixed(1)}s · free · ${esc(out.output)}</p>
         <div class="rowbtns"><button class="btn small" data-usevo="${esc(out.output)}">Use in Cut</button></div>`;
       loadGallery();
     } else { toast("Recording…"); poll(); }
-  } catch (err) { toast(err.message, true); }
+  } catch (err) { $("#n_out").innerHTML = `<p class="empty" style="color:var(--bad);white-space:pre-wrap">${esc(err.message)}</p>`; toast(err.message, true); }
   b.disabled = false; b.textContent = "Record take";
 };
 
@@ -662,9 +669,9 @@ function estimate() {
     $("#estSub").textContent = `${ready.length} shot(s) ready`;
     btn.disabled = busy || !ready.length;
   } else {
-    const narrateCost = S.narrate.engine === "mac" ? "Free" : "≈ 4–7 credits";
+    const narrateCost = S.narrate.engine === "flow" ? "≈ 4–7 credits" : "Free";
     $("#estNum").textContent = { cast: "Free", narrate: narrateCost, restyle: "≈ 20 credits", cut: "Free", library: "Free" }[tab] ?? "";
-    $("#estSub").textContent = { cast: "characters cost nothing", narrate: S.narrate.engine === "mac" ? "spoken on this Mac" : "use Record take", restyle: "use Restyle clip", cut: "use Assemble film", library: "downloads cost nothing" }[tab] ?? "";
+    $("#estSub").textContent = { cast: "characters cost nothing", narrate: { gemini: "Google TTS, free", mac: "spoken on this Mac", flow: "use Record take" }[S.narrate.engine], restyle: "use Restyle clip", cut: "use Assemble film", library: "downloads cost nothing" }[tab] ?? "";
     btn.disabled = true;
   }
 }
@@ -766,6 +773,7 @@ function renderAll() {
   if (mus) mus.outerHTML = slotHtml("music", 0, S.cut.music, "Music track");
   if (vo) vo.outerHTML = slotHtml("voiceover", 0, S.cut.voiceover, "Narration");
   $("#c_hold").checked = S.cut.hold;
+  if ($("#n_style")) $("#n_style").value = S.narrate.style ?? "";
   estimate(); save();
 }
 $("#s_model").addEventListener("change", (e) => { S.shots.model = e.target.value; save(); renderAll(); });
@@ -777,7 +785,7 @@ for (const [id, path] of [["f_project", "frames"], ["s_project", "shots"], ["n_p
     $("#status").innerHTML = `<span class="pill"><i class="tally down"></i>Not connected</span>`;
     renderAll(); showTab(S.tab); return;
   }
-  try { [TECH, VOICES] = await Promise.all([api("techniques"), api("voices")]); } catch { VOICES = { flow: [], mac: [] }; }
+  try { [TECH, VOICES] = await Promise.all([api("techniques"), api("voices")]); } catch { VOICES = { gemini: [], flow: [], mac: [] }; }
   loadCast().then((c) => { CAST = c; renderCast(); }).catch(() => {});
   renderAll(); showTab(S.tab); poll(true); loadGallery();
 })();

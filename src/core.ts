@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { assemble, extractAudio, localVoices, speakLocally } from "./assemble.js";
+import { GEMINI_VOICES, geminiKey, speakWithGemini } from "./gemini.js";
 import { extractLastFrame } from "./chain.js";
 import { characterLook, createCharacter, downloadAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
@@ -81,13 +82,16 @@ export const shapes = {
   narrate: {
     project: z.string().min(1).describe("Folder for the narration audio."),
     engine: z
-      .enum(["flow", "mac"])
-      .default("flow")
-      .describe("'flow' speaks in a Flow voice (costs 4-7 credits, best quality). 'mac' uses a voice installed on this Mac: free and instant, and good if a Premium voice is installed."),
+      .enum(["gemini", "flow", "mac"])
+      .default("gemini")
+      .describe(
+        "'gemini' uses Google's own TTS with the same voices Flow has - free on the AI Studio tier, no length limit, needs a key in ~/.flow-mcp/gemini-key. 'flow' speaks through a throwaway Flow clip (4-7 credits, capped by take length). 'mac' uses a voice installed on this Mac (free, instant).",
+      ),
     text: z.string().min(1).max(400).describe("The line to speak. About 20 words fits 8 s, 30 words fits 12 s; anything longer needs a longer take."),
     voice: z.string().min(1).default("Charon").describe("Flow voice name, e.g. Charon (male, informative), Aoede (female, breezy), Gacrux (female, mature)."),
     duration: z.union([z.literal(4), z.literal(6), z.literal(8), z.literal(10)]).default(10).describe("Take length in seconds; the line must fit inside it."),
-    max_credits: z.number().int().min(0).default(8).describe("Cap: a 360p take costs 4-7 credits depending on length."),
+    max_credits: z.number().int().min(0).default(8).describe("Cap for the 'flow' engine only: a 360p take costs 4-7 credits depending on length."),
+    style: z.string().max(200).optional().describe("Delivery note for the 'gemini' engine, e.g. 'slowly and warmly, like a documentary narrator'."),
   },
   edit: {
     project: z.string().min(1).describe("Local folder for the edited clip."),
@@ -372,11 +376,16 @@ export class LocalCore implements Core {
   }
 
   async voices() {
-    return { flow: VOICES, mac: await localVoices() };
+    return { gemini: GEMINI_VOICES, gemini_ready: Boolean(geminiKey()), flow: VOICES, mac: await localVoices() };
   }
 
-  async narrate({ project, text, voice, duration, max_credits, engine }: Args<"narrate">) {
+  async narrate({ project, text, voice, duration, max_credits, engine, style }: Args<"narrate">) {
     const output_dir = projectDir(project);
+    if (engine === "gemini") {
+      mkdirSync(output_dir, { recursive: true });
+      const target = join(output_dir, `${this.nextStem(output_dir, "narration")}.m4a`);
+      return { output_dir, credits: 0, ...(await speakWithGemini(text.trim(), voice, target, style)) };
+    }
     if (engine === "mac") {
       mkdirSync(output_dir, { recursive: true });
       const target = join(output_dir, `${this.nextStem(output_dir, "narration")}.m4a`);

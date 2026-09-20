@@ -141,3 +141,8 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   installs them in System Settings - Claude must not install them (system settings are the user's to change).
 - assemble's defaultClips now accepts scene-NN / clip-NN / edit-NN mp4s (never narration-*, never the output file);
   if none match it falls back to every other mp4 oldest-first. Studio shows assemble errors inline in #c_out, not just a toast.
+- Narration engines are now gemini | flow | mac. `src/gemini.ts` calls `models/<tts>:generateContent` with
+  responseModalities ["AUDIO"] and a prebuiltVoiceConfig; the reply is base64 raw s16le PCM whose sample rate is only in
+  the mimeType (`audio/L16;rate=24000`), so ffmpeg wraps it with -f s16le -ar <rate>. Key comes from GEMINI_API_KEY or
+  ~/.flow-mcp/gemini-key (the user writes it themselves; Claude never handles the key). Gemini and Flow share the voice
+  family, so a Gemini take matches a Flow one. UNTESTED until a real key exists - the no-key path is verified.

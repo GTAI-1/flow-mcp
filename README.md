@@ -38,8 +38,8 @@ Claude Desktop (`claude_desktop_config.json`):
 | `flow_assets` | List images/videos already in the Flow project (usable as `asset:<title>`) |
 | `flow_download` | Download existing project media without regenerating (original or free 1080p/2K upscale) |
 | `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (8 images in ~85 s), 0 credits. Every image is matched back to its scene by its stored prompt (correct file numbers in any finish order). Scenes the agent drops are asked of the agent again (up to 2 extra rounds), then re-run one by one as a last resort. Confirm setting is restored to Always afterwards |
-| `flow_narrate` | Narration audio: `engine: "flow"` speaks in a Flow voice (throwaway 360p take, ~4-7 credits) or `engine: "mac"` uses an installed macOS voice (free, any length) |
-| `flow_voices` | Narrator voices: Flow's 15, plus the English voices installed on this Mac |
+| `flow_narrate` | Narration audio in three engines: `gemini` (Google TTS, same voices as Flow, free on the AI Studio tier, any length — needs a key in `~/.flow-mcp/gemini-key`), `flow` (throwaway 360p take, ~4-7 credits, capped by take length) or `mac` (installed macOS voice, free) |
+| `flow_voices` | Narrator voices: Gemini's 30, Flow's 15, and the English voices installed on this Mac |
 | `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). No prior quote; ~20 credits for a 4 s clip |
 | `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with personality and a stock voice; reference it as `asset:<name>` |
 | `flow_characters` | List the project's characters |
@@ -78,7 +78,7 @@ The API listens on 127.0.0.1 only and requires a per-run token (`~/.flow-mcp/tok
 - One generation at a time, random 25–70 s pause between them (`FLOW_MCP_PAUSE_MIN_S` / `FLOW_MCP_PAUSE_MAX_S`).
 - Before each generation the server reads Flow's own credit quote and skips the scene if it exceeds `max_credits` (default 25).
 - The Chrome window must stay open; the machine needs a display.
-- Env: `FLOW_MCP_PORT` (8787), `FLOW_MCP_OUTPUT`, `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`.
+- Env: `GEMINI_API_KEY` (or `~/.flow-mcp/gemini-key`), `FLOW_MCP_PORT` (8787), `FLOW_MCP_OUTPUT`, `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`.
 
 This automates Flow's web UI: it can break when Google changes the UI, and automated use may
 be against Google's terms. Use on your own account at your own risk.
