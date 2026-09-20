@@ -94,6 +94,18 @@ server.registerTool(
 );
 
 server.registerTool(
+  "flow_agent_images",
+  {
+    title: "Fast image batch via Flow's agent",
+    description:
+      "Hand up to 50 image scenes to Flow's own Agent mode, which renders them all in parallel (about a minute for a whole batch) and enriches each prompt itself. Images only, 0 credits. Less exact than flow_generate: the agent picks the wording, no techniques/reference images, and file order is best-effort. Use flow_generate when every scene needs exact settings. Returns a job id; use flow_wait.",
+    inputSchema: shapes.agent,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  (args) => reply(core.agent(args)),
+);
+
+server.registerTool(
   "flow_edit",
   {
     title: "Edit an existing video",

@@ -53,7 +53,8 @@ Studio panel (image scene end to end, script splitter), MCP-as-client via Remote
 Omni 1.1 Flash quotes: 360p 4/5/6/7 and 720p 7/10/12/15 credits for 4/6/8/10 s. A 4 s edit cost 20 credits.
 Built from a manual paid run but not yet run unattended: `flow_edit` (runEdit). Next paid run should verify it.
 Untested: music/voiceover mix in flow_assemble, characters created via `asset:` image.
-Not built: Flow Agent-mode batch tool, "improve prompt (AI)" in Studio (bundled Claude Code CLI exists at
+Verified: `flow_agent_images` (8 scenes → 8 files in scene order, 84 s, 0 credits) incl. from the Studio (engine toggle).
+Not built: "improve prompt (AI)" in Studio (bundled Claude Code CLI exists at
 ~/Library/Application Support/Claude/claude-code/<ver>/claude.app/Contents/MacOS/claude but is not logged in).
 The app's Browser pane shows `studio/index.html` as a static file after edits: that view is NOT connected (the page
 now says so). The real panel is http://127.0.0.1:8787 served by `npm run studio` / `Flow Studio.command`.
@@ -78,3 +79,7 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
 - Characters view lists `New character`, the user's own "Me" avatar and characters. Test characters left in the mapping
   project: "zz-test-bicycle…", "zz-test-voice…", and "Mina the barista" (accidentally built from the clapperboard image).
 - Generations must start from the project root + `All media`; other views/pages give a wrong "before" tile snapshot.
+- Agent mode (2026-09-19): `Agent` toggle on → composer gets `Agent instructions` + `Settings` (Agent settings: confirm
+  Always/Never, image default aspect + x1–x4 + model, video defaults, `Save`). With confirm=Never a multi-scene prompt
+  renders all images in parallel; a `Stop` button and status "Thinking…" show while it works, tiles show "NN% <enriched
+  prompt>". New tiles end up newest-first, i.e. reverse scene order. runAgentBatch always restores confirm=Always and Agent off.

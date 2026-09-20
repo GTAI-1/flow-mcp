@@ -16,6 +16,7 @@ export interface SceneParams {
   reference_images?: string[];
   chain_from?: string;
   edit_asset?: string;
+  agent_scenes?: string[];
   download_quality?: "original" | "upscaled";
   output_dir: string;
   file_stem: string;
@@ -28,6 +29,7 @@ export interface Job {
   files: string[];
   credits?: number;
   progress?: string;
+  note?: string;
   error?: string;
   createdAt: string;
   finishedAt?: string;

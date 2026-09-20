@@ -232,12 +232,15 @@ function seg(key, options, { disabled, labels = {} } = {}) {
   return `<div class="seg" data-seg="${key}">${options.map((o) => `<button type="button" data-v="${o}" class="${String(S.slate[key]) === String(o) ? "on" : ""}" ${disabled ? "disabled" : ""}>${labels[o] ?? o}</button>`).join("")}</div>`;
 }
 function renderSlate() {
+  S.slate.engine ??= "exact";
   const s = S.slate, aspects = s.type === "video" ? ["9:16", "16:9"] : ["9:16", "16:9", "1:1", "4:3", "3:4"];
   if (!aspects.includes(s.aspect)) s.aspect = aspects[0];
   if (!(s.model in MODELS[s.type])) s.model = Object.keys(MODELS[s.type])[0];
   $("#slate").innerHTML = `
     <label class="f">Project folder</label><input type="text" id="project" value="${esc(s.project)}">
     <label class="f">Make</label>${seg("type", ["video", "image"])}
+    ${s.type === "image" ? `<label class="f">Engine</label>${seg("engine", ["exact", "agent"], { labels: { exact: "One by one · exact", agent: "Flow agent · all at once" } })}
+      <div class="phrase">${s.engine === "agent" ? "Flow's agent renders the whole reel in parallel (about a minute for 30 images) and rewrites each prompt itself. No reference images, frames or takes; file order follows scene order." : "Each scene runs on its own with your exact prompt, technique, references and takes, with a pause between scenes (about a minute per image)."}</div>` : ""}
     <label class="f">Model</label><select id="model">${Object.keys(MODELS[s.type]).map((m) => `<option ${m === s.model ? "selected" : ""}>${m}</option>`).join("")}</select>
     <label class="f">Frame</label>${seg("aspect", aspects)}
     ${s.type === "video" ? `<div class="grid2"><div><label class="f">Length (s)${isOmni() ? "" : " · Veo is fixed at 8"}</label>${seg("duration", [4, 6, 8, 10], { disabled: !isOmni() })}</div>
@@ -364,7 +367,7 @@ $("#dlLib").onclick = dl("original"); $("#dlLibHd").onclick = dl("upscaled");
 
 function scriptSub() {
   const s = S.slate, per = sceneCost(blankScene());
-  $("#scriptSub").textContent = s.type === "image" ? "up to 30 images per batch · free" : `one clip per scene · ${isOmni() ? "4–10 s" : "8 s"} each · ${per} credits per clip now`;
+  $("#scriptSub").textContent = s.type === "image" ? (s.engine === "agent" ? "up to 30 images · all at once · free" : "up to 30 images · one by one · free") : `one clip per scene · ${isOmni() ? "4–10 s" : "8 s"} each · ${per} credits per clip now`;
 }
 function estimate() {
   scriptSub();
@@ -377,6 +380,13 @@ $("#roll").onclick = async () => {
   if (!LIVE) return toast("Not connected. Start Flow Studio first (see the red note at the top).", true);
   const s = S.slate, ref = (v) => (v ? (v.asset ? `asset:${v.asset}` : v.path) : undefined);
   const list = S.scenes.filter((x) => x.prompt.trim());
+  if (s.type === "image" && s.engine === "agent") {
+    const skipped = list.filter((x) => x.refs.length).length;
+    if (skipped && !confirm(`${skipped} scene(s) have reference images, which the agent engine ignores. Continue anyway?`)) return;
+    const texts = list.map((x) => { const t = TECH.find((k) => k.id === x.technique); return t ? `${x.prompt.trim().replace(/\.?$/, ".")} ${t.phrase}` : x.prompt.trim(); });
+    try { await api("agent", { project: s.project.trim(), scenes: texts, aspect_ratio: s.aspect, download_quality: s.quality }); toast(`Handed ${texts.length} scenes to Flow's agent.`); poll(); } catch (err) { toast(err.message, true); }
+    return;
+  }
   const scenes = list.map((sc, i) => ({
     prompt: sc.prompt.trim(), type: s.type, model: s.model, aspect_ratio: s.aspect, max_credits: s.max, download_quality: s.quality,
     variants: Number(sc.variants) || s.variants, technique: sc.technique || undefined,
@@ -400,19 +410,20 @@ function renderStatus(st) {
   $("#pacing").innerHTML = st.pacing ? `<div class="pacing">⏱ ${esc(st.pacing)}</div>` : "";
   const jobs = [...st.jobs].reverse();
   const sig = JSON.stringify(jobs.map((j) => [j.id, j.status, j.progress, j.files.length, j.credits]));
-  if (sig !== renderStatus.sig) { if (renderStatus.sig && LIVE) loadGallery(); renderStatus.sig = sig;
+  if (sig !== renderStatus.sig) { if (renderStatus.sig && LIVE) loadGallery(slateFolder()); renderStatus.sig = sig;
     $("#jobs").innerHTML = jobs.map((j) => `<div class="job"><div class="top"><span class="name">${esc(j.project.split("/").pop())} · ${esc(j.scene)}</span><span class="badge ${j.status}">${j.status}${j.progress ? " " + esc(j.progress) : ""}</span>${j.credits !== undefined ? `<span class="badge">${j.credits} cr</span>` : ""}${j.status === "queued" ? `<button class="btn small ghost" data-cancel="${j.id}">Cancel</button>` : ""}</div>
       ${j.status === "running" ? `<div class="meter"><i style="width:${parseInt(j.progress) || 4}%"></i></div>` : ""}
-      <p>${esc(j.prompt)}</p>${j.error ? `<p class="err">${esc(j.error)}</p>` : ""}
+      <p>${esc(j.prompt)}</p>${j.note ? `<p style="color:var(--warn)">${esc(j.note)}</p>` : ""}${j.error ? `<p class="err">${esc(j.error)}</p>` : ""}
       ${j.files.map((p) => (/\.(mp4|webm|mov)$/i.test(p) ? `<video controls playsinline preload="metadata" src="${media(p)}"></video>` : `<img class="out" src="${media(p)}">`)).join("")}</div>`).join("") || `<p class="empty">Nothing queued. Build the reel and hit Roll.</p>`; }
   estimate(); return active;
 }
 $("#jobs").addEventListener("click", async (e) => { const c = e.target.closest("[data-cancel]"); if (c) { try { await api("cancel", { job_id: c.dataset.cancel }); poll(); } catch (err) { toast(err.message, true); } } });
 
 let GAL = [];
-async function loadGallery() {
+const slateFolder = () => S.slate.project.trim().replace(/[^\w.-]+/g, "_");
+async function loadGallery(prefer) {
   try { GAL = (await api("outputs")).projects; } catch { return; }
-  const sel = $("#galProject"), want = sel.value || S.slate.project.replace(/[^\w.-]+/g, "_");
+  const sel = $("#galProject"), want = prefer || sel.value || slateFolder();
   sel.innerHTML = GAL.map((p) => `<option value="${esc(p.name)}">${esc(p.name)} · ${p.files.length} file${p.files.length === 1 ? "" : "s"}</option>`).join("") || `<option value="">Nothing saved yet</option>`;
   if (GAL.some((p) => p.name === want)) sel.value = want;
   renderGallery();
@@ -431,7 +442,7 @@ let timer, wasActive = false;
 async function poll(detailed = false) {
   clearTimeout(timer);
   try { const active = renderStatus(await api("status", { detailed }));
-    if (wasActive && !active) { wasActive = false; loadGallery(); return poll(true); }
+    if (wasActive && !active) { wasActive = false; loadGallery(slateFolder()); return poll(true); }
     wasActive = active; timer = setTimeout(poll, active ? 3000 : 20000);
   } catch (err) { $("#status").innerHTML = `<span class="pill"><i class="tally down"></i>Server offline</span>`; timer = setTimeout(poll, 5000); }
 }

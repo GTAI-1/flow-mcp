@@ -36,6 +36,7 @@ Claude Desktop (`claude_desktop_config.json`):
 | `flow_cancel` | Cancel a queued job |
 | `flow_assets` | List images/videos already in the Flow project (usable as `asset:<title>`) |
 | `flow_download` | Download existing project media without regenerating (original or free 1080p/2K upscale) |
+| `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (8 images in ~85 s), 0 credits; confirm setting is restored to Always afterwards |
 | `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). No prior quote; ~20 credits for a 4 s clip |
 | `flow_character` | Create a reusable character from one image, with personality and a stock voice; reference it as `asset:<name>` |
 | `flow_techniques` | 39 film-technique prompt presets (camera, product, transitions, image commands); pass an id as a scene's `technique` |

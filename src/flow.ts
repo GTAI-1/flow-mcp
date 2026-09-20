@@ -515,3 +515,93 @@ export async function runEdit(job: Job): Promise<string[]> {
   if (balance !== undefined && after !== undefined) job.credits = balance - after;
   return [file];
 }
+
+async function setAgentMode(page: Page, on: boolean): Promise<void> {
+  const agent = page.getByRole("button", { name: "Agent", exact: true });
+  if (((await agent.getAttribute("aria-pressed")) === "true") !== on) {
+    await agent.click();
+    await pause(page, 1200);
+  }
+}
+
+// "Never" lets the agent generate without asking; it is switched back to "Always" as soon as the batch ends.
+async function setAgentSettings(page: Page, confirm: "Always" | "Never", imageAspect?: string): Promise<void> {
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("heading", { name: "Agent settings" }).waitFor({ state: "visible", timeout: 8000 });
+  await page.getByRole("radio", { name: new RegExp(`^${confirm}`) }).click();
+  if (imageAspect) {
+    await page.getByRole("radio", { name: imageAspect, exact: true }).first().click();
+    await page.getByRole("radio", { name: "x1", exact: true }).first().click();
+  }
+  await pause(page, 300);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await pause(page, 1200);
+}
+
+// Hands a whole multi-scene script to Flow's own agent, which generates every image in parallel (seconds instead
+// of one paced job per scene). Images only: the agent runs unconfirmed, and images cost no credits.
+export async function runAgentBatch(job: Job): Promise<string[]> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  const s = job.params;
+  const scenes = s.agent_scenes!;
+
+  await ensureProjectGrid(page);
+  const balance = await readCredits(page).catch(() => undefined);
+  const before = new Set((await scanGrid(page)).map((a) => a.id).filter(Boolean));
+  await scrollToTop(page);
+
+  let files: string[] = [];
+  try {
+    await setAgentMode(page, true);
+    await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9");
+    const clear = page.getByRole("button", { name: "Clear prompt" });
+    if (await clear.isVisible().catch(() => false)) await clear.click();
+
+    const script = scenes.map((t, i) => `Scene ${i + 1}: ${t.replace(/\s*\n+\s*/g, " ").trim()}`).join(" ");
+    const ask = `Generate exactly ${scenes.length} separate images, one image per scene, in scene order. Images only, never video. ${s.aspect_ratio ?? "16:9"} aspect ratio. Do not ask questions, generate them now. ${script}`;
+    await page.locator(".ProseMirror").first().click();
+    await page.keyboard.insertText(ask);
+    await pause(page, 800);
+    const start = page.getByRole("button", { name: "Start generation" });
+    if (!(await start.isEnabled())) throw new Error("Flow's agent did not accept the script (Start generation stayed disabled).");
+    await start.click();
+
+    // The agent shows a Stop button while it works and "NN%" on every tile it is rendering.
+    const deadline = Date.now() + (3 * 60_000 + scenes.length * 30_000);
+    const stop = page.getByRole("button", { name: "Stop", exact: true });
+    let idleSince = 0;
+    for (;;) {
+      await pause(page, 3000);
+      const working = (await stop.isVisible().catch(() => false)) || /\d+%/.test(await page.locator("main").first().innerText());
+      const pending = (await page.locator("main").first().innerText()).match(/\d+%/g) ?? [];
+      job.progress = working ? `${pending.length} rendering` : undefined;
+      if (working) idleSince = 0;
+      else if (!idleSince) idleSince = Date.now();
+      else if (Date.now() - idleSince > 8000) break;
+      if (Date.now() > deadline) throw new Error("Timed out waiting for Flow's agent to finish the batch.");
+    }
+
+    const after = await scanGrid(page);
+    // Newest tiles come first and the agent starts scenes in order, so reversed grid order is scene order.
+    const fresh = after.filter((a) => a.id && !before.has(a.id) && a.kind === "image").reverse();
+    if (!fresh.length) throw new Error("Flow's agent finished without creating any image. Open the Flow tab to read its reply, then retry with a clearer script.");
+    mkdirSync(s.output_dir, { recursive: true });
+    const base = Number(s.file_stem.match(/\d+/)?.[0] ?? 1);
+    for (const [i, asset] of fresh.entries()) {
+      await scanGrid(page, (seen) => seen.some((x) => x.id === asset.id));
+      const stem = join(s.output_dir, `scene-${String(base + i).padStart(2, "0")}`);
+      files.push(await downloadTile(page, mediaTile(page, asset.id!), stem, s.download_quality ?? "original"));
+      await pause(page, 800);
+    }
+    if (fresh.length !== scenes.length) job.note = `The agent produced ${fresh.length} image(s) for ${scenes.length} scenes, so file numbers may not line up with scene numbers.`;
+  } finally {
+    await ensureProjectGrid(page).catch(() => {});
+    await setAgentSettings(page, "Always").catch(() => {});
+    await setAgentMode(page, false).catch(() => {});
+  }
+  const left = await readCredits(page).catch(() => undefined);
+  if (balance !== undefined && left !== undefined) job.credits = balance - left;
+  return files;
+}
