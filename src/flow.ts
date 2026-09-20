@@ -478,22 +478,77 @@ export async function listCharacters(): Promise<string[]> {
   await page.getByRole("navigation", { name: "Project navigation" }).getByText("Characters", { exact: true }).click();
   await pause(page, 2500);
   const names = await page.evaluate(() =>
-    [...document.querySelectorAll('img[alt="Character thumbnail"], img[alt="Me"]')]
-      .map((img) => {
-        let el: Element | null = img;
-        for (let i = 0; i < 4 && el; i++, el = el.parentElement) {
-          const text = (el as HTMLElement).innerText?.replace(/\s+/g, " ").trim();
-          if (text) return text;
-        }
-        return "";
-      })
-      .filter(Boolean),
+    [...document.querySelectorAll("flow-character-tile")].map((t) => (t as HTMLElement).innerText.replace(/\s+/g, " ").trim()).filter(Boolean),
   );
   await ensureProjectGrid(page).catch(() => {});
   // Strip Material icon ligatures Flow renders as text ("accessibility_new", "person") and its own avatar.
   return [...new Set(names.map((n) => n.replace(/\b(accessibility_new|person|movie|image|videocam|mic)\b/g, "").replace(/\s+/g, " ").trim()))].filter(
     (n) => n && n !== "Me",
   );
+}
+
+// Opens an existing character and restyles its portrait in place (Nano Banana, free) instead of making a new one.
+export async function editCharacter(name: string, change: string, job?: Job): Promise<{ name: string; portrait?: string }> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  await dismissOverlays(page);
+  await page.getByRole("navigation", { name: "Project navigation" }).getByText("Characters", { exact: true }).click();
+  await pause(page, 2500);
+
+  const card = page.locator("flow-character-tile").filter({ hasText: name }).first();
+  if (!(await card.isVisible().catch(() => false))) throw new Error(`No character called "${name}". Use flow_characters to list them.`);
+  await card.scrollIntoViewIfNeeded();
+  await card.click();
+  await page.waitForURL(/\/character\/[0-9a-f-]{36}/, { timeout: 20_000 });
+  await pause(page, 2000);
+
+  const portraitImg = page.getByRole("img", { name: "Generated character image" }).first();
+  const before = await portraitImg.getAttribute("src").catch(() => null);
+
+  const box = page.locator(".ProseMirror").last();
+  await box.click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("Delete");
+  await page.keyboard.type(change.replace(/\s*\n+\s*/g, " ").trim(), { delay: 8 });
+  await pause(page, 600);
+  const start = page.getByRole("button", { name: "Start generation" });
+  if (!(await start.isEnabled())) throw new Error("Flow did not accept the change (Start generation stayed disabled).");
+  await start.click();
+
+  const deadline = Date.now() + 4 * 60_000;
+  for (;;) {
+    await pause(page, 3000);
+    const now = await portraitImg.getAttribute("src").catch(() => null);
+    const pct = (await page.locator("main").first().innerText()).match(/\d+%/)?.[0];
+    if (job) job.progress = pct;
+    if (now && now !== before && !pct) break;
+    if (Date.now() > deadline) throw new Error("Timed out waiting for Flow to redraw the character.");
+  }
+  if (job) job.progress = undefined;
+
+  let portrait: string | undefined;
+  const dir = join(process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out"), "_cast");
+  mkdirSync(dir, { recursive: true });
+  const download = page.waitForEvent("download", { timeout: 60_000 });
+  download.catch(() => {});
+  await page.getByRole("button", { name: "Download image" }).click();
+  const file = await download.catch(() => null);
+  if (file) {
+    portrait = join(dir, `${name.replace(/[^\w.-]+/g, "_")}${extname(file.suggestedFilename()) || ".jpeg"}`);
+    await file.saveAs(portrait).catch(async () => {
+      const temp = await file.path().catch(() => null);
+      if (temp && existsSync(temp)) copyFileSync(temp, portrait!);
+      else portrait = undefined;
+    });
+  }
+
+  await page.getByRole("button", { name: /^Done( editing)?$/ }).first().click().catch(() => {});
+  await pause(page, 2000);
+  await ensureProjectGrid(page).catch(() => {});
+  const clear = page.getByRole("button", { name: "Clear prompt" });
+  if (await clear.isVisible().catch(() => false)) await clear.click();
+  return { name, portrait };
 }
 
 export async function listAssets(): Promise<FlowAsset[]> {

@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 import { assemble } from "./assemble.js";
 import { extractLastFrame } from "./chain.js";
-import { createCharacter, downloadAsset, getFlowState, listAssets, listCharacters, runAgentBatch, runEdit, runGeneration } from "./flow.js";
+import { createCharacter, downloadAsset, editCharacter, getFlowState, listAssets, listCharacters, runAgentBatch, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
@@ -83,6 +83,10 @@ export const shapes = {
   },
   outputs: {},
   characters: {},
+  character_edit: {
+    name: z.string().min(1).describe("Character to change, as listed by flow_characters."),
+    change: z.string().min(1).max(600).describe("What to change about the look, e.g. 'add white gloves on both hands, keep everything else identical'."),
+  },
   character: {
     name: z.string().min(1).max(60).describe("Character name; scenes then reference it as 'asset:<name>' in reference_images."),
     describe: z
@@ -131,6 +135,7 @@ export interface Core {
   techniques(a: Args<"techniques">): Promise<unknown>;
   character(a: Args<"character">): Promise<unknown>;
   characters(): Promise<unknown>;
+  character_edit(a: Args<"character_edit">): Promise<unknown>;
   edit(a: Args<"edit">): Promise<unknown>;
   agent(a: Args<"agent">): Promise<unknown>;
   outputs(): Promise<unknown>;
@@ -285,6 +290,11 @@ export class LocalCore implements Core {
     if (this.queue.busy) throw new Error(BUSY);
     if (!a.image && !a.describe) throw new Error("Pass either `describe` (Flow draws the portrait) or `image`.");
     return { ...(await createCharacter(a)), use_as: `asset:${a.name}` };
+  }
+
+  async character_edit({ name, change }: Args<"character_edit">) {
+    if (this.queue.busy) throw new Error(BUSY);
+    return { ...(await editCharacter(name, change)), use_as: `asset:${name}` };
   }
 
   async characters() {

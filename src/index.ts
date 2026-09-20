@@ -141,6 +141,18 @@ server.registerTool(
 );
 
 server.registerTool(
+  "flow_character_edit",
+  {
+    title: "Restyle an existing character",
+    description:
+      "Change how an existing character looks without creating a new one (Flow redraws the portrait in place, free). The character keeps its name, personality and voice, so every scene that references it picks up the new look.",
+    inputSchema: shapes.character_edit,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  (args) => reply(core.character_edit(args)),
+);
+
+server.registerTool(
   "flow_characters",
   {
     title: "List characters",

@@ -41,6 +41,7 @@ Claude Desktop (`claude_desktop_config.json`):
 | `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). No prior quote; ~20 credits for a 4 s clip |
 | `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with personality and a stock voice; reference it as `asset:<name>` |
 | `flow_characters` | List the project's characters |
+| `flow_character_edit` | Restyle an existing character in place (Flow redraws the portrait, free); name, personality and voice are kept |
 | `flow_techniques` | 39 film-technique prompt presets (camera, product, transitions, image commands); pass an id as a scene's `technique` |
 | `flow_assemble` | Join a project's clips into one MP4 with optional music and voiceover (local ffmpeg, no credits) |
 

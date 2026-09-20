@@ -123,3 +123,7 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   os.tmpdir() - the artifact is swept mid-save (download.saveAs ENOENT). listCharacters reads `img[alt="Character thumbnail"]`
   containers (the template chooser shown when no characters exist is not a character) and strips Material icon ligature text
   ("accessibility_new", "person"). Studio has a Cast card that creates and lists them and drops one into scene 1's references.
+- Character tiles are `<flow-character-tile>` elements (NOT buttons) whose innerText is "<name> accessibility_new";
+  listCharacters/editCharacter both go through that selector. editCharacter types into the LAST `.ProseMirror`
+  ("What do you want to change?"), waits for the `img[alt="Generated character image"]` src to change with no "%" on the
+  page, then `Download image` -> `<output>/_cast/<name>.jpeg`. Free (Nano Banana). Verified live 2026-09-20 (added gloves).
