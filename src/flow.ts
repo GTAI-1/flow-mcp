@@ -1,6 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { extname, join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
 import { getFlowPage } from "./chrome.js";
 import type { Job } from "./queue.js";
@@ -468,6 +468,34 @@ async function scanGrid(page: Page, stopAt?: (assets: FlowAsset[]) => boolean): 
   return [...seen.values()];
 }
 
+// Characters live in their own left-nav section. With none yet, Flow shows a template chooser instead, so only
+// entries that actually carry a character thumbnail count.
+export async function listCharacters(): Promise<string[]> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  await dismissOverlays(page);
+  await page.getByRole("navigation", { name: "Project navigation" }).getByText("Characters", { exact: true }).click();
+  await pause(page, 2500);
+  const names = await page.evaluate(() =>
+    [...document.querySelectorAll('img[alt="Character thumbnail"], img[alt="Me"]')]
+      .map((img) => {
+        let el: Element | null = img;
+        for (let i = 0; i < 4 && el; i++, el = el.parentElement) {
+          const text = (el as HTMLElement).innerText?.replace(/\s+/g, " ").trim();
+          if (text) return text;
+        }
+        return "";
+      })
+      .filter(Boolean),
+  );
+  await ensureProjectGrid(page).catch(() => {});
+  // Strip Material icon ligatures Flow renders as text ("accessibility_new", "person") and its own avatar.
+  return [...new Set(names.map((n) => n.replace(/\b(accessibility_new|person|movie|image|videocam|mic)\b/g, "").replace(/\s+/g, " ").trim()))].filter(
+    (n) => n && n !== "Me",
+  );
+}
+
 export async function listAssets(): Promise<FlowAsset[]> {
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
@@ -490,17 +518,41 @@ export async function downloadAsset(name: string, targetStem: string, quality: D
 
 export interface CharacterParams {
   name: string;
-  image: string;
+  image?: string;
+  describe?: string;
+  aspect_ratio?: string;
   personality?: string;
   voice?: string;
 }
 
 // Creates a reusable Flow character from an image (local file, or "asset:<title>" already in the project).
 // Afterwards it can be attached to any scene as reference "asset:<character name>".
-export async function createCharacter(c: CharacterParams): Promise<{ name: string; url: string }> {
+export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ name: string; url: string; portrait?: string }> {
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
+  // A description generates the portrait first (free image), then the character is built from that picture.
+  let portrait: string | undefined;
+  if (!c.image) {
+    if (!c.describe) throw new Error("Pass either an image or a description for the character.");
+    if (job) job.progress = "drawing the character";
+    const dir = join(process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out"), "_cast");
+    const made = await runGeneration({
+      ...(job ?? ({ id: "char", status: "running", files: [], attempts: 1, createdAt: "" } as unknown as Job)),
+      files: [],
+      params: {
+        prompt: c.describe,
+        type: "image",
+        max_credits: 0,
+        aspect_ratio: (c.aspect_ratio as "3:4") ?? "3:4",
+        output_dir: dir,
+        file_stem: c.name.replace(/[^\w.-]+/g, "_"),
+      },
+    } as Job);
+    portrait = made[0];
+    c = { ...c, image: portrait };
+  }
+  const image = c.image!;
   const projectUrl = page.url();
   await dismissOverlays(page);
   await scrollToTop(page);
@@ -512,8 +564,8 @@ export async function createCharacter(c: CharacterParams): Promise<{ name: strin
   if (await create.isVisible().catch(() => false)) await create.click();
   await page.waitForURL(/\/character$/, { timeout: 15_000 });
 
-  if (c.image.startsWith(ASSET_PREFIX)) {
-    const title = c.image.slice(ASSET_PREFIX.length).trim();
+  if (image.startsWith(ASSET_PREFIX)) {
+    const title = image.slice(ASSET_PREFIX.length).trim();
     await page.getByRole("button", { name: "Add from project", exact: true }).click();
     const list = page.getByRole("listbox", { name: "Asset list" });
     await list.waitFor({ state: "visible", timeout: 10_000 });
@@ -530,10 +582,10 @@ export async function createCharacter(c: CharacterParams): Promise<{ name: strin
     await option.click();
     await page.getByRole("button", { name: "Add media", exact: true }).click();
   } else {
-    if (!existsSync(c.image)) throw new Error(`File not found: ${c.image}`);
+    if (!existsSync(image)) throw new Error(`File not found: ${image}`);
     const chooser = page.waitForEvent("filechooser", { timeout: 10_000 });
     await page.getByRole("button", { name: "Upload", exact: true }).click();
-    await (await chooser).setFiles(c.image);
+    await (await chooser).setFiles(image);
   }
   await page.waitForURL(/\/character\/[0-9a-f-]{36}/, { timeout: 90_000 });
   const url = page.url();
@@ -560,14 +612,15 @@ export async function createCharacter(c: CharacterParams): Promise<{ name: strin
     await pause(page, 1000);
   }
 
-  await page.getByRole("button", { name: "Done editing" }).click();
+  // Flow labels this "Done editing" or just "Done" depending on the panel state.
+  await page.getByRole("button", { name: /^Done( editing)?$/ }).first().click();
   await page.waitForURL((u) => !/\/character/.test(u.pathname), { timeout: 15_000 }).catch(() => page.goto(projectUrl));
   await pause(page, 1000);
   // Flow drops the new character into the composer; leave the composer empty for the next job.
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
   await page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true }).click().catch(() => {});
-  return { name: c.name, url };
+  return { name: c.name, url, portrait };
 }
 
 const EDIT_TIMEOUT_MS = 10 * 60_000;

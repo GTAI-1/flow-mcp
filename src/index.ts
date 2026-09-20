@@ -133,11 +133,22 @@ server.registerTool(
   {
     title: "Create a reusable character",
     description:
-      "Create a Flow character (person, mascot or product) from one image, optionally with a personality and a voice, so it stays consistent across scenes. Free. Afterwards pass 'asset:<name>' in a scene's reference_images.",
+      "Create a reusable Flow character (person, mascot, product) so it looks the same in every scene. Free. Give `describe` and Flow draws the portrait first, or `image` to use a picture you already have; optionally a personality and a stock voice. Afterwards pass 'asset:<name>' in a scene's reference_images.",
     inputSchema: shapes.character,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   (args) => reply(core.character(args)),
+);
+
+server.registerTool(
+  "flow_characters",
+  {
+    title: "List characters",
+    description: "List the reusable characters in the open Flow project. Each can be used in a scene as 'asset:<name>'.",
+    inputSchema: shapes.characters,
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  () => reply(core.characters()),
 );
 
 server.registerTool(

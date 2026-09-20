@@ -118,3 +118,8 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
 - Virtual grid trap (cost two failed flow_edit runs): after `scanGrid` finds a tile far down the list, DO NOT
   `scrollToTop` before clicking it - the tile is unmounted and every locator times out. Take the "before" snapshot
   first (new tiles always appear at the top), then scan and act on the tile where it is.
+- Characters (2026-09-20): `flow_character` accepts `describe` (draws a free portrait into <output>/_cast first) or `image`;
+  the editor's finish button is "Done editing" OR "Done" depending on panel state. Portraits must NOT be downloaded into
+  os.tmpdir() - the artifact is swept mid-save (download.saveAs ENOENT). listCharacters reads `img[alt="Character thumbnail"]`
+  containers (the template chooser shown when no characters exist is not a character) and strips Material icon ligature text
+  ("accessibility_new", "person"). Studio has a Cast card that creates and lists them and drops one into scene 1's references.

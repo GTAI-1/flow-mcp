@@ -130,6 +130,26 @@ input[type=range]{width:100%;accent-color:var(--tally);height:36px}
         <div class="card" id="slate"></div>
       </section>
       <section>
+        <h2>Cast <small>reusable characters · free</small></h2>
+        <div class="card">
+          <div class="lib" id="castList" style="max-height:none"></div>
+          <label class="f">Name</label><input type="text" id="castName" placeholder="Stick Guy">
+          <label class="f">What they look like</label>
+          <textarea id="castLook" style="min-height:110px" placeholder="A cartoonish stick figure: thin black outline body, oversized round head, big expressive dot eyes, yellow hard hat, red scarf, white background"></textarea>
+          <p class="empty" style="margin-top:8px">Flow draws this portrait first (free), then saves it as a character. Or attach a picture instead:</p>
+          <div class="slots" style="margin-top:10px"><div class="slot" data-slot="cast" data-i="0"></div></div>
+          <div class="grid2">
+            <div><label class="f">Personality (optional)</label><input type="text" id="castMood" placeholder="Cheerful, clumsy, always in a hurry"></div>
+            <div><label class="f">Voice (optional)</label><select id="castVoice"></select></div>
+          </div>
+          <div class="bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:18px">
+            <button class="btn" id="castCreate">Create character</button>
+            <button class="btn ghost small" id="castReload">Reload list</button>
+          </div>
+          <p class="empty" id="castInfo" style="margin-top:12px"></p>
+        </div>
+      </section>
+      <section>
         <h2>Script <small id="scriptSub"></small></h2>
         <div class="card">
           <textarea id="script" style="min-height:190px" placeholder="Paste your whole script. One scene per paragraph, or numbered:&#10;&#10;1. A barista opens the cafe at dawn, slow push-in&#10;2. Close-up of espresso pouring, macro&#10;Scene 3: She hands the cup to a customer, warm smile"></textarea>
@@ -289,6 +309,7 @@ $("#scenes").addEventListener("click", (e) => {
   if (slot && slot.dataset.slot && src) { pickTarget = { kind: slot.dataset.slot, i: slot.dataset.i }; src.dataset.src === "flow" ? openPicker() : (($("#file").accept = "image/*"), $("#file").click()); }
 });
 function setSlot(kind, idx, val) {
+  if (kind === "cast") { castImage = val; return renderCast(); }
   if (kind === "ref") { const [i, j] = idx.split(":").map(Number); val ? (S.scenes[i].refs[j] = val) : S.scenes[i].refs.splice(j, 1); }
   else if (kind === "music" || kind === "voiceover") S.audio[kind] = val;
   else S.scenes[Number(idx)][kind] = val;
@@ -331,6 +352,47 @@ const applyScript = (append) => () => {
   renderAll(); $("#scenes").scrollIntoView({ behavior: "smooth" });
 };
 $("#splitReplace").onclick = applyScript(false); $("#splitAppend").onclick = applyScript(true);
+
+const VOICES = ["", "Achernar — female, soft", "Achird — male, friendly", "Algenib — male, gravelly", "Algieba — male, easy-going", "Alnilam — male, firm", "Aoede — female, breezy", "Autonoe — female, bright", "Callirrhoe — female, easy-going", "Charon — male, informative", "Despina — female, smooth", "Enceladus — male, breathy", "Erinome — female, clear", "Fenrir — male, excitable", "Gacrux — female, mature", "Iapetus — male, clear"];
+$("#castVoice").innerHTML = VOICES.map((v) => `<option value="${v.split(" — ")[0]}">${v || "No voice"}</option>`).join("");
+let CAST = [], castImage = null;
+function renderCast() {
+  $("#castList").innerHTML = CAST.length
+    ? CAST.map((c) => `<button type="button" data-cast="${esc(c.name)}"><span>${esc(c.name)}</span><em>use in scene</em></button>`).join("")
+    : `<p class="empty">No characters yet. Describe one below and Flow will draw it.</p>`;
+  const slot = $('[data-slot="cast"]');
+  if (slot) slot.innerHTML = castImage
+    ? `<button class="x" data-clearcast="1">×</button>${/\.(jpe?g|png|webp)$/i.test(castImage.path ?? "") ? `<img src="${media(castImage.path)}">` : ""}<span class="tag">${esc(castImage.asset ?? castImage.name)}</span>`
+    : `<span>Picture instead of a description</span><span class="two"><button type="button" data-src="upload">Upload</button><button type="button" data-src="flow">From Flow</button></span>`;
+}
+// A character card drops itself into the first scene's references.
+$("#castList").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-cast]"); if (!b) return;
+  const sc = S.scenes[0]; if (sc.refs.length >= 3) return toast("That scene already has 3 references.", true);
+  sc.refs.push({ asset: b.dataset.cast }); renderAll();
+  toast(`${b.dataset.cast} added to scene 1`);
+});
+document.addEventListener("click", (e) => {
+  const c = e.target.closest("[data-clearcast]"); if (c) { castImage = null; return renderCast(); }
+  const slot = e.target.closest('[data-slot="cast"]'); const src = e.target.closest("[data-src]");
+  if (slot && src) { pickTarget = { kind: "cast", i: 0 }; src.dataset.src === "flow" ? openPicker() : (($("#file").accept = "image/*"), $("#file").click()); }
+});
+$("#castReload").onclick = async () => { try { CAST = await api("characters"); renderCast(); } catch (err) { toast(err.message, true); } };
+$("#castCreate").onclick = async () => {
+  if (!LIVE) return toast("Not connected. Start Flow Studio first.", true);
+  const name = $("#castName").value.trim(), look = $("#castLook").value.trim();
+  if (!name) return toast("Give the character a name.", true);
+  if (!look && !castImage) return toast("Describe the character, or attach a picture.", true);
+  const btn = $("#castCreate"); btn.disabled = true; btn.textContent = "Drawing…";
+  $("#castInfo").textContent = "Flow is drawing the portrait and saving the character. This takes a minute.";
+  try {
+    const out = await api("character", { name, describe: look || undefined, image: castImage ? (castImage.asset ? `asset:${castImage.asset}` : castImage.path) : undefined, personality: $("#castMood").value.trim() || undefined, voice: $("#castVoice").value || undefined });
+    $("#castInfo").innerHTML = `Created <b>${esc(out.name)}</b> — use it in any scene as a reference.${out.portrait ? `<br><img class="out" style="max-width:220px;margin-top:10px;border-radius:12px" src="${media(out.portrait)}">` : ""}`;
+    castImage = null; $("#castName").value = ""; $("#castLook").value = ""; $("#castMood").value = "";
+    CAST = await api("characters").catch(() => CAST); renderCast(); loadGallery(slateFolder());
+  } catch (err) { $("#castInfo").textContent = err.message; toast(err.message, true); }
+  btn.disabled = false; btn.textContent = "Create character";
+};
 
 $("#addScene").onclick = () => { S.scenes.push(blankScene()); renderAll(); window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }); };
 
@@ -448,14 +510,16 @@ async function poll(detailed = false) {
     wasActive = active; timer = setTimeout(poll, active ? 3000 : 20000);
   } catch (err) { $("#status").innerHTML = `<span class="pill"><i class="tally down"></i>Server offline</span>`; timer = setTimeout(poll, 5000); }
 }
-function renderAll() { renderSlate(); renderScenes(); renderAudio(); estimate(); save(); }
+function renderAll() { renderSlate(); renderScenes(); renderAudio(); renderCast(); estimate(); save(); }
 (async () => {
   if (!LIVE) {
     $("#offline").innerHTML = `<div class="hint" style="border-color:var(--bad)"><b>This is only a static preview of the page, so nothing here is connected.</b><br>Start the real panel: double-click <b>Flow Studio.command</b> in the flow-mcp folder (or run <code>npm run studio</code>), then use the page that opens at <b>http://127.0.0.1:8787</b>.</div>`;
     $("#status").innerHTML = `<span class="pill"><i class="tally down"></i>Not connected</span>`;
     renderAll(); return;
   }
-  try { TECH = await api("techniques"); } catch {} renderAll(); poll(true); loadGallery();
+  try { TECH = await api("techniques"); } catch {}
+  api("characters").then((c) => { CAST = c; renderCast(); }).catch(() => {});
+  renderAll(); poll(true); loadGallery();
 })();
 </script>
 </body>

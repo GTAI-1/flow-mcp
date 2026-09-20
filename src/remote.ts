@@ -24,6 +24,7 @@ export class RemoteCore implements Core {
   assemble = (a: unknown) => call("assemble", a);
   techniques = (a: unknown) => call("techniques", a);
   character = (a: unknown) => call("character", a);
+  characters = () => call("characters", {});
   edit = (a: unknown) => call("edit", a);
   agent = (a: unknown) => call("agent", a);
   outputs = () => call("outputs", {});

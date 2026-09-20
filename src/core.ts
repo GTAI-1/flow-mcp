@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 import { assemble } from "./assemble.js";
 import { extractLastFrame } from "./chain.js";
-import { createCharacter, downloadAsset, getFlowState, listAssets, runAgentBatch, runEdit, runGeneration } from "./flow.js";
+import { createCharacter, downloadAsset, getFlowState, listAssets, listCharacters, runAgentBatch, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
@@ -82,9 +82,20 @@ export const shapes = {
     download_quality: z.enum(["original", "upscaled"]).optional(),
   },
   outputs: {},
+  characters: {},
   character: {
     name: z.string().min(1).max(60).describe("Character name; scenes then reference it as 'asset:<name>' in reference_images."),
-    image: z.string().min(1).describe("Portrait or product image: absolute path, or 'asset:<title>' of an image already in the Flow project. Generate one first with a free image scene if needed."),
+    describe: z
+      .string()
+      .max(1200)
+      .optional()
+      .describe("What the character looks like. Flow draws the portrait first (free image), then builds the character from it. Use this or `image`."),
+    image: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Existing picture instead of `describe`: absolute path, or 'asset:<title>' of an image already in the Flow project."),
+    aspect_ratio: z.enum(["3:4", "1:1", "9:16", "16:9", "4:3"]).optional().describe("Frame for the drawn portrait when using `describe`. Default 3:4."),
     personality: z.string().max(500).optional().describe("How the character acts; Flow uses it when crafting scenes."),
     voice: z.string().optional().describe("Flow voice name, e.g. 'Charon' (male, informative) or 'Aoede' (female, breezy)."),
   },
@@ -119,6 +130,7 @@ export interface Core {
   assemble(a: Args<"assemble">): Promise<unknown>;
   techniques(a: Args<"techniques">): Promise<unknown>;
   character(a: Args<"character">): Promise<unknown>;
+  characters(): Promise<unknown>;
   edit(a: Args<"edit">): Promise<unknown>;
   agent(a: Args<"agent">): Promise<unknown>;
   outputs(): Promise<unknown>;
@@ -271,7 +283,13 @@ export class LocalCore implements Core {
 
   async character(a: Args<"character">) {
     if (this.queue.busy) throw new Error(BUSY);
+    if (!a.image && !a.describe) throw new Error("Pass either `describe` (Flow draws the portrait) or `image`.");
     return { ...(await createCharacter(a)), use_as: `asset:${a.name}` };
+  }
+
+  async characters() {
+    if (this.queue.busy) throw new Error(BUSY);
+    return (await listCharacters()).map((name) => ({ name, use_as: `asset:${name}` }));
   }
 
   async techniques({ category }: Args<"techniques">) {

@@ -53,7 +53,8 @@ export async function assemble(o: AssembleOptions): Promise<{ output: string; cl
   for (const f of [...clips, o.music, o.voiceover]) if (f && !existsSync(f)) throw new Error(`File not found: ${f}`);
 
   const infos = await Promise.all(clips.map(probe));
-  const { width, height } = infos[0];
+  // Size the film to the biggest clip so a 720p opener cannot pull a 1080p clip down with it.
+  const { width, height } = infos.reduce((a, b) => (b.width * b.height > a.width * a.height ? b : a));
   const args: string[] = ["-y"];
   for (const clip of clips) args.push("-i", clip);
   const filters: string[] = [];
