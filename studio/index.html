@@ -96,6 +96,12 @@ input:focus,select:focus,textarea:focus{border-color:var(--tally)}
 .meter{height:10px;border-radius:9px;background:var(--ink3);overflow:hidden}.meter i{display:block;height:100%;background:var(--tally);transition:width .6s}
 .pacing{font:700 17px var(--mono);color:var(--warn);margin-bottom:14px}
 .empty{color:var(--dim);font-size:19px}
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:14px}
+.gal figure{margin:0;border-radius:12px;overflow:hidden;background:#000;border:2px solid var(--line);cursor:pointer}
+.gal figure:hover{border-color:var(--tally)}
+.gal video,.gal img{display:block;width:100%;aspect-ratio:1;object-fit:cover}
+.gal figcaption{padding:8px 10px;font:700 14px var(--mono);color:var(--bone);background:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#viewer video,#viewer img{width:100%;max-height:74vh;object-fit:contain;border-radius:12px;background:#000}
 .lib{display:grid;gap:8px;max-height:420px;overflow:auto;margin-top:14px}
 .lib button{display:flex;gap:12px;align-items:center;justify-content:space-between;text-align:left;min-height:56px;padding:10px 16px;font:500 19px var(--body);color:var(--bone);background:var(--ink);border:2px solid var(--line);border-radius:12px;cursor:pointer}
 .lib button:hover{border-color:var(--tally)} .lib button.on{border-color:var(--go)}
@@ -114,6 +120,7 @@ input[type=range]{width:100%;accent-color:var(--tally);height:36px}
     <h1>Flow<br><span>Studio</span></h1>
     <div class="status" id="status"><span class="pill"><i class="tally"></i>Connecting…</span></div>
   </header>
+  <div id="offline"></div>
   <div id="hint"></div>
 
   <div class="cols">
@@ -123,7 +130,7 @@ input[type=range]{width:100%;accent-color:var(--tally);height:36px}
         <div class="card" id="slate"></div>
       </section>
       <section>
-        <h2>Script <small>paste 30 scenes at once</small></h2>
+        <h2>Script <small id="scriptSub"></small></h2>
         <div class="card">
           <textarea id="script" style="min-height:190px" placeholder="Paste your whole script. One scene per paragraph, or numbered:&#10;&#10;1. A barista opens the cafe at dawn, slow push-in&#10;2. Close-up of espresso pouring, macro&#10;Scene 3: She hands the cup to a customer, warm smile"></textarea>
           <div class="bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
@@ -144,6 +151,14 @@ input[type=range]{width:100%;accent-color:var(--tally);height:36px}
       <section>
         <h2>Monitor</h2>
         <div class="card"><div id="pacing"></div><div id="jobs"><p class="empty">Nothing queued. Build the reel and hit Roll.</p></div></div>
+      </section>
+      <section>
+        <h2>Gallery <small>everything saved on this Mac</small></h2>
+        <div class="card">
+          <select id="galProject"></select>
+          <p class="empty" id="galInfo" style="margin-top:10px"></p>
+          <div class="gal" id="gal"></div>
+        </div>
       </section>
       <section>
         <h2>Cutting room <small>free · local ffmpeg</small></h2>
@@ -177,11 +192,14 @@ input[type=range]{width:100%;accent-color:var(--tally);height:36px}
 </div></div>
 
 <dialog id="picker"><h2 style="font-size:34px">Pick from Flow</h2><p class="empty">Uses media that is already in the open Flow project — no upload.</p><div class="lib" id="pickList"></div><div style="margin-top:16px"><button class="btn small ghost" onclick="picker.close()">Close</button></div></dialog>
+<dialog id="viewer"><div id="viewerBody"></div><p class="empty" id="viewerPath" style="margin:12px 0;word-break:break-all"></p><button class="btn small ghost" onclick="viewer.close()">Close</button></dialog>
 <input type="file" id="file" hidden>
 
 <script>
 const TOKEN = "__FLOW_TOKEN__";
 const $ = (s, el = document) => el.querySelector(s);
+// Opened as a plain file (or a static preview) there is no server behind the page, so nothing can work.
+const LIVE = location.protocol.startsWith("http") && TOKEN !== "__FLOW_" + "TOKEN__";
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const api = async (method, body = {}) => {
   const res = await fetch(`/api/${method}`, { method: "POST", headers: { "content-type": "application/json", "x-flow-token": TOKEN }, body: JSON.stringify(body) });
@@ -210,8 +228,8 @@ function sceneCost(sc) {
   return per * (Number(sc.variants) || S.slate.variants);
 }
 
-function seg(key, options, { disabled } = {}) {
-  return `<div class="seg" data-seg="${key}">${options.map((o) => `<button type="button" data-v="${o}" class="${String(S.slate[key]) === String(o) ? "on" : ""}" ${disabled ? "disabled" : ""}>${o}</button>`).join("")}</div>`;
+function seg(key, options, { disabled, labels = {} } = {}) {
+  return `<div class="seg" data-seg="${key}">${options.map((o) => `<button type="button" data-v="${o}" class="${String(S.slate[key]) === String(o) ? "on" : ""}" ${disabled ? "disabled" : ""}>${labels[o] ?? o}</button>`).join("")}</div>`;
 }
 function renderSlate() {
   const s = S.slate, aspects = s.type === "video" ? ["9:16", "16:9"] : ["9:16", "16:9", "1:1", "4:3", "3:4"];
@@ -223,9 +241,9 @@ function renderSlate() {
     <label class="f">Model</label><select id="model">${Object.keys(MODELS[s.type]).map((m) => `<option ${m === s.model ? "selected" : ""}>${m}</option>`).join("")}</select>
     <label class="f">Frame</label>${seg("aspect", aspects)}
     ${s.type === "video" ? `<div class="grid2"><div><label class="f">Length (s)${isOmni() ? "" : " · Veo is fixed at 8"}</label>${seg("duration", [4, 6, 8, 10], { disabled: !isOmni() })}</div>
-      <div><label class="f">Resolution</label>${seg("resolution", ["360p", "720p"], { disabled: !isOmni() })}</div></div>` : ""}
+      <div><label class="f">Generate at · 720p is Flow's max</label>${seg("resolution", ["360p", "720p"], { disabled: !isOmni() })}</div></div>` : ""}
     <div class="grid2"><div><label class="f">Takes per scene</label>${seg("variants", [1, 2, 3, 4])}</div>
-      <div><label class="f">Download</label>${seg("quality", ["original", "upscaled"])}</div></div>
+      <div><label class="f">Download size · upscale is free</label>${seg("quality", ["original", "upscaled"], { labels: s.type === "video" ? { original: "720p", upscaled: "1080p" } : { original: "1K", upscaled: "2K" } })}</div></div>
     <label class="f">Max credits per scene · checked against Flow's live quote</label><input type="number" id="max" min="0" value="${s.max}">`;
 }
 $("#slate").addEventListener("click", (e) => { const b = e.target.closest("[data-seg] button"); if (!b || b.disabled) return; const k = b.parentElement.dataset.seg; S.slate[k] = isNaN(b.dataset.v) ? b.dataset.v : Number(b.dataset.v); renderAll(); });
@@ -331,19 +349,32 @@ $("#assemble").onclick = async () => {
 };
 
 const chosen = new Set();
-$("#loadLib").onclick = async () => { $("#lib").innerHTML = `<p class="empty">Reading your Flow project…</p>`; try { await loadLibrary(); chosen.clear(); renderLib(); } catch (err) { $("#lib").innerHTML = `<p class="empty">${esc(err.message)}</p>`; } };
+$("#loadLib").onclick = async () => {
+  if (!LIVE) return toast("Not connected. Start Flow Studio first (see the red note at the top).", true);
+  const b = $("#loadLib"); b.disabled = true; b.textContent = "Reading Flow…";
+  $("#lib").innerHTML = `<p class="empty">Scrolling through your Flow project to list its media. This takes a few seconds.</p>`;
+  try { await loadLibrary(); chosen.clear(); renderLib(); if (!LIB.length) $("#lib").innerHTML = `<p class="empty">The open Flow project has no media yet.</p>`; }
+  catch (err) { $("#lib").innerHTML = `<p class="empty" style="color:var(--bad)">${esc(err.message)}</p>`; toast(err.message, true); }
+  b.disabled = false; b.textContent = "Reload library";
+};
 function renderLib() { $("#lib").innerHTML = LIB.map((a, n) => `<button data-n="${n}" class="${chosen.has(n) ? "on" : ""}"><span>${chosen.has(n) ? "✓ " : ""}${esc(a.name)}</span><em>${a.kind}</em></button>`).join(""); $("#dlLib").disabled = $("#dlLibHd").disabled = !chosen.size; }
 $("#lib").addEventListener("click", (e) => { const b = e.target.closest("button[data-n]"); if (!b) return; const n = Number(b.dataset.n); chosen.has(n) ? chosen.delete(n) : chosen.add(n); renderLib(); });
 const dl = (quality) => async () => { toast("Downloading from Flow…"); try { const out = await api("download", { project: S.slate.project, assets: [...chosen].map((n) => LIB[n].name), quality }); toast(`Saved ${out.files.length} file(s) to ${out.dir}`); } catch (err) { toast(err.message, true); } };
 $("#dlLib").onclick = dl("original"); $("#dlLibHd").onclick = dl("upscaled");
 
+function scriptSub() {
+  const s = S.slate, per = sceneCost(blankScene());
+  $("#scriptSub").textContent = s.type === "image" ? "up to 30 images per batch · free" : `one clip per scene · ${isOmni() ? "4–10 s" : "8 s"} each · ${per} credits per clip now`;
+}
 function estimate() {
+  scriptSub();
   const ready = S.scenes.filter((s) => s.prompt.trim()), total = ready.reduce((n, s) => n + sceneCost(s), 0);
   $("#estNum").textContent = `≈ ${total} credit${total === 1 ? "" : "s"}`;
   $("#estSub").textContent = `${ready.length} scene${ready.length === 1 ? "" : "s"} ready`;
   $("#roll").disabled = busy || !ready.length || !S.slate.project.trim();
 }
 $("#roll").onclick = async () => {
+  if (!LIVE) return toast("Not connected. Start Flow Studio first (see the red note at the top).", true);
   const s = S.slate, ref = (v) => (v ? (v.asset ? `asset:${v.asset}` : v.path) : undefined);
   const list = S.scenes.filter((x) => x.prompt.trim());
   const scenes = list.map((sc, i) => ({
@@ -369,7 +400,7 @@ function renderStatus(st) {
   $("#pacing").innerHTML = st.pacing ? `<div class="pacing">⏱ ${esc(st.pacing)}</div>` : "";
   const jobs = [...st.jobs].reverse();
   const sig = JSON.stringify(jobs.map((j) => [j.id, j.status, j.progress, j.files.length, j.credits]));
-  if (sig !== renderStatus.sig) { renderStatus.sig = sig;
+  if (sig !== renderStatus.sig) { if (renderStatus.sig && LIVE) loadGallery(); renderStatus.sig = sig;
     $("#jobs").innerHTML = jobs.map((j) => `<div class="job"><div class="top"><span class="name">${esc(j.project.split("/").pop())} · ${esc(j.scene)}</span><span class="badge ${j.status}">${j.status}${j.progress ? " " + esc(j.progress) : ""}</span>${j.credits !== undefined ? `<span class="badge">${j.credits} cr</span>` : ""}${j.status === "queued" ? `<button class="btn small ghost" data-cancel="${j.id}">Cancel</button>` : ""}</div>
       ${j.status === "running" ? `<div class="meter"><i style="width:${parseInt(j.progress) || 4}%"></i></div>` : ""}
       <p>${esc(j.prompt)}</p>${j.error ? `<p class="err">${esc(j.error)}</p>` : ""}
@@ -378,16 +409,41 @@ function renderStatus(st) {
 }
 $("#jobs").addEventListener("click", async (e) => { const c = e.target.closest("[data-cancel]"); if (c) { try { await api("cancel", { job_id: c.dataset.cancel }); poll(); } catch (err) { toast(err.message, true); } } });
 
+let GAL = [];
+async function loadGallery() {
+  try { GAL = (await api("outputs")).projects; } catch { return; }
+  const sel = $("#galProject"), want = sel.value || S.slate.project.replace(/[^\w.-]+/g, "_");
+  sel.innerHTML = GAL.map((p) => `<option value="${esc(p.name)}">${esc(p.name)} · ${p.files.length} file${p.files.length === 1 ? "" : "s"}</option>`).join("") || `<option value="">Nothing saved yet</option>`;
+  if (GAL.some((p) => p.name === want)) sel.value = want;
+  renderGallery();
+}
+function renderGallery() {
+  const p = GAL.find((x) => x.name === $("#galProject").value);
+  $("#galInfo").textContent = p ? p.dir : "Finished scenes are saved on this Mac and listed here, even after a restart.";
+  $("#gal").innerHTML = (p?.files ?? []).map((f, n) => `<figure data-n="${n}">${f.kind === "video" ? `<video muted playsinline preload="metadata" src="${media(f.path)}#t=0.1"></video>` : `<img loading="lazy" src="${media(f.path)}">`}<figcaption>${esc(f.name)}</figcaption></figure>`).join("");
+}
+$("#galProject").onchange = renderGallery;
+$("#gal").addEventListener("click", (e) => { const fig = e.target.closest("figure"); if (!fig) return; const f = GAL.find((x) => x.name === $("#galProject").value).files[Number(fig.dataset.n)];
+  $("#viewerBody").innerHTML = f.kind === "video" ? `<video controls autoplay playsinline src="${media(f.path)}"></video>` : `<img src="${media(f.path)}">`; $("#viewerPath").textContent = f.path; viewer.showModal(); });
+$("#viewer").addEventListener("close", () => ($("#viewerBody").innerHTML = ""));
+
 let timer, wasActive = false;
 async function poll(detailed = false) {
   clearTimeout(timer);
   try { const active = renderStatus(await api("status", { detailed }));
-    if (wasActive && !active) { wasActive = false; return poll(true); }
+    if (wasActive && !active) { wasActive = false; loadGallery(); return poll(true); }
     wasActive = active; timer = setTimeout(poll, active ? 3000 : 20000);
   } catch (err) { $("#status").innerHTML = `<span class="pill"><i class="tally down"></i>Server offline</span>`; timer = setTimeout(poll, 5000); }
 }
 function renderAll() { renderSlate(); renderScenes(); renderAudio(); estimate(); save(); }
-(async () => { try { TECH = await api("techniques"); } catch {} renderAll(); poll(true); })();
+(async () => {
+  if (!LIVE) {
+    $("#offline").innerHTML = `<div class="hint" style="border-color:var(--bad)"><b>This is only a static preview of the page, so nothing here is connected.</b><br>Start the real panel: double-click <b>Flow Studio.command</b> in the flow-mcp folder (or run <code>npm run studio</code>), then use the page that opens at <b>http://127.0.0.1:8787</b>.</div>`;
+    $("#status").innerHTML = `<span class="pill"><i class="tally down"></i>Not connected</span>`;
+    renderAll(); return;
+  }
+  try { TECH = await api("techniques"); } catch {} renderAll(); poll(true); loadGallery();
+})();
 </script>
 </body>
 </html>

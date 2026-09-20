@@ -24,6 +24,7 @@ export class RemoteCore implements Core {
   techniques = (a: unknown) => call("techniques", a);
   character = (a: unknown) => call("character", a);
   edit = (a: unknown) => call("edit", a);
+  outputs = () => call("outputs", {});
 
   // Long waits are split up so no single HTTP request outlives fetch's header timeout.
   async wait(a: { job_ids?: string[]; timeout_seconds: number }): Promise<unknown> {

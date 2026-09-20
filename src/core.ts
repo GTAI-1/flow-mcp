@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
@@ -73,6 +73,7 @@ export const shapes = {
       .describe("Must be true. Flow shows no quote for edits, so max_credits cannot protect you: a 4 s clip cost 20 credits when measured. The real cost is reported on the finished job."),
     download_quality: z.enum(["original", "upscaled"]).optional(),
   },
+  outputs: {},
   character: {
     name: z.string().min(1).max(60).describe("Character name; scenes then reference it as 'asset:<name>' in reference_images."),
     image: z.string().min(1).describe("Portrait or product image: absolute path, or 'asset:<title>' of an image already in the Flow project. Generate one first with a free image scene if needed."),
@@ -108,6 +109,7 @@ export interface Core {
   techniques(a: Args<"techniques">): Promise<unknown>;
   character(a: Args<"character">): Promise<unknown>;
   edit(a: Args<"edit">): Promise<unknown>;
+  outputs(): Promise<unknown>;
 }
 
 const BUSY = "A generation is running in the Flow tab. Wait for it to finish (flow_wait), then retry.";
@@ -199,6 +201,25 @@ export class LocalCore implements Core {
 
   async assemble({ project, ...rest }: Args<"assemble">) {
     return assemble({ dir: projectDir(project), ...rest });
+  }
+
+  // Everything already downloaded, newest project first, so the panel can show past work after a restart.
+  async outputs() {
+    if (!existsSync(OUTPUT_ROOT)) return { root: OUTPUT_ROOT, projects: [] };
+    const media = /\.(mp4|webm|mov|gif|jpe?g|png|webp)$/i;
+    const projects = readdirSync(OUTPUT_ROOT, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => {
+        const dir = join(OUTPUT_ROOT, d.name);
+        const files = readdirSync(dir)
+          .filter((f) => media.test(f) && !f.endsWith("-lastframe.jpg"))
+          .map((f) => ({ name: f, path: join(dir, f), kind: /\.(mp4|webm|mov)$/i.test(f) ? "video" : "image", mtime: statSync(join(dir, f)).mtimeMs }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        return { name: d.name, dir, files, mtime: Math.max(0, ...files.map((f) => f.mtime)) };
+      })
+      .filter((p) => p.files.length)
+      .sort((a, b) => b.mtime - a.mtime);
+    return { root: OUTPUT_ROOT, projects };
   }
 
   private nextStem(output_dir: string, prefix: string): string {

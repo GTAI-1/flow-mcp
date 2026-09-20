@@ -55,6 +55,8 @@ Built from a manual paid run but not yet run unattended: `flow_edit` (runEdit). 
 Untested: music/voiceover mix in flow_assemble, characters created via `asset:` image.
 Not built: Flow Agent-mode batch tool, "improve prompt (AI)" in Studio (bundled Claude Code CLI exists at
 ~/Library/Application Support/Claude/claude-code/<ver>/claude.app/Contents/MacOS/claude but is not logged in).
+The app's Browser pane shows `studio/index.html` as a static file after edits: that view is NOT connected (the page
+now says so). The real panel is http://127.0.0.1:8787 served by `npm run studio` / `Flow Studio.command`.
 The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome screenshots instead.
 
 ## More UI map (2026-09-19)

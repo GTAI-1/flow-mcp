@@ -48,12 +48,16 @@ Clips are saved to `~/flow-mcp-out/<project>/scene-NN.ext`.
 
 ## Studio (local control panel)
 
+Double-click `Flow Studio.command`, or:
+
 ```bash
 npm run studio   # http://127.0.0.1:8787
 ```
 
+Opening `studio/index.html` directly as a file does nothing: the page needs this server behind it (it says so in red).
+
 Script (paste a whole script and split it into up to 30 scenes), Slate (global settings), Reel (scene cards with technique presets, first/last frames, references, chaining,
-per-scene overrides), Monitor (live queue, progress, previews), Cutting room (ffmpeg assemble with music and
+per-scene overrides), Monitor (live queue, progress, previews), Gallery (everything already saved on disk, per project), Cutting room (ffmpeg assemble with music and
 voiceover) and Flow library (reuse or download media already in the project, incl. free 1080p/2K upscales).
 
 Claude's MCP process serves the same panel while it is running. Whichever process starts first owns the Flow tab
