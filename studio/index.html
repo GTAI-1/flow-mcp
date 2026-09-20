@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flow Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=Hanken+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#14110e; --ink2:#1d1915; --ink3:#2a241e; --line:#3a322a;
+  --bone:#f3eadb; --dim:#b3a793; --tally:#ff5a1f; --go:#9fe06a; --warn:#ffc53d; --bad:#ff4d4d;
+  --display:"Big Shoulders Display",Impact,sans-serif; --body:"Hanken Grotesk",system-ui,sans-serif; --mono:"JetBrains Mono",ui-monospace,monospace;
+  --r:14px;
+}
+*{box-sizing:border-box;margin:0}
+html{background:var(--ink);color:var(--bone);font:500 19px/1.45 var(--body);-webkit-text-size-adjust:100%}
+body{min-height:100vh;padding:0 16px 140px;background:
+  radial-gradient(1200px 500px at 85% -10%,rgba(255,90,31,.16),transparent 60%),
+  radial-gradient(900px 600px at -10% 30%,rgba(255,197,61,.06),transparent 60%),var(--ink)}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.07;z-index:50;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
+.wrap{max-width:1240px;margin:0 auto}
+.clapper{height:26px;margin:0 -16px;background:repeating-linear-gradient(-55deg,var(--bone) 0 34px,var(--ink) 34px 68px)}
+header{display:flex;flex-wrap:wrap;gap:14px 24px;align-items:end;justify-content:space-between;padding:26px 0 22px;border-bottom:2px solid var(--line)}
+h1{font:900 clamp(54px,13vw,104px)/.86 var(--display);letter-spacing:.01em;text-transform:uppercase}
+h1 span{color:var(--tally)}
+.status{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font:700 17px var(--mono)}
+.pill{display:inline-flex;align-items:center;gap:10px;padding:10px 16px;border:2px solid var(--line);border-radius:99px;background:var(--ink2)}
+.tally{width:14px;height:14px;border-radius:50%;background:var(--dim)}
+.tally.ready{background:var(--go);box-shadow:0 0 14px var(--go)}
+.tally.rolling{background:var(--tally);box-shadow:0 0 16px var(--tally);animation:blink 1s steps(2) infinite}
+.tally.down{background:var(--bad)}
+@keyframes blink{50%{opacity:.25}}
+.hint{margin-top:18px;padding:18px 20px;border-left:6px solid var(--warn);background:var(--ink2);border-radius:var(--r);font-size:20px}
+.cols{display:grid;gap:34px;margin-top:30px}
+@media(min-width:1040px){.cols{grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);align-items:start}.side{position:sticky;top:18px}}
+h2{font:800 40px/1 var(--display);text-transform:uppercase;letter-spacing:.03em;margin:0 0 16px;display:flex;align-items:baseline;gap:12px}
+h2 small{font:700 16px var(--mono);color:var(--dim);letter-spacing:0}
+section{margin-bottom:38px}
+.card{background:var(--ink2);border:2px solid var(--line);border-radius:var(--r);padding:20px;animation:rise .45s both}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}}
+label.f{display:block;font:700 15px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.08em;margin:18px 0 8px}
+label.f:first-child{margin-top:0}
+input[type=text],input[type=number],select,textarea{width:100%;font:500 20px var(--body);color:var(--bone);background:var(--ink);border:2px solid var(--line);border-radius:12px;padding:15px 16px;outline:none;-webkit-appearance:none;appearance:none}
+select{background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),linear-gradient(135deg,var(--dim) 50%,transparent 50%);background-position:calc(100% - 24px) 50%,calc(100% - 16px) 50%;background-size:8px 8px;background-repeat:no-repeat;padding-right:46px}
+textarea{min-height:150px;resize:vertical;line-height:1.4}
+input:focus,select:focus,textarea:focus{border-color:var(--tally)}
+.seg{display:flex;flex-wrap:wrap;gap:8px}
+.seg button{flex:1 1 0;min-width:0;min-height:54px;padding:0 16px;font:700 19px var(--mono);color:var(--bone);background:var(--ink);border:2px solid var(--line);border-radius:12px;cursor:pointer}
+.seg button.on{background:var(--bone);color:var(--ink);border-color:var(--bone)}
+.seg button:disabled{opacity:.3;cursor:not-allowed}
+.grid2{display:grid;gap:0 18px}
+.grid2 label.f:first-child{margin-top:18px}
+@media(min-width:620px){.grid2{grid-template-columns:1fr 1fr}}
+.scene{position:relative;margin-bottom:18px;padding-top:24px}
+.scene .no{position:absolute;top:-2px;right:18px;font:900 92px/1 var(--display);color:var(--ink3);pointer-events:none;-webkit-text-stroke:2px var(--line)}
+.scene>label.f:first-of-type{padding-right:120px}
+.scene .bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
+.btn{min-height:56px;padding:0 22px;font:800 22px var(--display);letter-spacing:.06em;text-transform:uppercase;color:var(--bone);background:var(--ink3);border:2px solid var(--line);border-radius:12px;cursor:pointer}
+.btn:hover{border-color:var(--bone)}
+.btn.ghost{background:transparent}
+.btn.small{min-height:48px;font-size:19px;padding:0 16px}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.phrase{margin-top:10px;padding:14px 16px;border-radius:12px;background:var(--ink);border:2px dashed var(--line);color:var(--dim);font-size:18px}
+.phrase b{color:var(--warn);font-weight:700}
+.slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
+.slot{position:relative;min-height:128px;border:2px dashed var(--line);border-radius:12px;background:var(--ink);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:10px;text-align:center;cursor:pointer;font:700 16px var(--mono);color:var(--dim);overflow:hidden}
+.slot:hover{border-color:var(--tally);color:var(--bone)}
+.slot img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.75}
+.slot .tag{position:relative;background:rgba(20,17,14,.85);padding:4px 10px;border-radius:8px;color:var(--bone);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.slot .two{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+.slot .two button{min-height:44px;padding:0 12px;font:700 15px var(--mono);color:var(--bone);background:var(--ink3);border:2px solid var(--line);border-radius:10px;cursor:pointer}
+.slot .two button:hover{border-color:var(--tally)}
+.slot .x{position:absolute;top:6px;right:6px;width:36px;height:36px;border-radius:50%;border:0;background:var(--bad);color:#fff;font:800 20px var(--body);cursor:pointer;z-index:2}
+.check{display:flex;align-items:center;gap:14px;margin-top:18px;font-size:20px;cursor:pointer}
+.check input{width:30px;height:30px;accent-color:var(--tally)}
+.add{width:100%;min-height:72px;border-style:dashed;font-size:26px}
+.rollbar{position:fixed;left:0;right:0;bottom:0;z-index:40;padding:14px 16px calc(14px + env(safe-area-inset-bottom));background:var(--ink);border-top:2px solid var(--line)}
+.rollbar .in{max-width:1240px;margin:0 auto;display:flex;gap:14px;align-items:center}
+.est{flex:1;min-width:0;font:700 17px var(--mono);color:var(--dim)}
+.est b{display:block;font:900 38px/1 var(--display);color:var(--bone);letter-spacing:.03em}
+.roll{min-height:76px;padding:0 38px;font:900 38px var(--display);letter-spacing:.08em;text-transform:uppercase;color:var(--ink);background:var(--tally);border:0;border-radius:16px;cursor:pointer;box-shadow:0 10px 40px rgba(255,90,31,.35)}
+.roll:active{transform:translateY(2px)}
+.roll:disabled{background:var(--ink3);color:var(--dim);box-shadow:none;cursor:not-allowed}
+.job{display:grid;gap:12px;padding:16px 0;border-top:2px solid var(--line)}
+.job:first-child{border-top:0;padding-top:0}
+.job .top{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.badge{font:700 15px var(--mono);text-transform:uppercase;letter-spacing:.06em;padding:6px 12px;border-radius:8px;background:var(--ink3)}
+.badge.running{background:var(--tally);color:var(--ink)} .badge.done{background:var(--go);color:var(--ink)} .badge.failed{background:var(--bad);color:#fff} .badge.cancelled{opacity:.5}
+.job .name{font:800 26px var(--display);letter-spacing:.04em;text-transform:uppercase}
+.job p{color:var(--dim);font-size:18px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.job .err{color:var(--bad);-webkit-line-clamp:4}
+.job video,.job img.out{width:100%;max-height:420px;object-fit:contain;border-radius:12px;background:#000}
+.meter{height:10px;border-radius:9px;background:var(--ink3);overflow:hidden}.meter i{display:block;height:100%;background:var(--tally);transition:width .6s}
+.pacing{font:700 17px var(--mono);color:var(--warn);margin-bottom:14px}
+.empty{color:var(--dim);font-size:19px}
+.lib{display:grid;gap:8px;max-height:420px;overflow:auto;margin-top:14px}
+.lib button{display:flex;gap:12px;align-items:center;justify-content:space-between;text-align:left;min-height:56px;padding:10px 16px;font:500 19px var(--body);color:var(--bone);background:var(--ink);border:2px solid var(--line);border-radius:12px;cursor:pointer}
+.lib button:hover{border-color:var(--tally)} .lib button.on{border-color:var(--go)}
+.lib em{font:700 14px var(--mono);font-style:normal;color:var(--dim);text-transform:uppercase}
+dialog{width:min(640px,calc(100vw - 24px));max-height:86vh;border:2px solid var(--line);border-radius:18px;background:var(--ink2);color:var(--bone);padding:22px}
+dialog::backdrop{background:rgba(0,0,0,.7)}
+.toast{position:fixed;left:50%;bottom:120px;transform:translateX(-50%);z-index:60;max-width:calc(100vw - 32px);padding:16px 22px;border-radius:12px;background:var(--bone);color:var(--ink);font-weight:700;font-size:19px;box-shadow:0 12px 40px rgba(0,0,0,.5)}
+.toast.bad{background:var(--bad);color:#fff}
+input[type=range]{width:100%;accent-color:var(--tally);height:36px}
+</style>
+</head>
+<body>
+<div class="clapper"></div>
+<div class="wrap">
+  <header>
+    <h1>Flow<br><span>Studio</span></h1>
+    <div class="status" id="status"><span class="pill"><i class="tally"></i>Connecting…</span></div>
+  </header>
+  <div id="hint"></div>
+
+  <div class="cols">
+    <main>
+      <section>
+        <h2>Slate <small>applies to every scene</small></h2>
+        <div class="card" id="slate"></div>
+      </section>
+      <section>
+        <h2>Reel <small id="reelCount"></small></h2>
+        <div id="scenes"></div>
+        <button class="btn ghost add" id="addScene">+ Add scene</button>
+      </section>
+    </main>
+
+    <aside class="side">
+      <section>
+        <h2>Monitor</h2>
+        <div class="card"><div id="pacing"></div><div id="jobs"><p class="empty">Nothing queued. Build the reel and hit Roll.</p></div></div>
+      </section>
+      <section>
+        <h2>Cutting room <small>free · local ffmpeg</small></h2>
+        <div class="card">
+          <p class="empty" style="margin-bottom:6px">Joins this project's finished scenes in order, keeps their sound, adds music and voiceover.</p>
+          <label class="f">Music</label><div class="slots"><div class="slot" data-audio="music"></div></div>
+          <label class="f">Music volume <span id="volOut">25%</span></label><input type="range" id="vol" min="0" max="100" value="25">
+          <label class="f">Voiceover</label><div class="slots"><div class="slot" data-audio="voiceover"></div></div>
+          <div class="bar" style="margin-top:20px"><button class="btn" id="assemble">Assemble film</button></div>
+          <div id="final" style="margin-top:16px"></div>
+        </div>
+      </section>
+      <section>
+        <h2>Flow library <small>already in your project</small></h2>
+        <div class="card">
+          <div class="bar" style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn small" id="loadLib">Load library</button>
+            <button class="btn small" id="dlLib" disabled>Download selected</button>
+            <button class="btn small ghost" id="dlLibHd" disabled>…in 1080p / 2K</button>
+          </div>
+          <div class="lib" id="lib"></div>
+        </div>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<div class="rollbar"><div class="in">
+  <div class="est"><b id="estNum">0 credits</b><span id="estSub">0 scenes ready</span></div>
+  <button class="roll" id="roll">Roll</button>
+</div></div>
+
+<dialog id="picker"><h2 style="font-size:34px">Pick from Flow</h2><p class="empty">Uses media that is already in the open Flow project — no upload.</p><div class="lib" id="pickList"></div><div style="margin-top:16px"><button class="btn small ghost" onclick="picker.close()">Close</button></div></dialog>
+<input type="file" id="file" hidden>
+
+<script>
+const TOKEN = "__FLOW_TOKEN__";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const api = async (method, body = {}) => {
+  const res = await fetch(`/api/${method}`, { method: "POST", headers: { "content-type": "application/json", "x-flow-token": TOKEN }, body: JSON.stringify(body) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+};
+const media = (path) => `/media?token=${TOKEN}&path=${encodeURIComponent(path)}`;
+const toast = (msg, bad) => { const t = Object.assign(document.createElement("div"), { className: "toast" + (bad ? " bad" : ""), textContent: msg }); document.body.append(t); setTimeout(() => t.remove(), bad ? 7000 : 3200); };
+
+// Credit prices read from Flow's own quote (Pro plan, x1). Flow's live quote is still checked per scene via max_credits.
+const MODELS = {
+  video: { "Omni 1.1 Flash": { "360p": { 4: 4, 6: 5, 8: 6, 10: 7 }, "720p": { 4: 7, 6: 10, 8: 12, 10: 15 } }, "Veo 3.1 - Lite": 10, "Veo 3.1 - Fast": 20, "Veo 3.1 - Quality": 100 },
+  image: { "Nano Banana 2": 0 },
+};
+const blankScene = () => ({ prompt: "", technique: "", chain: false, first: null, last: null, refs: [], duration: "", variants: "" });
+const saved = JSON.parse(localStorage.getItem("flow-studio") || "null");
+const S = saved || { slate: { project: "MyFilm", type: "video", model: "Omni 1.1 Flash", aspect: "9:16", duration: 8, resolution: "720p", variants: 1, quality: "original", max: 25 }, scenes: [blankScene()], audio: { music: null, voiceover: null } };
+const save = () => localStorage.setItem("flow-studio", JSON.stringify(S));
+let TECH = [], LIB = [], pickTarget = null, busy = false;
+
+const isOmni = () => S.slate.type === "video" && S.slate.model.startsWith("Omni");
+function sceneCost(sc) {
+  const m = MODELS[S.slate.type][S.slate.model]; if (m === undefined) return 0;
+  const per = typeof m === "number" ? m : m[S.slate.resolution][sc.duration || S.slate.duration];
+  return per * (Number(sc.variants) || S.slate.variants);
+}
+
+function seg(key, options, { disabled } = {}) {
+  return `<div class="seg" data-seg="${key}">${options.map((o) => `<button type="button" data-v="${o}" class="${String(S.slate[key]) === String(o) ? "on" : ""}" ${disabled ? "disabled" : ""}>${o}</button>`).join("")}</div>`;
+}
+function renderSlate() {
+  const s = S.slate, aspects = s.type === "video" ? ["9:16", "16:9"] : ["9:16", "16:9", "1:1", "4:3", "3:4"];
+  if (!aspects.includes(s.aspect)) s.aspect = aspects[0];
+  if (!(s.model in MODELS[s.type])) s.model = Object.keys(MODELS[s.type])[0];
+  $("#slate").innerHTML = `
+    <label class="f">Project folder</label><input type="text" id="project" value="${esc(s.project)}">
+    <label class="f">Make</label>${seg("type", ["video", "image"])}
+    <label class="f">Model</label><select id="model">${Object.keys(MODELS[s.type]).map((m) => `<option ${m === s.model ? "selected" : ""}>${m}</option>`).join("")}</select>
+    <label class="f">Frame</label>${seg("aspect", aspects)}
+    ${s.type === "video" ? `<div class="grid2"><div><label class="f">Length (s)${isOmni() ? "" : " · Veo is fixed at 8"}</label>${seg("duration", [4, 6, 8, 10], { disabled: !isOmni() })}</div>
+      <div><label class="f">Resolution</label>${seg("resolution", ["360p", "720p"], { disabled: !isOmni() })}</div></div>` : ""}
+    <div class="grid2"><div><label class="f">Takes per scene</label>${seg("variants", [1, 2, 3, 4])}</div>
+      <div><label class="f">Download</label>${seg("quality", ["original", "upscaled"])}</div></div>
+    <label class="f">Max credits per scene · checked against Flow's live quote</label><input type="number" id="max" min="0" value="${s.max}">`;
+}
+$("#slate").addEventListener("click", (e) => { const b = e.target.closest("[data-seg] button"); if (!b || b.disabled) return; const k = b.parentElement.dataset.seg; S.slate[k] = isNaN(b.dataset.v) ? b.dataset.v : Number(b.dataset.v); renderAll(); });
+$("#slate").addEventListener("input", (e) => { if (e.target.id === "project") S.slate.project = e.target.value; if (e.target.id === "max") S.slate.max = Number(e.target.value); if (e.target.id === "model") { S.slate.model = e.target.value; return renderAll(); } save(); estimate(); });
+
+function slotHtml(kind, i, val, label) {
+  const name = val ? (val.asset ? val.asset : val.name) : "";
+  return `<div class="slot" data-slot="${kind}" data-i="${i}">${val?.path && /\.(jpe?g|png|webp|gif)$/i.test(val.path) ? `<img src="${media(val.path)}">` : ""}
+    ${val ? `<button class="x" data-clear="${kind}" data-i="${i}">×</button><span class="tag">${esc(name)}</span>` : `<span>${label}</span><span class="two"><button type="button" data-src="upload">Upload</button><button type="button" data-src="flow">From Flow</button></span>`}</div>`;
+}
+function renderScenes() {
+  const cats = { camera: "Camera", product: "Product", transition: "Transitions (need first + last frame)", image: "Image commands" };
+  $("#scenes").innerHTML = S.scenes.map((sc, i) => {
+    const t = TECH.find((x) => x.id === sc.technique);
+    return `<div class="card scene" data-i="${i}" style="animation-delay:${i * 50}ms"><div class="no">${String(i + 1).padStart(2, "0")}</div>
+      <label class="f">What happens in this shot</label><textarea data-k="prompt" placeholder="A girl drinks coffee by the window, slow push-in, cozy morning light, soft cafe ambience">${esc(sc.prompt)}</textarea>
+      <label class="f">Film technique</label><select data-k="technique"><option value="">None</option>${Object.entries(cats).map(([c, l]) => `<optgroup label="${l}">${TECH.filter((x) => x.category === c).map((x) => `<option value="${x.id}" ${x.id === sc.technique ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</optgroup>`).join("")}</select>
+      ${t ? `<div class="phrase">${t.needs ? `<b>Needs: ${esc(t.needs)}.</b> ` : ""}Adds: “${esc(t.phrase)}”</div>` : ""}
+      ${S.slate.type === "video" ? `<label class="f">Frames (first → last)</label><div class="slots">${sc.chain ? `<div class="slot" style="cursor:default"><span class="tag">↳ last frame of scene ${i}</span></div>` : slotHtml("first", i, sc.first, "First frame")}${slotHtml("last", i, sc.last, "Last frame")}</div>` : ""}
+      <label class="f">Reference images (product / person, max 3)</label><div class="slots">${sc.refs.map((r, j) => slotHtml("ref", `${i}:${j}`, r, "")).join("")}${sc.refs.length < 3 ? slotHtml("ref", `${i}:${sc.refs.length}`, null, "Reference") : ""}</div>
+      ${S.slate.type === "video" && i > 0 ? `<label class="check"><input type="checkbox" data-k="chain" ${sc.chain ? "checked" : ""}>Continue from scene ${i} (seamless stitch)</label>` : ""}
+      ${S.slate.type === "video" ? `<div class="grid2"><div><label class="f">Length override</label><select data-k="duration" ${isOmni() ? "" : "disabled"}><option value="">Slate (${S.slate.duration}s)</option>${[4, 6, 8, 10].map((d) => `<option ${Number(sc.duration) === d ? "selected" : ""}>${d}</option>`).join("")}</select></div>
+        <div><label class="f">Takes override</label><select data-k="variants"><option value="">Slate (x${S.slate.variants})</option>${[1, 2, 3, 4].map((d) => `<option ${Number(sc.variants) === d ? "selected" : ""}>${d}</option>`).join("")}</select></div></div>` : ""}
+      <div class="bar"><button class="btn small ghost" data-act="up">↑</button><button class="btn small ghost" data-act="down">↓</button><button class="btn small ghost" data-act="dup">Duplicate</button><button class="btn small ghost" data-act="del">Delete</button></div></div>`;
+  }).join("");
+  $("#reelCount").textContent = `${S.scenes.length} scene${S.scenes.length > 1 ? "s" : ""}`;
+}
+const sceneOf = (el) => S.scenes[Number(el.closest(".scene").dataset.i)];
+$("#scenes").addEventListener("input", (e) => { const k = e.target.dataset.k; if (!k) return; const sc = sceneOf(e.target); sc[k] = e.target.type === "checkbox" ? e.target.checked : e.target.value; if (k === "chain" && sc.chain) sc.first = null; if (k !== "prompt") renderScenes(); save(); estimate(); });
+$("#scenes").addEventListener("click", (e) => {
+  const act = e.target.closest("[data-act]"), clear = e.target.closest("[data-clear]"), slot = e.target.closest("[data-slot]");
+  if (act) { const i = Number(act.closest(".scene").dataset.i), a = act.dataset.act, L = S.scenes;
+    if (a === "del") L.length > 1 ? L.splice(i, 1) : (L[0] = blankScene());
+    if (a === "dup") L.splice(i + 1, 0, JSON.parse(JSON.stringify(L[i])));
+    if (a === "up" && i > 0) [L[i - 1], L[i]] = [L[i], L[i - 1]];
+    if (a === "down" && i < L.length - 1) [L[i + 1], L[i]] = [L[i], L[i + 1]];
+    L[0].chain = false; return renderAll(); }
+  if (clear) { e.stopPropagation(); setSlot(clear.dataset.clear, clear.dataset.i, null); return renderAll(); }
+  const src = e.target.closest("[data-src]");
+  if (slot && slot.dataset.slot && src) { pickTarget = { kind: slot.dataset.slot, i: slot.dataset.i }; src.dataset.src === "flow" ? openPicker() : (($("#file").accept = "image/*"), $("#file").click()); }
+});
+function setSlot(kind, idx, val) {
+  if (kind === "ref") { const [i, j] = idx.split(":").map(Number); val ? (S.scenes[i].refs[j] = val) : S.scenes[i].refs.splice(j, 1); }
+  else if (kind === "music" || kind === "voiceover") S.audio[kind] = val;
+  else S.scenes[Number(idx)][kind] = val;
+}
+$("#file").addEventListener("change", async (e) => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f || !pickTarget) return;
+  try { const res = await fetch(`/api/upload?name=${encodeURIComponent(f.name)}`, { method: "POST", headers: { "x-flow-token": TOKEN }, body: f });
+    const data = await res.json(); if (!res.ok) throw new Error(data.error);
+    setSlot(pickTarget.kind, pickTarget.i, { path: data.path, name: f.name }); renderAll();
+  } catch (err) { toast(err.message, true); }
+});
+async function loadLibrary() { LIB = await api("assets"); return LIB; }
+async function openPicker() {
+  $("#pickList").innerHTML = `<p class="empty">Reading your Flow project…</p>`; picker.showModal();
+  try { if (!LIB.length) await loadLibrary();
+    $("#pickList").innerHTML = LIB.map((a, n) => `<button data-n="${n}"><span>${esc(a.name)}</span><em>${a.kind}</em></button>`).join("") || `<p class="empty">The project has no media yet.</p>`;
+  } catch (err) { $("#pickList").innerHTML = `<p class="empty">${esc(err.message)}</p>`; }
+}
+$("#pickList").addEventListener("click", (e) => { const b = e.target.closest("button[data-n]"); if (!b) return; setSlot(pickTarget.kind, pickTarget.i, { asset: LIB[Number(b.dataset.n)].name }); picker.close(); renderAll(); });
+$("#addScene").onclick = () => { S.scenes.push(blankScene()); renderAll(); window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }); };
+
+function renderAudio() {
+  for (const k of ["music", "voiceover"]) { const el = $(`[data-audio=${k}]`), v = S.audio[k];
+    el.innerHTML = v ? `<button class="x" data-clearaudio="${k}">×</button><span class="tag">${esc(v.name)}</span>` : `<span>+ ${k === "music" ? "Music track" : "Voiceover"}</span>`; }
+}
+document.addEventListener("click", (e) => {
+  const c = e.target.closest("[data-clearaudio]"); if (c) { S.audio[c.dataset.clearaudio] = null; save(); return renderAudio(); }
+  const a = e.target.closest("[data-audio]"); if (a) { pickTarget = { kind: a.dataset.audio, i: 0 }; $("#file").accept = "audio/*"; $("#file").click(); }
+});
+$("#vol").oninput = (e) => ($("#volOut").textContent = e.target.value + "%");
+$("#assemble").onclick = async () => {
+  $("#assemble").disabled = true; $("#assemble").textContent = "Cutting…";
+  try { const out = await api("assemble", { project: S.slate.project, music: S.audio.music?.path, voiceover: S.audio.voiceover?.path, music_volume: Number($("#vol").value) / 100, output_name: "final" });
+    $("#final").innerHTML = `<video controls playsinline src="${media(out.output)}&t=${Date.now()}" style="width:100%;border-radius:12px;background:#000"></video><p class="empty" style="margin-top:8px">${out.clips.length} clips · ${out.duration.toFixed(1)}s · ${esc(out.output)}</p>`;
+  } catch (err) { toast(err.message, true); }
+  $("#assemble").disabled = false; $("#assemble").textContent = "Assemble film";
+};
+
+const chosen = new Set();
+$("#loadLib").onclick = async () => { $("#lib").innerHTML = `<p class="empty">Reading your Flow project…</p>`; try { await loadLibrary(); chosen.clear(); renderLib(); } catch (err) { $("#lib").innerHTML = `<p class="empty">${esc(err.message)}</p>`; } };
+function renderLib() { $("#lib").innerHTML = LIB.map((a, n) => `<button data-n="${n}" class="${chosen.has(n) ? "on" : ""}"><span>${chosen.has(n) ? "✓ " : ""}${esc(a.name)}</span><em>${a.kind}</em></button>`).join(""); $("#dlLib").disabled = $("#dlLibHd").disabled = !chosen.size; }
+$("#lib").addEventListener("click", (e) => { const b = e.target.closest("button[data-n]"); if (!b) return; const n = Number(b.dataset.n); chosen.has(n) ? chosen.delete(n) : chosen.add(n); renderLib(); });
+const dl = (quality) => async () => { toast("Downloading from Flow…"); try { const out = await api("download", { project: S.slate.project, assets: [...chosen].map((n) => LIB[n].name), quality }); toast(`Saved ${out.files.length} file(s) to ${out.dir}`); } catch (err) { toast(err.message, true); } };
+$("#dlLib").onclick = dl("original"); $("#dlLibHd").onclick = dl("upscaled");
+
+function estimate() {
+  const ready = S.scenes.filter((s) => s.prompt.trim()), total = ready.reduce((n, s) => n + sceneCost(s), 0);
+  $("#estNum").textContent = `≈ ${total} credit${total === 1 ? "" : "s"}`;
+  $("#estSub").textContent = `${ready.length} scene${ready.length === 1 ? "" : "s"} ready`;
+  $("#roll").disabled = busy || !ready.length || !S.slate.project.trim();
+}
+$("#roll").onclick = async () => {
+  const s = S.slate, ref = (v) => (v ? (v.asset ? `asset:${v.asset}` : v.path) : undefined);
+  const list = S.scenes.filter((x) => x.prompt.trim());
+  const scenes = list.map((sc, i) => ({
+    prompt: sc.prompt.trim(), type: s.type, model: s.model, aspect_ratio: s.aspect, max_credits: s.max, download_quality: s.quality,
+    variants: Number(sc.variants) || s.variants, technique: sc.technique || undefined,
+    ...(s.type === "video" && isOmni() ? { duration: Number(sc.duration) || s.duration, resolution: s.resolution } : {}),
+    ...(s.type === "video" ? { chain_previous: (i > 0 && sc.chain) || undefined, first_frame: sc.chain ? undefined : ref(sc.first), last_frame: ref(sc.last) } : {}),
+    reference_images: sc.refs.length ? sc.refs.map(ref) : undefined,
+  }));
+  const cost = list.reduce((n, x) => n + sceneCost(x), 0);
+  if (cost > 0 && !confirm(`Queue ${scenes.length} scene(s) for about ${cost} credits?`)) return;
+  try { await api("generate", { project: s.project.trim(), scenes }); toast("Rolling. Flow runs one scene at a time."); poll(); } catch (err) { toast(err.message, true); }
+};
+
+function renderStatus(st) {
+  const f = st.flow, active = st.jobs.some((j) => j.status === "running" || j.status === "queued");
+  busy = false;
+  const cls = !f.signedIn || !f.inProject ? "down" : active ? "rolling" : "ready";
+  const text = !f.signedIn ? "Not signed in" : !f.inProject ? "No project open" : active ? "Rolling" : "Ready";
+  if (f.credits_remaining !== undefined) renderStatus.credits = f.credits_remaining; if (f.plan) renderStatus.plan = f.plan;
+  $("#status").innerHTML = `<span class="pill"><i class="tally ${cls}"></i>${text}</span>${renderStatus.plan ? `<span class="pill">${esc(renderStatus.plan)}</span>` : ""}${renderStatus.credits !== undefined ? `<span class="pill">${renderStatus.credits.toLocaleString()} credits</span>` : ""}`;
+  $("#hint").innerHTML = f.hint ? `<div class="hint">${esc(f.hint)}</div>` : "";
+  $("#pacing").innerHTML = st.pacing ? `<div class="pacing">⏱ ${esc(st.pacing)}</div>` : "";
+  const jobs = [...st.jobs].reverse();
+  const sig = JSON.stringify(jobs.map((j) => [j.id, j.status, j.progress, j.files.length, j.credits]));
+  if (sig !== renderStatus.sig) { renderStatus.sig = sig;
+    $("#jobs").innerHTML = jobs.map((j) => `<div class="job"><div class="top"><span class="name">${esc(j.project.split("/").pop())} · ${esc(j.scene)}</span><span class="badge ${j.status}">${j.status}${j.progress ? " " + esc(j.progress) : ""}</span>${j.credits !== undefined ? `<span class="badge">${j.credits} cr</span>` : ""}${j.status === "queued" ? `<button class="btn small ghost" data-cancel="${j.id}">Cancel</button>` : ""}</div>
+      ${j.status === "running" ? `<div class="meter"><i style="width:${parseInt(j.progress) || 4}%"></i></div>` : ""}
+      <p>${esc(j.prompt)}</p>${j.error ? `<p class="err">${esc(j.error)}</p>` : ""}
+      ${j.files.map((p) => (/\.(mp4|webm|mov)$/i.test(p) ? `<video controls playsinline preload="metadata" src="${media(p)}"></video>` : `<img class="out" src="${media(p)}">`)).join("")}</div>`).join("") || `<p class="empty">Nothing queued. Build the reel and hit Roll.</p>`; }
+  estimate(); return active;
+}
+$("#jobs").addEventListener("click", async (e) => { const c = e.target.closest("[data-cancel]"); if (c) { try { await api("cancel", { job_id: c.dataset.cancel }); poll(); } catch (err) { toast(err.message, true); } } });
+
+let timer, wasActive = false;
+async function poll(detailed = false) {
+  clearTimeout(timer);
+  try { const active = renderStatus(await api("status", { detailed }));
+    if (wasActive && !active) { wasActive = false; return poll(true); }
+    wasActive = active; timer = setTimeout(poll, active ? 3000 : 20000);
+  } catch (err) { $("#status").innerHTML = `<span class="pill"><i class="tally down"></i>Server offline</span>`; timer = setTimeout(poll, 5000); }
+}
+function renderAll() { renderSlate(); renderScenes(); renderAudio(); estimate(); save(); }
+(async () => { try { TECH = await api("techniques"); } catch {} renderAll(); poll(true); })();
+</script>
+</body>
+</html>

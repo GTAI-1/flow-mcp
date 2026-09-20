@@ -5,7 +5,10 @@ Local MCP server (stdio, TypeScript) that drives Google Flow in a dedicated Chro
 OmniFlow (lingoflow.pro/omniflow), using subscription credits instead of the API.
 
 - `src/chrome.ts` launch/attach Chrome · `src/flow.ts` UI driver · `src/queue.ts` paced job queue
-- `src/index.ts` MCP tools · `src/chain.ts` ffmpeg last-frame · `src/playbook.ts` guidance returned by `flow_status`
+- `src/core.ts` all tool logic + zod shapes (LocalCore) · `src/server.ts` localhost HTTP API + Studio page ·
+  `src/remote.ts` RemoteCore (used when another process owns port 8787) · `src/index.ts` MCP tools · `src/studio.ts` standalone panel
+- `studio/index.html` Studio UI (single file, vanilla JS, mobile-first) · `src/chain.ts`, `src/assemble.ts` ffmpeg ·
+  `src/techniques.ts` presets · `src/playbook.ts` guidance returned by `flow_status`
 - Test: `node scripts/e2e.mjs <project> '<scenes json>'` (spends credits unless scenes are images)
 
 ## Rules
@@ -43,11 +46,13 @@ OmniFlow (lingoflow.pro/omniflow), using subscription credits instead of the API
 
 ## Status
 
-Verified unattended through the MCP: image, text→video, first+last frame, reference_images, chain_previous,
-download, credit guard, pacing, flow_techniques, flow_assemble.
-Untested: variants > 1, image generation with reference_images.
-Not built: `flow_edit` (needs one paid run to learn cost/result placement), characters tool, reuse of existing library
-assets by name, 1080p upscaled download, local Studio web panel.
+Verified unattended: image, text→video, first+last frame, reference_images, chain_previous, download (original +
+free 1080p upscale), credit guard, pacing, credits readout, flow_assets, flow_download, flow_techniques,
+flow_assemble, Studio panel (image scene end to end), MCP-as-client via RemoteCore.
+Omni 1.1 Flash quotes: 360p 4/5/6/7 and 720p 7/10/12/15 credits for 4/6/8/10 s.
+Untested: variants > 1, image generation with reference_images, music/voiceover mix in flow_assemble, `asset:` refs.
+Not built: `flow_edit` (needs one paid run to learn cost/result placement), characters tool, "improve prompt (AI)" in Studio.
+The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome screenshots instead.
 
 ## More UI map (2026-09-19)
 
