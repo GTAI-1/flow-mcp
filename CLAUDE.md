@@ -87,3 +87,9 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   have spent credits); `flow_retry` / the Studio Retry button re-queue manually. A REAL failed tile has never been observed,
   so the failure detection in waitForNewMedia (FAILURE_TEXT on tile text) and any agent-mode per-scene retry are unverified.
   Capture the DOM of a genuine failed tile before building more on it. Caps: 100 scenes exact, 50 agent.
+- Agent batches (verified 2026-09-20, 5 scenes with scene 2 simulated missing via `FLOW_MCP_SIMULATE_MISSING=2` → all 5
+  files correctly numbered, 114 s, 0 credits): tiles finish in ANY order and the agent rewords prompts, so runAgentBatch
+  reads each new tile's stored prompt (hover → `Reuse prompt` → composer text), matches tiles to scenes by word overlap
+  (matchScenes, ≥50 % of the scene's words), and re-runs unmatched scenes through runGeneration (2 attempts each).
+  `Reuse prompt` on an agent-made tile opens the agent session panel (`Start new session`, `Close`) which hides the normal
+  composer; closeAgentSession handles it. This retry does not depend on what a failed tile looks like.

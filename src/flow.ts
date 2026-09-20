@@ -538,6 +538,52 @@ async function setAgentSettings(page: Page, confirm: "Always" | "Never", imageAs
   await pause(page, 1200);
 }
 
+// "Reuse prompt" on an agent-made tile opens the agent's session panel, which hides the normal composer.
+async function closeAgentSession(page: Page): Promise<void> {
+  const panel = page.getByRole("button", { name: "Start new session" });
+  if (await panel.isVisible().catch(() => false)) {
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    await pause(page, 1000);
+  }
+  const clear = page.getByRole("button", { name: "Clear prompt" });
+  if (await clear.isVisible().catch(() => false)) await clear.click();
+  else {
+    await page.locator(".ProseMirror").first().click();
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("Delete");
+  }
+  await pause(page, 400);
+}
+
+const STOP_WORDS = new Set("the and with from into over under that this then than are was for her his its their onto next near across wide shot close scene image".split(" "));
+const words = (text: string) => new Set(text.toLowerCase().match(/[a-z0-9']{3,}/g)?.filter((w) => !STOP_WORDS.has(w)) ?? []);
+
+// Returns, per scene, the indexes of the tiles that belong to it (best match first). A tile counts when at least
+// half of the scene's meaningful words appear in the prompt Flow stored for that tile.
+export function matchScenes(scenes: string[], prompts: string[]): number[][] {
+  const sceneWords = scenes.map(words);
+  const pairs: { scene: number; tile: number; score: number }[] = [];
+  prompts.forEach((prompt, tile) => {
+    const have = words(prompt);
+    sceneWords.forEach((want, scene) => {
+      const hit = [...want].filter((w) => have.has(w)).length;
+      pairs.push({ scene, tile, score: want.size ? hit / want.size : 0 });
+    });
+  });
+  pairs.sort((x, y) => y.score - x.score);
+  const out: number[][] = scenes.map(() => []);
+  const usedTiles = new Set<number>();
+  // First give every scene its single best tile, then hand leftover tiles to their best scene as extra takes.
+  for (const firstPass of [true, false]) {
+    for (const { scene, tile, score } of pairs) {
+      if (score < 0.5 || usedTiles.has(tile) || (firstPass && out[scene].length)) continue;
+      out[scene].push(tile);
+      usedTiles.add(tile);
+    }
+  }
+  return out;
+}
+
 // Hands a whole multi-scene script to Flow's own agent, which generates every image in parallel (seconds instead
 // of one paced job per scene). Images only: the agent runs unconfirmed, and images cost no credits.
 export async function runAgentBatch(job: Job): Promise<string[]> {
@@ -552,7 +598,8 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
   const before = new Set((await scanGrid(page)).map((a) => a.id).filter(Boolean));
   await scrollToTop(page);
 
-  let files: string[] = [];
+  const files: string[] = [];
+  const done = new Set<number>();
   try {
     await setAgentMode(page, true);
     await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9");
@@ -583,24 +630,76 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
       if (Date.now() > deadline) throw new Error("Timed out waiting for Flow's agent to finish the batch.");
     }
 
-    const after = await scanGrid(page);
-    // Newest tiles come first and the agent starts scenes in order, so reversed grid order is scene order.
-    const fresh = after.filter((a) => a.id && !before.has(a.id) && a.kind === "image").reverse();
-    if (!fresh.length) throw new Error("Flow's agent finished without creating any image. Open the Flow tab to read its reply, then retry with a clearer script.");
+    const fresh = (await scanGrid(page)).filter((t) => t.id && !before.has(t.id) && t.kind === "image");
+
+    // Tiles finish in any order and the agent rewords prompts, so each image is matched back to its scene by the
+    // prompt Flow stored for it ("Reuse prompt" puts that text in the composer).
+    const prompts: string[] = [];
+    for (const tile of fresh) {
+      await scanGrid(page, (seen) => seen.some((x) => x.id === tile.id));
+      const el = mediaTile(page, tile.id!);
+      await el.scrollIntoViewIfNeeded();
+      await el.hover();
+      await el.getByRole("button", { name: "Reuse prompt" }).click();
+      await pause(page, 900);
+      prompts.push(await page.locator(".ProseMirror").first().innerText());
+    }
+    await closeAgentSession(page);
+
+    const assigned = matchScenes(scenes, prompts);
+    const drop = Number(process.env.FLOW_MCP_SIMULATE_MISSING ?? 0); // test hook: pretend this scene number failed
     mkdirSync(s.output_dir, { recursive: true });
     const base = Number(s.file_stem.match(/\d+/)?.[0] ?? 1);
-    for (const [i, asset] of fresh.entries()) {
-      await scanGrid(page, (seen) => seen.some((x) => x.id === asset.id));
-      const stem = join(s.output_dir, `scene-${String(base + i).padStart(2, "0")}`);
-      files.push(await downloadTile(page, mediaTile(page, asset.id!), stem, s.download_quality ?? "original"));
-      await pause(page, 800);
+    for (const [sceneIndex, tileIndexes] of assigned.entries()) {
+      if (sceneIndex + 1 === drop) continue;
+      for (const [v, tileIndex] of tileIndexes.entries()) {
+        const id = fresh[tileIndex].id!;
+        await scanGrid(page, (seen) => seen.some((x) => x.id === id));
+        const stem = join(s.output_dir, `scene-${String(base + sceneIndex).padStart(2, "0")}${v ? `-v${v + 1}` : ""}`);
+        files.push(await downloadTile(page, mediaTile(page, id), stem, s.download_quality ?? "original"));
+        await pause(page, 800);
+      }
+      done.add(sceneIndex);
     }
-    if (fresh.length !== scenes.length) job.note = `The agent produced ${fresh.length} image(s) for ${scenes.length} scenes, so file numbers may not line up with scene numbers.`;
   } finally {
     await ensureProjectGrid(page).catch(() => {});
+    await closeAgentSession(page).catch(() => {});
+    await setAgentMode(page, true).catch(() => {});
     await setAgentSettings(page, "Always").catch(() => {});
     await setAgentMode(page, false).catch(() => {});
   }
+
+  // Whatever the agent did not deliver (server overload, a block, a skipped scene) is re-run one by one.
+  const missing = scenes.map((_, i) => i).filter((i) => !done.has(i));
+  const failed: number[] = [];
+  const base = Number(s.file_stem.match(/\d+/)?.[0] ?? 1);
+  for (const [n, i] of missing.entries()) {
+    job.progress = `re-running scene ${i + 1} (${n + 1}/${missing.length})`;
+    const single: Job = {
+      ...job,
+      files: [],
+      params: { prompt: scenes[i], type: "image", max_credits: 0, aspect_ratio: s.aspect_ratio, download_quality: s.download_quality, output_dir: s.output_dir, file_stem: `scene-${String(base + i).padStart(2, "0")}` },
+    };
+    let ok = false;
+    for (let attempt = 0; attempt < 2 && !ok; attempt++) {
+      if (attempt || n) await pause(page, 8000);
+      try {
+        files.push(...(await runGeneration(single)));
+        ok = true;
+      } catch {
+        /* second attempt below */
+      }
+    }
+    if (!ok) failed.push(i + 1);
+  }
+  job.progress = undefined;
+  files.sort();
+  job.note = [
+    `${done.size} of ${scenes.length} scenes came from the agent`,
+    missing.length ? `${missing.length - failed.length} re-run one by one` : "",
+    failed.length ? `still failed: scene ${failed.join(", ")} (use Retry)` : "",
+  ].filter(Boolean).join(" · ");
+  if (!files.length) throw new Error("No image could be generated for any scene. Open the Flow tab to see what Flow reported.");
   const left = await readCredits(page).catch(() => undefined);
   if (balance !== undefined && left !== undefined) job.credits = balance - left;
   return files;
