@@ -14,6 +14,7 @@ export interface AssembleOptions {
   music_volume: number;
   voiceover?: string;
   output_name: string;
+  hold_last_frame?: boolean;
 }
 
 interface ClipInfo {
@@ -46,26 +47,40 @@ function defaultClips(dir: string): string[] {
   return [...byScene.values()];
 }
 
+// Pulls the spoken track out of a generated clip so Flow's voices can be used as narration.
+export async function extractAudio(video: string, target: string): Promise<{ output: string; duration: number }> {
+  await run(FFMPEG, ["-y", "-i", video, "-vn", "-af", "highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=5:release=120,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target]);
+  const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
+  return { output: target, duration: Number(stdout.trim()) };
+}
+
 // Joins the scene clips into one film, keeping their own sound and laying music / voiceover on top.
-export async function assemble(o: AssembleOptions): Promise<{ output: string; clips: string[]; duration: number }> {
+export async function assemble(o: AssembleOptions): Promise<{ output: string; clips: string[]; duration: number; held_last_frame: number }> {
   const clips = o.clips?.length ? o.clips : defaultClips(o.dir);
   if (!clips.length) throw new Error(`No scene clips found in ${o.dir}. Pass clips explicitly or generate scenes first.`);
   for (const f of [...clips, o.music, o.voiceover]) if (f && !existsSync(f)) throw new Error(`File not found: ${f}`);
 
-  const infos = await Promise.all(clips.map(probe));
+  let infos = await Promise.all(clips.map(probe));
+  // A narration longer than the footage would be cut off, so the last frame is held until the voice finishes.
+  let hold = 0;
+  if (o.hold_last_frame !== false && o.voiceover) {
+    const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", o.voiceover]);
+    hold = Math.max(0, Number(stdout.trim()) + 0.6 - infos.reduce((sum, i) => sum + i.duration, 0));
+  }
   // Size the film to the biggest clip so a 720p opener cannot pull a 1080p clip down with it.
   const { width, height } = infos.reduce((a, b) => (b.width * b.height > a.width * a.height ? b : a));
   const args: string[] = ["-y"];
   for (const clip of clips) args.push("-i", clip);
   const filters: string[] = [];
   infos.forEach((info, i) => {
+    const freeze = hold > 0.05 && i === infos.length - 1 ? `,tpad=stop_mode=clone:stop_duration=${hold.toFixed(2)}` : "";
     filters.push(
-      `[${i}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24[v${i}]`,
+      `[${i}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24${freeze}[v${i}]`,
     );
     filters.push(
       info.hasAudio
-        ? `[${i}:a]aresample=48000,aformat=channel_layouts=stereo[a${i}]`
-        : `anullsrc=r=48000:cl=stereo,atrim=duration=${info.duration}[a${i}]`,
+        ? `[${i}:a]aresample=48000,aformat=channel_layouts=stereo${hold > 0.05 && i === infos.length - 1 ? `,apad=pad_dur=${hold.toFixed(2)}` : ""}[a${i}]`
+        : `anullsrc=r=48000:cl=stereo,atrim=duration=${(info.duration + (i === infos.length - 1 ? hold : 0)).toFixed(2)}[a${i}]`,
     );
   });
   filters.push(`${infos.map((_, i) => `[v${i}][a${i}]`).join("")}concat=n=${clips.length}:v=1:a=1[v][clipaudio]`);
@@ -99,5 +114,5 @@ export async function assemble(o: AssembleOptions): Promise<{ output: string; cl
     const e = err as NodeJS.ErrnoException & { stderr?: string };
     throw new Error(e.code === "ENOENT" ? "ffmpeg is not installed (brew install ffmpeg)." : `ffmpeg failed: ${(e.stderr ?? String(e)).slice(-600)}`);
   }
-  return { output, clips, duration: infos.reduce((sum, i) => sum + i.duration, 0) };
+  return { output, clips, duration: infos.reduce((sum, i) => sum + i.duration, 0) + hold, held_last_frame: Number(hold.toFixed(2)) };
 }

@@ -1,8 +1,8 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
-import { getFlowPage } from "./chrome.js";
+import { HOME_DIR, getFlowPage } from "./chrome.js";
 import type { Job } from "./queue.js";
 
 export interface FlowState {
@@ -66,12 +66,14 @@ const settingsTrigger = (page: Page) => page.getByRole("button", { name: "Settin
 
 // Every finished tile carries its media id in data-media-id; some thumbnails also have it in the URL, but Flow
 // serves signed /asb/ links with no uuid, so the attribute comes first and the URL is only a fallback.
-// Video tiles at rest expose neither: their signed thumbnail URL is unique per clip, so it serves as the handle.
+// Video tiles at rest expose neither, and their signed thumbnail URL is re-signed over time - using it as a handle
+// made old tiles look new. Titles are stable, so an id-less tile is identified by its title instead.
 const TILE_ID_JS = `(tile) => {
   const media = tile.querySelector("img[data-media-id], video[data-media-id], img[src], video[src]");
-  if (!media) return undefined;
-  const src = media.getAttribute("src") || "";
-  return media.getAttribute("data-media-id") || src.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0] || src || undefined;
+  const id = media && (media.getAttribute("data-media-id") || media.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0]);
+  if (id) return id;
+  const title = tile.getAttribute("aria-label");
+  return title ? "title:" + title : undefined;
 }`;
 
 export async function mediaIds(page: Page): Promise<string[]> {
@@ -98,8 +100,8 @@ const tileOf = (page: Page, asset: FlowAsset) =>
 const mediaTile = (page: Page, id: string) =>
   page
     .locator(
-      id.startsWith("http")
-        ? `flow-grid-tile-container:has([src="${id}"])`
+      id.startsWith("title:")
+        ? `flow-grid-tile-container[aria-label="${id.slice(6).replace(/"/g, '\\"')}"]`
         : `flow-grid-tile-container:has([data-media-id="${id}"]), flow-grid-tile-container:has([src*="${id}"])`,
     )
     .first();
@@ -304,7 +306,18 @@ async function attachAsset(page: Page, opener: Locator, assetName: string): Prom
   await opener.click();
   const list = page.getByRole("listbox", { name: "Asset list" });
   await list.waitFor({ state: "visible", timeout: 10_000 });
-  const option = optionByName(list, assetName);
+  let option = optionByName(list, assetName);
+  // Voices, characters and avatars live behind their own tabs, so look there when "All" does not have it.
+  if (!(await option.isVisible().catch(() => false))) {
+    for (const tab of ["Voices", "Characters", "Avatars", "Uploads"]) {
+      const t = page.getByRole("tab", { name: tab, exact: true });
+      if (!(await t.isVisible().catch(() => false))) continue;
+      await t.click();
+      await pause(page, 1200);
+      option = optionByName(list, assetName);
+      if (await option.isVisible().catch(() => false)) break;
+    }
+  }
   await option.waitFor({ state: "visible", timeout: 10_000 });
   await option.click();
   const add = page.getByRole("button", { name: "Add to prompt", exact: true });
@@ -330,36 +343,44 @@ export async function downloadMedia(page: Page, mediaId: string, targetStem: str
 }
 
 async function downloadTile(page: Page, tile: Locator, targetStem: string, quality: DownloadQuality): Promise<string> {
-  await tile.scrollIntoViewIfNeeded();
-  // Upscales are rendered on demand, so they can take minutes before the file arrives.
-  const download = page.waitForEvent("download", { timeout: quality === "upscaled" ? 600_000 : 120_000 });
-  download.catch(() => {});
-  await tile.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Download", exact: true }).click();
-  // Size submenu: "720p Original size" / "1K Original size", or the first upscale the plan allows (1080p / 2K).
-  const original = page.getByRole("menuitem", { name: /original/i }).first();
-  if (await original.waitFor({ state: "visible", timeout: 2500 }).then(() => true, () => false)) {
-    const upscaled = page.locator('[role="menuitem"]:not([aria-disabled="true"]):not([disabled])').filter({ hasText: /upscaled/i }).first();
-    const wanted = quality === "upscaled" && (await upscaled.isVisible().catch(() => false)) ? upscaled : original;
-    await wanted.click();
+  let lastError: unknown;
+  // Another Playwright connection to the same Chrome can delete the artifact mid-save, so one retry is worth it.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await tile.scrollIntoViewIfNeeded();
+      // Upscales are rendered on demand, so they can take minutes before the file arrives.
+      const download = page.waitForEvent("download", { timeout: quality === "upscaled" ? 600_000 : 120_000 });
+      await tile.click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Download", exact: true }).click();
+      // Size submenu: "720p Original size" / "1K Original size", or the first upscale the plan allows (1080p / 2K).
+      const original = page.getByRole("menuitem", { name: /original/i }).first();
+      if (await original.waitFor({ state: "visible", timeout: 2500 }).then(() => true, () => false)) {
+        const upscaled = page.locator('[role="menuitem"]:not([aria-disabled="true"]):not([disabled])').filter({ hasText: /upscaled/i }).first();
+        const wanted = quality === "upscaled" && (await upscaled.isVisible().catch(() => false)) ? upscaled : original;
+        await wanted.click();
+      }
+      const file = await download;
+      const target = `${targetStem}${extname(file.suggestedFilename()) || ".bin"}`;
+      try {
+        await file.saveAs(target);
+      } catch (err) {
+        // Chrome keeps the bytes in a temp file owned by this connection; copy straight from it if saveAs lost it.
+        const temp = await file.path().catch(() => null);
+        if (!temp || !existsSync(temp)) throw err;
+        copyFileSync(temp, target);
+      }
+      await page.keyboard.press("Escape");
+      await scrollToTop(page);
+      return target;
+    } catch (err) {
+      lastError = err;
+      await page.keyboard.press("Escape").catch(() => {});
+      await pause(page, 2000);
+    }
   }
-  const file = await download;
-  const target = `${targetStem}${extname(file.suggestedFilename()) || ".bin"}`;
-  try {
-    await file.saveAs(target);
-  } catch (err) {
-    // Chrome keeps the bytes in a temp file that belongs to this connection; another flow-mcp process attaching to
-    // the same Chrome can sweep it away mid-save. Copy straight from the temp path as a fallback.
-    const temp = await file.path().catch(() => null);
-    if (!temp || !existsSync(temp)) throw err;
-    copyFileSync(temp, target);
-  }
-  await page.keyboard.press("Escape");
-  await scrollToTop(page);
-  return target;
+  throw lastError;
 }
 
-// Earlier steps (or the user) may have left Flow in a character/edit page or a filtered view.
 async function ensureProjectGrid(page: Page): Promise<void> {
   await dismissOverlays(page);
   const root = page.url().match(/^https:\/\/[^/]+\/project\/[0-9a-f-]{36}/)?.[0];
@@ -401,6 +422,11 @@ export async function runGeneration(job: Job): Promise<string[]> {
   for (const [i, ref] of (s.reference_images ?? []).entries()) {
     const name = await uploadAsset(page, job, ref, `ref${i + 1}`);
     await attachAsset(page, page.getByRole("button", { name: "Add ingredients to the prompt box" }), name);
+  }
+  const wanted = (s.reference_images ?? []).length;
+  if (wanted) {
+    const attached = await page.getByRole("button", { name: "Ingredient" }).count();
+    if (attached < wanted) throw new Error(`Only ${attached} of ${wanted} reference image(s) attached in Flow; nothing was generated.`);
   }
 
   await typePrompt(page, s.prompt);
@@ -582,6 +608,23 @@ export interface CharacterParams {
 
 // Creates a reusable Flow character from an image (local file, or "asset:<title>" already in the project).
 // Afterwards it can be attached to any scene as reference "asset:<character name>".
+// What each character looks like, so scenes can hold Flow to the same design instead of letting it redraw.
+// Kept on disk so a restarted server still knows the cast.
+const LOOKS_FILE = join(HOME_DIR, "characters.json");
+const loadLooks = (): Record<string, string> => {
+  try {
+    return JSON.parse(readFileSync(LOOKS_FILE, "utf8")) as Record<string, string>;
+  } catch {
+    return {};
+  }
+};
+export const characterLook = (name: string): string | undefined => loadLooks()[name.toLowerCase()];
+export function rememberCharacter(name: string, look: string): void {
+  const all = { ...loadLooks(), [name.toLowerCase()]: look.trim() };
+  mkdirSync(HOME_DIR, { recursive: true });
+  writeFileSync(LOOKS_FILE, JSON.stringify(all, null, 2));
+}
+
 export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ name: string; url: string; portrait?: string }> {
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
@@ -675,6 +718,7 @@ export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ 
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
   await page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true }).click().catch(() => {});
+  if (c.describe) rememberCharacter(c.name, c.describe);
   return { name: c.name, url, portrait };
 }
 

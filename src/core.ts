@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
-import { assemble } from "./assemble.js";
+import { assemble, extractAudio } from "./assemble.js";
 import { extractLastFrame } from "./chain.js";
-import { createCharacter, downloadAsset, editCharacter, getFlowState, listAssets, listCharacters, runAgentBatch, runEdit, runGeneration } from "./flow.js";
+import { characterLook, createCharacter, downloadAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
@@ -33,6 +33,10 @@ const sceneSchema = z.object({
   download_quality: z.enum(["original", "upscaled"]).optional().describe("'upscaled' fetches 1080p video / 2K image (free, slower). Default original."),
   retries: z.number().int().min(0).max(3).default(1).describe("Automatic retries when Flow itself reports the generation failed."),
   technique: z.string().optional().describe("Id from flow_techniques (e.g. 'orbit-360'); its exact phrase is appended to the prompt. One per scene."),
+  reference_previous: z
+    .boolean()
+    .optional()
+    .describe("Use the previous scene's finished image as an extra reference, so this scene inherits its exact drawing of the characters, style and palette. Best way to keep a set of stills on-model."),
   chain_previous: z
     .boolean()
     .optional()
@@ -65,12 +69,21 @@ export const shapes = {
     music_volume: z.number().min(0).max(1).default(0.25),
     voiceover: z.string().optional().describe("Absolute path to a voiceover audio file, starts at 0:00."),
     output_name: z.string().default("final"),
+    hold_last_frame: z.boolean().default(true).describe("Freeze the final frame so a longer voiceover is not cut off."),
   },
   agent: {
     project: z.string().min(1).describe("Folder name for the downloaded images."),
     scenes: z.array(z.string().min(1)).min(1).max(50).describe("One image description per scene, in order."),
     aspect_ratio: z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]).default("16:9"),
     download_quality: z.enum(["original", "upscaled"]).optional(),
+  },
+  voices: {},
+  narrate: {
+    project: z.string().min(1).describe("Folder for the narration audio."),
+    text: z.string().min(1).max(400).describe("The line to speak. About 20 words fits 8 s, 30 words fits 12 s; anything longer needs a longer take."),
+    voice: z.string().min(1).default("Charon").describe("Flow voice name, e.g. Charon (male, informative), Aoede (female, breezy), Gacrux (female, mature)."),
+    duration: z.union([z.literal(4), z.literal(6), z.literal(8), z.literal(10)]).default(10).describe("Take length in seconds; the line must fit inside it."),
+    max_credits: z.number().int().min(0).default(8).describe("Cap: a 360p take costs 4-7 credits depending on length."),
   },
   edit: {
     project: z.string().min(1).describe("Local folder for the edited clip."),
@@ -133,6 +146,8 @@ export interface Core {
   download(a: Args<"download">): Promise<unknown>;
   assemble(a: Args<"assemble">): Promise<unknown>;
   techniques(a: Args<"techniques">): Promise<unknown>;
+  voices(): Promise<unknown>;
+  narrate(a: Args<"narrate">): Promise<unknown>;
   character(a: Args<"character">): Promise<unknown>;
   characters(): Promise<unknown>;
   character_edit(a: Args<"character_edit">): Promise<unknown>;
@@ -141,18 +156,48 @@ export interface Core {
   outputs(): Promise<unknown>;
 }
 
+export const VOICES = [
+  { name: "Achernar", description: "female, soft, high pitch" },
+  { name: "Achird", description: "male, friendly, mid pitch" },
+  { name: "Algenib", description: "male, gravelly, low pitch" },
+  { name: "Algieba", description: "male, easy-going, mid-low pitch" },
+  { name: "Alnilam", description: "male, firm, mid-low pitch" },
+  { name: "Aoede", description: "female, breezy, mid pitch" },
+  { name: "Autonoe", description: "female, bright, mid pitch" },
+  { name: "Callirrhoe", description: "female, easy-going, mid pitch" },
+  { name: "Charon", description: "male, informative, lower pitch" },
+  { name: "Despina", description: "female, smooth, mid pitch" },
+  { name: "Enceladus", description: "male, breathy, lower pitch" },
+  { name: "Erinome", description: "female, clear, mid pitch" },
+  { name: "Fenrir", description: "male, excitable, younger pitch" },
+  { name: "Gacrux", description: "female, mature, mid pitch" },
+  { name: "Iapetus", description: "male, clear, mid-low pitch" },
+];
+
 const BUSY = "A generation is running in the Flow tab. Wait for it to finish (flow_wait), then retry.";
 
 export class LocalCore implements Core {
   private queue: JobQueue = new JobQueue(async (job) => {
-    const { chain_from } = job.params;
+    const { chain_from, reference_from } = job.params;
+    if (reference_from) {
+      const still = this.queue.get(reference_from)?.files.find((f) => /\.(jpe?g|png|webp)$/i.test(f));
+      if (!still) throw new Error(`reference_previous: the previous scene (${reference_from}) produced no image.`);
+      job.params.reference_images = [still, ...(job.params.reference_images ?? [])].slice(0, 3);
+    }
     if (chain_from) {
       const clip = this.queue.get(chain_from)?.files.find((f) => /\.(mp4|webm|mov)$/i.test(f));
       if (!clip) throw new Error(`chain_previous: the previous scene (${chain_from}) produced no video, so this scene was skipped.`);
       job.params.first_frame = await extractLastFrame(clip);
     }
     if (job.params.agent_scenes) return runAgentBatch(job);
-    return job.params.edit_asset ? runEdit(job) : runGeneration(job);
+    if (job.params.edit_asset) return runEdit(job);
+    const made = await runGeneration(job);
+    if (!job.params.narration) return made;
+    // A narration take is generated as a throwaway clip; only its spoken track is kept.
+    const clip = made.find((f) => /\.(mp4|webm|mov)$/i.test(f));
+    if (!clip) throw new Error("The narration take produced no clip.");
+    const { output } = await extractAudio(clip, clip.replace(/\.\w+$/, ".m4a"));
+    return [output, ...made];
   });
 
   async status({ detailed }: Args<"status">) {
@@ -165,6 +210,8 @@ export class LocalCore implements Core {
     if (invalid >= 0) {
       throw new Error(`Scene ${invalid + 1}: chain_previous needs a preceding video scene in the same call and cannot be combined with first_frame.`);
     }
+    const noPrev = scenes.findIndex((s, i) => s.reference_previous && i === 0);
+    if (noPrev >= 0) throw new Error("Scene 1 has no previous scene to reference.");
     const unknown = scenes.find((s) => s.technique && !techniqueById(s.technique));
     if (unknown) throw new Error(`Unknown technique "${unknown.technique}". Call flow_techniques for valid ids.`);
 
@@ -174,13 +221,27 @@ export class LocalCore implements Core {
     const queued = this.queue.list().filter((j) => j.params.output_dir === output_dir).map((j) => Number(j.params.file_stem.match(/\d+/)?.[0] ?? 0));
     const offset = Math.max(0, ...onDisk, ...queued);
     const jobs: Job[] = [];
-    for (const [i, { chain_previous, technique, ...scene }] of scenes.entries()) {
+    for (const [i, { chain_previous, reference_previous, technique, ...scene }] of scenes.entries()) {
       const phrase = technique ? techniqueById(technique)!.phrase : "";
+      // A referenced character must come out identical, not merely similar, so the scene says so explicitly.
+      const cast = (scene.reference_images ?? [])
+        .filter((r) => r.startsWith("asset:"))
+        .map((r) => r.slice(6).trim())
+        .filter((n) => characterLook(n) !== undefined || /^[\w .'-]{1,60}$/.test(n));
+      const lock = cast.length
+        ? ` CHARACTER LOCK — copy ${cast.join(" and ")} from the reference image exactly as drawn, as if tracing it: same head shape and size, same face, same eyes, same line weight, same clothing items in the same colours, same hands, same shoes, same proportions, same flat art style. Never redesign, restyle, re-proportion or re-colour the character, and never swap an item for a similar one.${cast
+            .map((n) => (characterLook(n) ? ` ${n} is exactly: ${characterLook(n)}.` : ""))
+            .join("")}`
+        : "";
+      const inherit = reference_previous
+        ? " Match the previous image exactly for the character drawing, line weight, colour palette, lighting and art style; this is the same scene a moment later."
+        : "";
       jobs.push(
         this.queue.add({
           ...scene,
-          prompt: phrase ? `${scene.prompt.trim().replace(/\.?$/, ".")} ${phrase}` : scene.prompt,
+          prompt: `${scene.prompt.trim().replace(/\.?$/, ".")}${phrase ? ` ${phrase}` : ""}${lock}${inherit}`,
           chain_from: chain_previous ? jobs[i - 1].id : undefined,
+          reference_from: reference_previous ? jobs[i - 1].id : undefined,
           output_dir,
           file_stem: `scene-${String(offset + i + 1).padStart(2, "0")}`,
         }),
@@ -289,17 +350,43 @@ export class LocalCore implements Core {
   async character(a: Args<"character">) {
     if (this.queue.busy) throw new Error(BUSY);
     if (!a.image && !a.describe) throw new Error("Pass either `describe` (Flow draws the portrait) or `image`.");
-    return { ...(await createCharacter(a)), use_as: `asset:${a.name}` };
+    const made = await createCharacter(a);
+    if (a.describe) rememberCharacter(a.name, a.describe);
+    return { ...made, use_as: `asset:${a.name}` };
   }
 
   async character_edit({ name, change }: Args<"character_edit">) {
     if (this.queue.busy) throw new Error(BUSY);
-    return { ...(await editCharacter(name, change)), use_as: `asset:${name}` };
+    const out = await editCharacter(name, change);
+    rememberCharacter(name, `${characterLook(name) ?? ""} ${change}`.trim());
+    return { ...out, use_as: `asset:${name}` };
   }
 
   async characters() {
     if (this.queue.busy) throw new Error(BUSY);
     return (await listCharacters()).map((name) => ({ name, use_as: `asset:${name}` }));
+  }
+
+  async voices() {
+    return VOICES;
+  }
+
+  async narrate({ project, text, voice, duration, max_credits }: Args<"narrate">) {
+    const output_dir = projectDir(project);
+    const job = this.queue.add({
+      prompt: `A plain dark grey background, nothing moving, no people, no text on screen. A warm, steady narrator speaks this line clearly and unhurriedly from start to finish, with no other sound at all: "${text.trim()}"`,
+      type: "video",
+      model: "Omni 1.1 Flash",
+      resolution: "360p",
+      aspect_ratio: "16:9",
+      duration,
+      max_credits,
+      reference_images: [`asset:${voice}`],
+      narration: true,
+      output_dir,
+      file_stem: this.nextStem(output_dir, "narration"),
+    });
+    return { output_dir, jobs: [jobView(job)] };
   }
 
   async techniques({ category }: Args<"techniques">) {

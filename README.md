@@ -38,6 +38,8 @@ Claude Desktop (`claude_desktop_config.json`):
 | `flow_assets` | List images/videos already in the Flow project (usable as `asset:<title>`) |
 | `flow_download` | Download existing project media without regenerating (original or free 1080p/2K upscale) |
 | `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (8 images in ~85 s), 0 credits. Every image is matched back to its scene by its stored prompt (correct file numbers in any finish order). Scenes the agent drops are asked of the agent again (up to 2 extra rounds), then re-run one by one as a last resort. Confirm setting is restored to Always afterwards |
+| `flow_narrate` | Speak a line in a Flow voice and keep just the audio (throwaway 360p take, ~4-7 credits) |
+| `flow_voices` | List Flow's narrator voices |
 | `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). No prior quote; ~20 credits for a 4 s clip |
 | `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with personality and a stock voice; reference it as `asset:<name>` |
 | `flow_characters` | List the project's characters |
@@ -60,9 +62,12 @@ npm run studio   # http://127.0.0.1:8787
 
 Opening `studio/index.html` directly as a file does nothing: the page needs this server behind it (it says so in red).
 
-Cast (create and reuse characters), Script (paste a whole script and split it into up to 30 scenes), Slate (global settings), Reel (scene cards with technique presets, first/last frames, references, chaining,
-per-scene overrides), Monitor (live queue, progress, previews), Gallery (everything already saved on disk, per project), Cutting room (ffmpeg assemble with music and
-voiceover) and Flow library (reuse or download media already in the project, incl. free 1080p/2K upscales).
+Tabbed workspace, one tab per stage: **Cast** (create/edit reusable characters), **Frames** (stills, with
+*match previous frame* so a set stays on-model, plus a script splitter and the agent engine), **Shots** (video
+clips with first/last frames, chaining and a live credit estimate), **Voice** (narration in a Flow voice, with a
+words-to-seconds fit check), **Restyle** (`flow_edit` on an existing clip), **Cut** (assemble with music,
+narration and hold-last-frame) and **Library** (browse and download what is already in Flow). A Monitor and a
+Gallery of everything saved locally stay visible alongside every tab.
 
 Claude's MCP process serves the same panel while it is running. Whichever process starts first owns the Flow tab
 and the queue; the other one talks to it over the local API, so Claude and the panel always see the same queue.

@@ -127,3 +127,11 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   listCharacters/editCharacter both go through that selector. editCharacter types into the LAST `.ProseMirror`
   ("What do you want to change?"), waits for the `img[alt="Generated character image"]` src to change with no "%" on the
   page, then `Download image` -> `<output>/_cast/<name>.jpeg`. Free (Nano Banana). Verified live 2026-09-20 (added gloves).
+- Studio v2 (2026-09-20) is a TAB workspace: cast/frames/shots/narrate/restyle/cut/library, each a `.panel`
+  toggled by `#tabs button[data-tab]`; Monitor + Gallery stay in the right column. State is one object `S` per tab in
+  localStorage key `flow-studio-v2`. All five previously MCP-only features are now in the UI: reference_previous
+  ("match previous frame"), voice attachment (flow_narrate), character editing, flow_edit, hold-last-frame in assemble.
+- Flow's voice "Play preview" plays a CANNED sample from gstatic (voices/samples/<Name>.wav) - it never speaks your text.
+  Real speech only comes from generating a video with the voice attached as an ingredient; flow_narrate does that with a
+  cheap 360p take and extracts the audio. Frames and Ingredients are mutually exclusive in Flow, so a narration take
+  cannot also lock first/last frames.

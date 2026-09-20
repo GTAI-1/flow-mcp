@@ -112,7 +112,25 @@ dialog::backdrop{background:rgba(0,0,0,.7)}
 .toast.bad{background:var(--bad);color:#fff}
 input[type=range]{width:100%;accent-color:var(--tally);height:36px}
 </style>
-</head>
+<style>
+.tabs{position:sticky;top:0;z-index:30;display:flex;gap:8px;overflow-x:auto;padding:12px 0;margin:0 -16px;padding-left:16px;padding-right:16px;background:var(--ink);border-bottom:2px solid var(--line);-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{flex:0 0 auto;min-height:56px;padding:0 20px;font:800 22px var(--display);letter-spacing:.06em;text-transform:uppercase;color:var(--dim);background:var(--ink2);border:2px solid var(--line);border-radius:12px;cursor:pointer;white-space:nowrap}
+.tabs button.on{background:var(--tally);border-color:var(--tally);color:var(--ink)}
+.tabs button small{display:block;font:700 12px var(--mono);letter-spacing:0;text-transform:none;opacity:.8}
+.panel{display:none;animation:rise .35s both}
+.panel.on{display:block}
+.step{font:700 14px var(--mono);color:var(--tally);letter-spacing:.14em;text-transform:uppercase;margin-bottom:6px}
+.lede{color:var(--dim);font-size:19px;margin:0 0 18px;max-width:70ch}
+.rowbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
+audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
+.cast-card{display:flex;gap:14px;align-items:center;padding:12px;border:2px solid var(--line);border-radius:12px;background:var(--ink);margin-bottom:10px}
+.cast-card img{width:64px;height:64px;object-fit:cover;border-radius:10px;background:#fff;flex:0 0 auto}
+.cast-card b{display:block;font:800 24px var(--display);letter-spacing:.04em}
+.cast-card .grow{flex:1;min-width:0}
+.pickrow{display:grid;gap:10px}
+@media(min-width:760px){.pickrow{grid-template-columns:1fr 1fr}}
+</style></head>
 <body>
 <div class="clapper"></div>
 <div class="wrap">
@@ -123,83 +141,165 @@ input[type=range]{width:100%;accent-color:var(--tally);height:36px}
   <div id="offline"></div>
   <div id="hint"></div>
 
+  <nav class="tabs" id="tabs">
+    <button data-tab="cast" class="on">Cast<small>characters</small></button>
+    <button data-tab="frames">Frames<small>still images</small></button>
+    <button data-tab="shots">Shots<small>video clips</small></button>
+    <button data-tab="narrate">Voice<small>narration</small></button>
+    <button data-tab="restyle">Restyle<small>edit a clip</small></button>
+    <button data-tab="cut">Cut<small>assemble film</small></button>
+    <button data-tab="library">Library<small>in Flow</small></button>
+  </nav>
+
   <div class="cols">
     <main>
-      <section>
-        <h2>Slate <small>applies to every scene</small></h2>
-        <div class="card" id="slate"></div>
-      </section>
-      <section>
-        <h2>Cast <small>reusable characters · free</small></h2>
+      <!-- CAST -->
+      <section class="panel on" data-panel="cast">
+        <div class="step">Step 1</div>
+        <h2>Cast</h2>
+        <p class="lede">Make a character once and every scene can reuse it. Flow draws the portrait from your description, then locks that exact design into any frame or clip that references it.</p>
         <div class="card">
-          <div class="lib" id="castList" style="max-height:none"></div>
-          <label class="f">Name</label><input type="text" id="castName" placeholder="Stick Guy">
+          <div id="castList"></div>
+          <label class="f">Name</label><input type="text" id="castName" placeholder="Sticky">
           <label class="f">What they look like</label>
-          <textarea id="castLook" style="min-height:110px" placeholder="A cartoonish stick figure: thin black outline body, oversized round head, big expressive dot eyes, yellow hard hat, red scarf, white background"></textarea>
-          <p class="empty" style="margin-top:8px">Flow draws this portrait first (free), then saves it as a character. Or attach a picture instead:</p>
+          <textarea id="castLook" style="min-height:120px" placeholder="A cartoonish stick figure: thin black outline limbs, oversized round white head, big eyes, mustard beanie, red scarf, white gloves, grey shoes, flat vector style, white background"></textarea>
+          <p class="empty" style="margin-top:8px">Or attach a picture instead of describing them:</p>
           <div class="slots" style="margin-top:10px"><div class="slot" data-slot="cast" data-i="0"></div></div>
           <div class="grid2">
             <div><label class="f">Personality (optional)</label><input type="text" id="castMood" placeholder="Cheerful, clumsy, always in a hurry"></div>
             <div><label class="f">Voice (optional)</label><select id="castVoice"></select></div>
           </div>
-          <div class="bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:18px">
-            <button class="btn" id="castCreate">Create character</button>
-            <button class="btn ghost small" id="castReload">Reload list</button>
-          </div>
+          <div class="rowbtns"><button class="btn" id="castCreate">Create character</button><button class="btn ghost small" id="castReload">Reload</button></div>
           <p class="empty" id="castInfo" style="margin-top:12px"></p>
         </div>
       </section>
-      <section>
-        <h2>Script <small id="scriptSub"></small></h2>
+
+      <!-- FRAMES -->
+      <section class="panel" data-panel="frames">
+        <div class="step">Step 2</div>
+        <h2>Frames <small>free</small></h2>
+        <p class="lede">Still images: storyboard frames, or the first and last frame of a clip. Turn on <b>Match previous frame</b> so each frame inherits the one before it — that is what keeps a character identical across a set.</p>
         <div class="card">
-          <textarea id="script" style="min-height:190px" placeholder="Paste your whole script. One scene per paragraph, or numbered:&#10;&#10;1. A barista opens the cafe at dawn, slow push-in&#10;2. Close-up of espresso pouring, macro&#10;Scene 3: She hands the cup to a customer, warm smile"></textarea>
-          <div class="bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
-            <button class="btn" id="splitReplace">Replace reel</button>
-            <button class="btn ghost" id="splitAppend">Append to reel</button>
+          <label class="f">Project folder</label><input type="text" id="f_project" placeholder="MyFilm">
+          <div class="grid2">
+            <div><label class="f">Frame</label><div class="seg" data-seg="f_aspect"></div></div>
+            <div><label class="f">Takes per frame</label><div class="seg" data-seg="f_variants"></div></div>
           </div>
-          <p class="empty" id="splitInfo" style="margin-top:12px"></p>
+          <label class="f">Engine</label><div class="seg" data-seg="f_engine"></div>
+          <div class="phrase" id="f_engineNote"></div>
+        </div>
+        <h2 style="margin-top:28px">Frames <small id="f_count"></small></h2>
+        <div id="f_scenes"></div>
+        <button class="btn ghost add" data-add="frames">+ Add frame</button>
+        <div class="card" style="margin-top:18px">
+          <label class="f">Paste a script to make frames from</label>
+          <textarea id="f_script" style="min-height:120px" placeholder="One frame per paragraph, or numbered: 1. ... 2. ..."></textarea>
+          <div class="rowbtns"><button class="btn small" data-split="frames-replace">Replace frames</button><button class="btn small ghost" data-split="frames-append">Append</button></div>
         </div>
       </section>
-      <section>
-        <h2>Reel <small id="reelCount"></small></h2>
-        <div id="scenes"></div>
-        <button class="btn ghost add" id="addScene">+ Add scene</button>
+
+      <!-- SHOTS -->
+      <section class="panel" data-panel="shots">
+        <div class="step">Step 3</div>
+        <h2>Shots</h2>
+        <p class="lede">Video clips. Give a shot a first and last frame and Flow animates between them; chain a shot onto the one before it for a continuous move. Flow charges by length — the estimate is live at the bottom.</p>
+        <div class="card">
+          <label class="f">Project folder</label><input type="text" id="s_project" placeholder="MyFilm">
+          <label class="f">Model</label><select id="s_model"></select>
+          <div class="grid2">
+            <div><label class="f">Frame</label><div class="seg" data-seg="s_aspect"></div></div>
+            <div><label class="f">Length (s)</label><div class="seg" data-seg="s_duration"></div></div>
+          </div>
+          <div class="grid2">
+            <div><label class="f">Generate at · 720p is Flow's max</label><div class="seg" data-seg="s_resolution"></div></div>
+            <div><label class="f">Download size · upscale is free</label><div class="seg" data-seg="s_quality"></div></div>
+          </div>
+          <div class="grid2">
+            <div><label class="f">Takes per shot</label><div class="seg" data-seg="s_variants"></div></div>
+            <div><label class="f">Max credits per shot</label><input type="number" id="s_max" min="0" value="25"></div>
+          </div>
+        </div>
+        <h2 style="margin-top:28px">Shots <small id="s_count"></small></h2>
+        <div id="s_scenes"></div>
+        <button class="btn ghost add" data-add="shots">+ Add shot</button>
+      </section>
+
+      <!-- NARRATE -->
+      <section class="panel" data-panel="narrate">
+        <div class="step">Step 4</div>
+        <h2>Voice</h2>
+        <p class="lede">Speak a line in one of Flow's voices. A short throwaway clip is generated and only its audio is kept, so a take costs about 4–7 credits. Roughly 20 words fit in 8 seconds, 30 words in 12.</p>
+        <div class="card">
+          <label class="f">Project folder</label><input type="text" id="n_project" placeholder="MyFilm">
+          <label class="f">Line to speak</label><textarea id="n_text" style="min-height:120px" placeholder="Sometimes the obstacles in your life aren't there to block you…"></textarea>
+          <div class="grid2">
+            <div><label class="f">Voice</label><select id="n_voice"></select></div>
+            <div><label class="f">Take length (s)</label><div class="seg" data-seg="n_duration"></div></div>
+          </div>
+          <p class="empty" id="n_fit" style="margin-top:10px"></p>
+          <div class="rowbtns"><button class="btn" id="n_go">Record take</button></div>
+          <div id="n_out" style="margin-top:16px"></div>
+        </div>
+      </section>
+
+      <!-- RESTYLE -->
+      <section class="panel" data-panel="restyle">
+        <div class="step">Optional</div>
+        <h2>Restyle</h2>
+        <p class="lede">Change an existing clip without reshooting it: relight it, change the weather or time of day, remove or restyle something. Flow shows no price before an edit, and a 4-second clip cost 20 credits when measured.</p>
+        <div class="card">
+          <label class="f">Project folder for the result</label><input type="text" id="e_project" placeholder="MyFilm">
+          <label class="f">Clip to change</label>
+          <div class="rowbtns" style="margin-top:0"><button class="btn small ghost" id="e_load">Load clips from Flow</button></div>
+          <select id="e_asset" style="margin-top:10px"></select>
+          <label class="f">What to change</label><textarea id="e_change" style="min-height:100px" placeholder="Change the time of day to a golden hour sunset with long shadows"></textarea>
+          <div class="rowbtns"><button class="btn" id="e_go">Restyle clip</button></div>
+          <p class="empty" id="e_info" style="margin-top:12px"></p>
+        </div>
+      </section>
+
+      <!-- CUT -->
+      <section class="panel" data-panel="cut">
+        <div class="step">Step 5</div>
+        <h2>Cut <small>free · local</small></h2>
+        <p class="lede">Join a project's clips in order, keep their own sound, and lay music and narration over the top. If the narration runs longer than the footage, the last frame is held so nothing is cut off.</p>
+        <div class="card">
+          <label class="f">Project folder</label><input type="text" id="c_project" placeholder="MyFilm">
+          <div class="pickrow">
+            <div><label class="f">Music</label><div class="slots"><div class="slot" data-slot="music" data-i="0"></div></div></div>
+            <div><label class="f">Narration</label><div class="slots"><div class="slot" data-slot="voiceover" data-i="0"></div></div></div>
+          </div>
+          <label class="f">Music volume <span id="c_volOut">25%</span></label><input type="range" id="c_vol" min="0" max="100" value="25">
+          <label class="check"><input type="checkbox" id="c_hold" checked>Hold the last frame until the narration finishes</label>
+          <div class="rowbtns"><button class="btn" id="c_go">Assemble film</button></div>
+          <div id="c_out" style="margin-top:16px"></div>
+        </div>
+      </section>
+
+      <!-- LIBRARY -->
+      <section class="panel" data-panel="library">
+        <div class="step">Reference</div>
+        <h2>Library</h2>
+        <p class="lede">Everything already in the open Flow project. Download anything without regenerating it — the 1080p and 2K upscales are free.</p>
+        <div class="card">
+          <label class="f">Save into project folder</label><input type="text" id="l_project" placeholder="MyFilm">
+          <div class="rowbtns"><button class="btn small" id="l_load">Load library</button><button class="btn small" id="l_dl" disabled>Download selected</button><button class="btn small ghost" id="l_dlhd" disabled>…in 1080p / 2K</button></div>
+          <div class="lib" id="l_list"></div>
+        </div>
       </section>
     </main>
 
     <aside class="side">
       <section>
         <h2>Monitor</h2>
-        <div class="card"><div id="pacing"></div><div id="jobs"><p class="empty">Nothing queued. Build the reel and hit Roll.</p></div></div>
+        <div class="card"><div id="pacing"></div><div id="jobs"><p class="empty">Nothing queued yet.</p></div></div>
       </section>
       <section>
-        <h2>Gallery <small>everything saved on this Mac</small></h2>
+        <h2>Gallery <small>saved on this Mac</small></h2>
         <div class="card">
           <select id="galProject"></select>
           <p class="empty" id="galInfo" style="margin-top:10px"></p>
           <div class="gal" id="gal"></div>
-        </div>
-      </section>
-      <section>
-        <h2>Cutting room <small>free · local ffmpeg</small></h2>
-        <div class="card">
-          <p class="empty" style="margin-bottom:6px">Joins this project's finished scenes in order, keeps their sound, adds music and voiceover.</p>
-          <label class="f">Music</label><div class="slots"><div class="slot" data-audio="music"></div></div>
-          <label class="f">Music volume <span id="volOut">25%</span></label><input type="range" id="vol" min="0" max="100" value="25">
-          <label class="f">Voiceover</label><div class="slots"><div class="slot" data-audio="voiceover"></div></div>
-          <div class="bar" style="margin-top:20px"><button class="btn" id="assemble">Assemble film</button></div>
-          <div id="final" style="margin-top:16px"></div>
-        </div>
-      </section>
-      <section>
-        <h2>Flow library <small>already in your project</small></h2>
-        <div class="card">
-          <div class="bar" style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn small" id="loadLib">Load library</button>
-            <button class="btn small" id="dlLib" disabled>Download selected</button>
-            <button class="btn small ghost" id="dlLibHd" disabled>…in 1080p / 2K</button>
-          </div>
-          <div class="lib" id="lib"></div>
         </div>
       </section>
     </aside>
@@ -207,20 +307,19 @@ input[type=range]{width:100%;accent-color:var(--tally);height:36px}
 </div>
 
 <div class="rollbar"><div class="in">
-  <div class="est"><b id="estNum">0 credits</b><span id="estSub">0 scenes ready</span></div>
+  <div class="est"><b id="estNum">Ready</b><span id="estSub">pick a tab to begin</span></div>
   <button class="roll" id="roll">Roll</button>
 </div></div>
 
-<dialog id="picker"><h2 style="font-size:34px">Pick from Flow</h2><p class="empty">Uses media that is already in the open Flow project — no upload.</p><div class="lib" id="pickList"></div><div style="margin-top:16px"><button class="btn small ghost" onclick="picker.close()">Close</button></div></dialog>
+<dialog id="picker"><h2 style="font-size:34px">Pick from Flow</h2><p class="empty">Media already in the open Flow project.</p><div class="lib" id="pickList"></div><div style="margin-top:16px"><button class="btn small ghost" onclick="picker.close()">Close</button></div></dialog>
 <dialog id="viewer"><div id="viewerBody"></div><p class="empty" id="viewerPath" style="margin:12px 0;word-break:break-all"></p><button class="btn small ghost" onclick="viewer.close()">Close</button></dialog>
 <input type="file" id="file" hidden>
-
 <script>
 const TOKEN = "__FLOW_TOKEN__";
 const $ = (s, el = document) => el.querySelector(s);
-// Opened as a plain file (or a static preview) there is no server behind the page, so nothing can work.
-const LIVE = location.protocol.startsWith("http") && TOKEN !== "__FLOW_" + "TOKEN__";
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const LIVE = location.protocol.startsWith("http") && TOKEN !== "__FLOW_" + "TOKEN__";
 const api = async (method, body = {}) => {
   const res = await fetch(`/api/${method}`, { method: "POST", headers: { "content-type": "application/json", "x-flow-token": TOKEN }, body: JSON.stringify(body) });
   const data = await res.json();
@@ -229,297 +328,429 @@ const api = async (method, body = {}) => {
 };
 const media = (path) => `/media?token=${TOKEN}&path=${encodeURIComponent(path)}`;
 const toast = (msg, bad) => { const t = Object.assign(document.createElement("div"), { className: "toast" + (bad ? " bad" : ""), textContent: msg }); document.body.append(t); setTimeout(() => t.remove(), bad ? 7000 : 3200); };
+const guard = () => { if (!LIVE) { toast("Not connected — start Flow Studio first.", true); return false; } return true; };
 
-// Credit prices read from Flow's own quote (Pro plan, x1). Flow's live quote is still checked per scene via max_credits.
-const MODELS = {
-  video: { "Omni 1.1 Flash": { "360p": { 4: 4, 6: 5, 8: 6, 10: 7 }, "720p": { 4: 7, 6: 10, 8: 12, 10: 15 } }, "Veo 3.1 - Lite": 10, "Veo 3.1 - Fast": 20, "Veo 3.1 - Quality": 100 },
-  image: { "Nano Banana 2": 0 },
+// Prices Flow quotes on a Pro plan, x1 take.
+const VIDEO_COST = { "Omni 1.1 Flash": { "360p": { 4: 4, 6: 5, 8: 6, 10: 7 }, "720p": { 4: 7, 6: 10, 8: 12, 10: 15 } }, "Veo 3.1 - Lite": 10, "Veo 3.1 - Fast": 20, "Veo 3.1 - Quality": 100 };
+const blank = () => ({ prompt: "", technique: "", chain: false, match: false, first: null, last: null, refs: [] });
+const DEFAULTS = {
+  tab: "cast",
+  frames: { project: "MyFilm", aspect: "16:9", variants: 1, engine: "exact", scenes: [blank()] },
+  shots: { project: "MyFilm", model: "Omni 1.1 Flash", aspect: "16:9", duration: 8, resolution: "720p", variants: 1, quality: "original", max: 25, scenes: [blank()] },
+  narrate: { project: "MyFilm", voice: "Charon", duration: 10, text: "" },
+  cut: { project: "MyFilm", music: null, voiceover: null, hold: true },
 };
-const blankScene = () => ({ prompt: "", technique: "", chain: false, first: null, last: null, refs: [], duration: "", variants: "" });
-const saved = JSON.parse(localStorage.getItem("flow-studio") || "null");
-const S = saved || { slate: { project: "MyFilm", type: "video", model: "Omni 1.1 Flash", aspect: "9:16", duration: 8, resolution: "720p", variants: 1, quality: "original", max: 25 }, scenes: [blankScene()], audio: { music: null, voiceover: null } };
-const save = () => localStorage.setItem("flow-studio", JSON.stringify(S));
-let TECH = [], LIB = [], pickTarget = null, busy = false;
+const S = Object.assign(structuredClone(DEFAULTS), JSON.parse(localStorage.getItem("flow-studio-v2") || "{}"));
+const save = () => localStorage.setItem("flow-studio-v2", JSON.stringify(S));
+let TECH = [], VOICES = [], CAST = [], LIB = [], GAL = [], castImage = null, pickTarget = null, busy = false;
 
-const isOmni = () => S.slate.type === "video" && S.slate.model.startsWith("Omni");
-function sceneCost(sc) {
-  const m = MODELS[S.slate.type][S.slate.model]; if (m === undefined) return 0;
-  const per = typeof m === "number" ? m : m[S.slate.resolution][sc.duration || S.slate.duration];
-  return per * (Number(sc.variants) || S.slate.variants);
+/* ---------- tabs ---------- */
+function showTab(name) {
+  S.tab = name; save();
+  $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  $$(".panel").forEach((p) => p.classList.toggle("on", p.dataset.panel === name));
+  estimate();
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
+$("#tabs").addEventListener("click", (e) => { const b = e.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab); });
 
-function seg(key, options, { disabled, labels = {} } = {}) {
-  return `<div class="seg" data-seg="${key}">${options.map((o) => `<button type="button" data-v="${o}" class="${String(S.slate[key]) === String(o) ? "on" : ""}" ${disabled ? "disabled" : ""}>${labels[o] ?? o}</button>`).join("")}</div>`;
+/* ---------- segmented controls ---------- */
+const SEGS = {
+  f_aspect: { get: () => S.frames.aspect, set: (v) => (S.frames.aspect = v), opts: ["16:9", "9:16", "1:1", "4:3", "3:4"] },
+  f_variants: { get: () => S.frames.variants, set: (v) => (S.frames.variants = +v), opts: [1, 2, 3, 4] },
+  f_engine: { get: () => S.frames.engine, set: (v) => (S.frames.engine = v), opts: ["exact", "agent"], labels: { exact: "One by one", agent: "Flow agent · all at once" } },
+  s_aspect: { get: () => S.shots.aspect, set: (v) => (S.shots.aspect = v), opts: ["16:9", "9:16"] },
+  s_duration: { get: () => S.shots.duration, set: (v) => (S.shots.duration = +v), opts: [4, 6, 8, 10] },
+  s_resolution: { get: () => S.shots.resolution, set: (v) => (S.shots.resolution = v), opts: ["360p", "720p"] },
+  s_quality: { get: () => S.shots.quality, set: (v) => (S.shots.quality = v), opts: ["original", "upscaled"], labels: { original: "720p", upscaled: "1080p" } },
+  s_variants: { get: () => S.shots.variants, set: (v) => (S.shots.variants = +v), opts: [1, 2, 3, 4] },
+  n_duration: { get: () => S.narrate.duration, set: (v) => (S.narrate.duration = +v), opts: [4, 6, 8, 10] },
+};
+function renderSegs() {
+  for (const [key, cfg] of Object.entries(SEGS)) {
+    const host = $(`[data-seg="${key}"]`); if (!host) continue;
+    const omni = S.shots.model.startsWith("Omni");
+    const off = (key === "s_duration" || key === "s_resolution") && !omni;
+    host.innerHTML = cfg.opts.map((o) => `<button type="button" data-v="${o}" class="${String(cfg.get()) === String(o) ? "on" : ""}" ${off ? "disabled" : ""}>${cfg.labels?.[o] ?? o}</button>`).join("");
+  }
 }
-function renderSlate() {
-  S.slate.engine ??= "exact";
-  const s = S.slate, aspects = s.type === "video" ? ["9:16", "16:9"] : ["9:16", "16:9", "1:1", "4:3", "3:4"];
-  if (!aspects.includes(s.aspect)) s.aspect = aspects[0];
-  if (!(s.model in MODELS[s.type])) s.model = Object.keys(MODELS[s.type])[0];
-  $("#slate").innerHTML = `
-    <label class="f">Project folder</label><input type="text" id="project" value="${esc(s.project)}">
-    <label class="f">Make</label>${seg("type", ["video", "image"])}
-    ${s.type === "image" ? `<label class="f">Engine</label>${seg("engine", ["exact", "agent"], { labels: { exact: "One by one · exact", agent: "Flow agent · all at once" } })}
-      <div class="phrase">${s.engine === "agent" ? "Flow's agent renders the whole reel in parallel (about a minute for 30 images) and rewrites each prompt itself. No reference images, frames or takes. Every image is matched back to its scene; anything the agent drops (busy servers, blocks) is asked of the agent again, then re-run one by one." : "Each scene runs on its own with your exact prompt, technique, references and takes, with a pause between scenes (about a minute per image)."}</div>` : ""}
-    <label class="f">Model</label><select id="model">${Object.keys(MODELS[s.type]).map((m) => `<option ${m === s.model ? "selected" : ""}>${m}</option>`).join("")}</select>
-    <label class="f">Frame</label>${seg("aspect", aspects)}
-    ${s.type === "video" ? `<div class="grid2"><div><label class="f">Length (s)${isOmni() ? "" : " · Veo is fixed at 8"}</label>${seg("duration", [4, 6, 8, 10], { disabled: !isOmni() })}</div>
-      <div><label class="f">Generate at · 720p is Flow's max</label>${seg("resolution", ["360p", "720p"], { disabled: !isOmni() })}</div></div>` : ""}
-    <div class="grid2"><div><label class="f">Takes per scene</label>${seg("variants", [1, 2, 3, 4])}</div>
-      <div><label class="f">Download size · upscale is free</label>${seg("quality", ["original", "upscaled"], { labels: s.type === "video" ? { original: "720p", upscaled: "1080p" } : { original: "1K", upscaled: "2K" } })}</div></div>
-    <label class="f">Max credits per scene · checked against Flow's live quote</label><input type="number" id="max" min="0" value="${s.max}">`;
-}
-$("#slate").addEventListener("click", (e) => { const b = e.target.closest("[data-seg] button"); if (!b || b.disabled) return; const k = b.parentElement.dataset.seg; S.slate[k] = isNaN(b.dataset.v) ? b.dataset.v : Number(b.dataset.v); renderAll(); });
-$("#slate").addEventListener("input", (e) => { if (e.target.id === "project") S.slate.project = e.target.value; if (e.target.id === "max") S.slate.max = Number(e.target.value); if (e.target.id === "model") { S.slate.model = e.target.value; return renderAll(); } save(); estimate(); });
-
-function slotHtml(kind, i, val, label) {
-  const name = val ? (val.asset ? val.asset : val.name) : "";
-  return `<div class="slot" data-slot="${kind}" data-i="${i}">${val?.path && /\.(jpe?g|png|webp|gif)$/i.test(val.path) ? `<img src="${media(val.path)}">` : ""}
-    ${val ? `<button class="x" data-clear="${kind}" data-i="${i}">×</button><span class="tag">${esc(name)}</span>` : `<span>${label}</span><span class="two"><button type="button" data-src="upload">Upload</button><button type="button" data-src="flow">From Flow</button></span>`}</div>`;
-}
-function renderScenes() {
-  const cats = { camera: "Camera", product: "Product", transition: "Transitions (need first + last frame)", image: "Image commands" };
-  $("#scenes").innerHTML = S.scenes.map((sc, i) => {
-    const t = TECH.find((x) => x.id === sc.technique);
-    return `<div class="card scene" data-i="${i}" style="animation-delay:${i * 50}ms"><div class="no">${String(i + 1).padStart(2, "0")}</div>
-      <label class="f">What happens in this shot</label><textarea data-k="prompt" placeholder="A girl drinks coffee by the window, slow push-in, cozy morning light, soft cafe ambience">${esc(sc.prompt)}</textarea>
-      <label class="f">Film technique</label><select data-k="technique"><option value="">None</option>${Object.entries(cats).map(([c, l]) => `<optgroup label="${l}">${TECH.filter((x) => x.category === c).map((x) => `<option value="${x.id}" ${x.id === sc.technique ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</optgroup>`).join("")}</select>
-      ${t ? `<div class="phrase">${t.needs ? `<b>Needs: ${esc(t.needs)}.</b> ` : ""}Adds: “${esc(t.phrase)}”</div>` : ""}
-      ${S.slate.type === "video" ? `<label class="f">Frames (first → last)</label><div class="slots">${sc.chain ? `<div class="slot" style="cursor:default"><span class="tag">↳ last frame of scene ${i}</span></div>` : slotHtml("first", i, sc.first, "First frame")}${slotHtml("last", i, sc.last, "Last frame")}</div>` : ""}
-      <label class="f">Reference images (product / person, max 3)</label><div class="slots">${sc.refs.map((r, j) => slotHtml("ref", `${i}:${j}`, r, "")).join("")}${sc.refs.length < 3 ? slotHtml("ref", `${i}:${sc.refs.length}`, null, "Reference") : ""}</div>
-      ${S.slate.type === "video" && i > 0 ? `<label class="check"><input type="checkbox" data-k="chain" ${sc.chain ? "checked" : ""}>Continue from scene ${i} (seamless stitch)</label>` : ""}
-      ${S.slate.type === "video" ? `<div class="grid2"><div><label class="f">Length override</label><select data-k="duration" ${isOmni() ? "" : "disabled"}><option value="">Slate (${S.slate.duration}s)</option>${[4, 6, 8, 10].map((d) => `<option ${Number(sc.duration) === d ? "selected" : ""}>${d}</option>`).join("")}</select></div>
-        <div><label class="f">Takes override</label><select data-k="variants"><option value="">Slate (x${S.slate.variants})</option>${[1, 2, 3, 4].map((d) => `<option ${Number(sc.variants) === d ? "selected" : ""}>${d}</option>`).join("")}</select></div></div>` : ""}
-      <div class="bar"><button class="btn small ghost" data-act="up">↑</button><button class="btn small ghost" data-act="down">↓</button><button class="btn small ghost" data-act="dup">Duplicate</button><button class="btn small ghost" data-act="del">Delete</button></div></div>`;
-  }).join("");
-  $("#reelCount").textContent = `${S.scenes.length} scene${S.scenes.length > 1 ? "s" : ""}`;
-}
-const sceneOf = (el) => S.scenes[Number(el.closest(".scene").dataset.i)];
-$("#scenes").addEventListener("input", (e) => { const k = e.target.dataset.k; if (!k) return; const sc = sceneOf(e.target); sc[k] = e.target.type === "checkbox" ? e.target.checked : e.target.value; if (k === "chain" && sc.chain) sc.first = null; if (k !== "prompt") renderScenes(); save(); estimate(); });
-$("#scenes").addEventListener("click", (e) => {
-  const act = e.target.closest("[data-act]"), clear = e.target.closest("[data-clear]"), slot = e.target.closest("[data-slot]");
-  if (act) { const i = Number(act.closest(".scene").dataset.i), a = act.dataset.act, L = S.scenes;
-    if (a === "del") L.length > 1 ? L.splice(i, 1) : (L[0] = blankScene());
-    if (a === "dup") L.splice(i + 1, 0, JSON.parse(JSON.stringify(L[i])));
-    if (a === "up" && i > 0) [L[i - 1], L[i]] = [L[i], L[i - 1]];
-    if (a === "down" && i < L.length - 1) [L[i + 1], L[i]] = [L[i], L[i + 1]];
-    L[0].chain = false; return renderAll(); }
-  if (clear) { e.stopPropagation(); setSlot(clear.dataset.clear, clear.dataset.i, null); return renderAll(); }
-  const src = e.target.closest("[data-src]");
-  if (slot && slot.dataset.slot && src) { pickTarget = { kind: slot.dataset.slot, i: slot.dataset.i }; src.dataset.src === "flow" ? openPicker() : (($("#file").accept = "image/*"), $("#file").click()); }
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-seg] button"); if (!b || b.disabled) return;
+  SEGS[b.parentElement.dataset.seg].set(b.dataset.v);
+  renderAll();
 });
-function setSlot(kind, idx, val) {
-  if (kind === "cast") { castImage = val; return renderCast(); }
-  if (kind === "ref") { const [i, j] = idx.split(":").map(Number); val ? (S.scenes[i].refs[j] = val) : S.scenes[i].refs.splice(j, 1); }
-  else if (kind === "music" || kind === "voiceover") S.audio[kind] = val;
-  else S.scenes[Number(idx)][kind] = val;
+
+/* ---------- slots (frames / references / audio) ---------- */
+function slotHtml(kind, i, val, label) {
+  const name = val ? (val.asset ?? val.name) : "";
+  const pic = val?.path && /\.(jpe?g|png|webp|gif)$/i.test(val.path);
+  return `<div class="slot" data-slot="${kind}" data-i="${i}">${pic ? `<img src="${media(val.path)}">` : ""}
+    ${val ? `<button class="x" data-clear="${kind}" data-i="${i}">×</button><span class="tag">${esc(name)}</span>`
+          : `<span>${label}</span><span class="two"><button type="button" data-src="upload">Upload</button><button type="button" data-src="flow">From Flow</button></span>`}</div>`;
 }
+function setSlot(kind, idx, val) {
+  if (kind === "cast") castImage = val;
+  else if (kind === "music" || kind === "voiceover") S.cut[kind] = val;
+  else if (kind.startsWith("ref")) { const [, group, i, j] = kind.split(":"); const sc = S[group].scenes[+i]; val ? (sc.refs[+j] = val) : sc.refs.splice(+j, 1); }
+  else { const [, group, i] = kind.split(":"); S[group].scenes[+i][kind.startsWith("first") ? "first" : "last"] = val; }
+  save(); renderAll();
+}
+document.addEventListener("click", (e) => {
+  const clear = e.target.closest("[data-clear]");
+  if (clear) { e.stopPropagation(); return setSlot(clear.dataset.clear, clear.dataset.i, null); }
+  const slot = e.target.closest("[data-slot]"), src = e.target.closest("[data-src]");
+  if (slot && src) {
+    pickTarget = { kind: slot.dataset.slot, i: slot.dataset.i };
+    const audio = /music|voiceover/.test(slot.dataset.slot);
+    if (src.dataset.src === "flow") openPicker(audio);
+    else { $("#file").accept = audio ? "audio/*" : "image/*"; $("#file").click(); }
+  }
+});
 $("#file").addEventListener("change", async (e) => {
-  const f = e.target.files[0]; e.target.value = ""; if (!f || !pickTarget) return;
-  try { const res = await fetch(`/api/upload?name=${encodeURIComponent(f.name)}`, { method: "POST", headers: { "x-flow-token": TOKEN }, body: f });
+  const f = e.target.files[0]; e.target.value = ""; if (!f || !pickTarget || !guard()) return;
+  try {
+    const res = await fetch(`/api/upload?name=${encodeURIComponent(f.name)}`, { method: "POST", headers: { "x-flow-token": TOKEN }, body: f });
     const data = await res.json(); if (!res.ok) throw new Error(data.error);
-    setSlot(pickTarget.kind, pickTarget.i, { path: data.path, name: f.name }); renderAll();
+    setSlot(pickTarget.kind, pickTarget.i, { path: data.path, name: f.name });
   } catch (err) { toast(err.message, true); }
 });
-async function loadLibrary() { LIB = await api("assets"); return LIB; }
-async function openPicker() {
+async function openPicker(audioOnly) {
   $("#pickList").innerHTML = `<p class="empty">Reading your Flow project…</p>`; picker.showModal();
-  try { if (!LIB.length) await loadLibrary();
-    $("#pickList").innerHTML = LIB.map((a, n) => `<button data-n="${n}"><span>${esc(a.name)}</span><em>${a.kind}</em></button>`).join("") || `<p class="empty">The project has no media yet.</p>`;
-  } catch (err) { $("#pickList").innerHTML = `<p class="empty">${esc(err.message)}</p>`; }
+  if (audioOnly) { $("#pickList").innerHTML = `<p class="empty">Narration and music come from the Voice tab or an upload — Flow media is images and video only.</p>`; return; }
+  try {
+    if (!LIB.length) LIB = await api("assets");
+    $("#pickList").innerHTML = LIB.map((a, n) => `<button data-n="${n}"><span>${esc(a.name)}</span><em>${a.kind}</em></button>`).join("") || `<p class="empty">Nothing in the project yet.</p>`;
+  } catch (err) { $("#pickList").innerHTML = `<p class="empty" style="color:var(--bad)">${esc(err.message)}</p>`; }
 }
-$("#pickList").addEventListener("click", (e) => { const b = e.target.closest("button[data-n]"); if (!b) return; setSlot(pickTarget.kind, pickTarget.i, { asset: LIB[Number(b.dataset.n)].name }); picker.close(); renderAll(); });
-// Scenes are separated by blank lines, or start with "1.", "2)", "Scene 3:", "Shot 4 -", "#5".
-function splitScript(text) {
-  const label = /^\s*(?:#\s*\d+|(?:scene|shot|clip|image)\s*\d+|\d+)\s*[.):\-–—]*\s*/i;
-  const lines = text.replace(/\r/g, "").split("\n");
-  const numbered = lines.filter((l) => label.test(l) && /^\s*(?:#|scene|shot|clip|image|\d)/i.test(l)).length >= 2;
-  const out = []; let cur = [];
-  const flush = () => { const t = cur.join(" ").replace(/\s+/g, " ").trim(); if (t) out.push(t); cur = []; };
-  for (const line of lines) {
-    if (numbered ? label.test(line) : !line.trim()) flush();
-    if (line.trim()) cur.push(numbered ? line.replace(label, "") : line.trim());
-  }
-  flush(); return out;
-}
-const applyScript = (append) => () => {
-  const parts = splitScript($("#script").value);
-  if (!parts.length) return toast("Paste a script first.", true);
-  const made = parts.map((prompt) => ({ ...blankScene(), prompt }));
-  const keep = append ? S.scenes.filter((x) => x.prompt.trim()) : [];
-  S.scenes = [...keep, ...made].slice(0, 100);
-  $("#splitInfo").textContent = `${parts.length} scene${parts.length === 1 ? "" : "s"} found${keep.length + made.length > 100 ? ", first 100 kept" : ""}. Slate settings apply to all of them.`;
-  renderAll(); $("#scenes").scrollIntoView({ behavior: "smooth" });
-};
-$("#splitReplace").onclick = applyScript(false); $("#splitAppend").onclick = applyScript(true);
+$("#pickList").addEventListener("click", (e) => { const b = e.target.closest("button[data-n]"); if (!b) return; setSlot(pickTarget.kind, pickTarget.i, { asset: LIB[+b.dataset.n].name }); picker.close(); });
 
-const VOICES = ["", "Achernar — female, soft", "Achird — male, friendly", "Algenib — male, gravelly", "Algieba — male, easy-going", "Alnilam — male, firm", "Aoede — female, breezy", "Autonoe — female, bright", "Callirrhoe — female, easy-going", "Charon — male, informative", "Despina — female, smooth", "Enceladus — male, breathy", "Erinome — female, clear", "Fenrir — male, excitable", "Gacrux — female, mature", "Iapetus — male, clear"];
-$("#castVoice").innerHTML = VOICES.map((v) => `<option value="${v.split(" — ")[0]}">${v || "No voice"}</option>`).join("");
-let CAST = [], castImage = null;
+/* ---------- cast ---------- */
 function renderCast() {
   $("#castList").innerHTML = CAST.length
-    ? CAST.map((c) => `<button type="button" data-cast="${esc(c.name)}"><span>${esc(c.name)}</span><em>use in scene</em></button>`).join("")
-    : `<p class="empty">No characters yet. Describe one below and Flow will draw it.</p>`;
-  const slot = $('[data-slot="cast"]');
-  if (slot) slot.innerHTML = castImage
-    ? `<button class="x" data-clearcast="1">×</button>${/\.(jpe?g|png|webp)$/i.test(castImage.path ?? "") ? `<img src="${media(castImage.path)}">` : ""}<span class="tag">${esc(castImage.asset ?? castImage.name)}</span>`
-    : `<span>Picture instead of a description</span><span class="two"><button type="button" data-src="upload">Upload</button><button type="button" data-src="flow">From Flow</button></span>`;
+    ? CAST.map((c) => `<div class="cast-card"><img src="${media(c.portrait ?? "")}" onerror="this.style.visibility='hidden'"><div class="grow"><b>${esc(c.name)}</b><span class="empty">use in a frame or shot as a reference</span></div>
+        <button class="btn small ghost" data-castuse="${esc(c.name)}">Use</button><button class="btn small ghost" data-castedit="${esc(c.name)}">Edit</button></div>`).join("")
+    : `<p class="empty">No characters yet — describe one below and Flow will draw it.</p>`;
+  const slot = $('[data-slot="cast"]'); if (slot) slot.outerHTML = slotHtml("cast", 0, castImage, "Picture instead of a description");
+  $("#castVoice").innerHTML = `<option value="">No voice</option>` + VOICES.map((v) => `<option value="${v.name}">${v.name} — ${v.description}</option>`).join("");
 }
-// A character card drops itself into the first scene's references.
-$("#castList").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-cast]"); if (!b) return;
-  const sc = S.scenes[0]; if (sc.refs.length >= 3) return toast("That scene already has 3 references.", true);
-  sc.refs.push({ asset: b.dataset.cast }); renderAll();
-  toast(`${b.dataset.cast} added to scene 1`);
+$("#castList").addEventListener("click", async (e) => {
+  const use = e.target.closest("[data-castuse]"), edit = e.target.closest("[data-castedit]");
+  if (use) {
+    const group = S.tab === "shots" ? "shots" : "frames";
+    const sc = S[group].scenes[0];
+    if (sc.refs.length >= 3) return toast("Scene 1 already has 3 references.", true);
+    sc.refs.push({ asset: use.dataset.castuse }); save(); renderAll();
+    return toast(`${use.dataset.castuse} added to ${group === "shots" ? "shot" : "frame"} 1`);
+  }
+  if (edit) {
+    const change = prompt(`What should change about ${edit.dataset.castedit}?`, "Add white gloves on both hands, keep everything else identical");
+    if (!change || !guard()) return;
+    toast("Flow is redrawing the character…");
+    try { const out = await api("character_edit", { name: edit.dataset.castedit, change }); toast(`${out.name} updated`); CAST = await loadCast(); renderCast(); }
+    catch (err) { toast(err.message, true); }
+  }
 });
-document.addEventListener("click", (e) => {
-  const c = e.target.closest("[data-clearcast]"); if (c) { castImage = null; return renderCast(); }
-  const slot = e.target.closest('[data-slot="cast"]'); const src = e.target.closest("[data-src]");
-  if (slot && src) { pickTarget = { kind: "cast", i: 0 }; src.dataset.src === "flow" ? openPicker() : (($("#file").accept = "image/*"), $("#file").click()); }
-});
-$("#castReload").onclick = async () => { try { CAST = await api("characters"); renderCast(); } catch (err) { toast(err.message, true); } };
+async function loadCast() {
+  const names = await api("characters");
+  const outs = await api("outputs").catch(() => ({ projects: [] }));
+  const cast = outs.projects.find((p) => p.name === "_cast");
+  return names.map((c) => ({ ...c, portrait: cast?.files.find((f) => f.name.toLowerCase().startsWith(c.name.toLowerCase().replace(/[^\w.-]+/g, "_").slice(0, 8)))?.path }));
+}
+$("#castReload").onclick = async () => { if (!guard()) return; try { CAST = await loadCast(); renderCast(); toast(`${CAST.length} character(s)`); } catch (err) { toast(err.message, true); } };
 $("#castCreate").onclick = async () => {
-  if (!LIVE) return toast("Not connected. Start Flow Studio first.", true);
+  if (!guard()) return;
   const name = $("#castName").value.trim(), look = $("#castLook").value.trim();
   if (!name) return toast("Give the character a name.", true);
-  if (!look && !castImage) return toast("Describe the character, or attach a picture.", true);
-  const btn = $("#castCreate"); btn.disabled = true; btn.textContent = "Drawing…";
-  $("#castInfo").textContent = "Flow is drawing the portrait and saving the character. This takes a minute.";
+  if (!look && !castImage) return toast("Describe them, or attach a picture.", true);
+  const b = $("#castCreate"); b.disabled = true; b.textContent = "Drawing…";
+  $("#castInfo").textContent = "Flow is drawing the portrait and saving the character…";
   try {
     const out = await api("character", { name, describe: look || undefined, image: castImage ? (castImage.asset ? `asset:${castImage.asset}` : castImage.path) : undefined, personality: $("#castMood").value.trim() || undefined, voice: $("#castVoice").value || undefined });
-    $("#castInfo").innerHTML = `Created <b>${esc(out.name)}</b> — use it in any scene as a reference.${out.portrait ? `<br><img class="out" style="max-width:220px;margin-top:10px;border-radius:12px" src="${media(out.portrait)}">` : ""}`;
+    $("#castInfo").innerHTML = `Created <b>${esc(out.name)}</b>.${out.portrait ? `<br><img class="out" style="max-width:220px;margin-top:10px;border-radius:12px" src="${media(out.portrait)}">` : ""}`;
     castImage = null; $("#castName").value = ""; $("#castLook").value = ""; $("#castMood").value = "";
-    CAST = await api("characters").catch(() => CAST); renderCast(); loadGallery(slateFolder());
+    CAST = await loadCast(); renderCast();
   } catch (err) { $("#castInfo").textContent = err.message; toast(err.message, true); }
-  btn.disabled = false; btn.textContent = "Create character";
+  b.disabled = false; b.textContent = "Create character";
 };
 
-$("#addScene").onclick = () => { S.scenes.push(blankScene()); renderAll(); window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }); };
-
-function renderAudio() {
-  for (const k of ["music", "voiceover"]) { const el = $(`[data-audio=${k}]`), v = S.audio[k];
-    el.innerHTML = v ? `<button class="x" data-clearaudio="${k}">×</button><span class="tag">${esc(v.name)}</span>` : `<span>+ ${k === "music" ? "Music track" : "Voiceover"}</span>`; }
+/* ---------- scene cards (frames + shots) ---------- */
+function sceneCards(group) {
+  const video = group === "shots", list = S[group].scenes;
+  const cats = { camera: "Camera", product: "Product", transition: "Transitions (need first + last frame)", image: "Image commands" };
+  return list.map((sc, i) => {
+    const t = TECH.find((x) => x.id === sc.technique);
+    return `<div class="card scene" data-group="${group}" data-i="${i}"><div class="no">${String(i + 1).padStart(2, "0")}</div>
+      <label class="f">${video ? "What happens in this shot" : "What this frame shows"}</label>
+      <textarea data-k="prompt" placeholder="${video ? "The wall cracks and collapses into steps, he climbs them" : "He stands on a path facing a huge stone wall, overcast sky"}">${esc(sc.prompt)}</textarea>
+      <label class="f">Film technique</label>
+      <select data-k="technique"><option value="">None</option>${Object.entries(cats).map(([c, l]) => `<optgroup label="${l}">${TECH.filter((x) => x.category === c).map((x) => `<option value="${x.id}" ${x.id === sc.technique ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</optgroup>`).join("")}</select>
+      ${t ? `<div class="phrase">${t.needs ? `<b>Needs: ${esc(t.needs)}.</b> ` : ""}Adds: “${esc(t.phrase)}”</div>` : ""}
+      ${video ? `<label class="f">Frames (first → last)</label><div class="slots">${sc.chain ? `<div class="slot" style="cursor:default"><span class="tag">↳ last frame of shot ${i}</span></div>` : slotHtml(`first:${group}:${i}`, i, sc.first, "First frame")}${slotHtml(`last:${group}:${i}`, i, sc.last, "Last frame")}</div>` : ""}
+      <label class="f">References (character, product — max 3)</label>
+      <div class="slots">${sc.refs.map((r, j) => slotHtml(`ref:${group}:${i}:${j}`, `${i}:${j}`, r, "")).join("")}${sc.refs.length < 3 ? slotHtml(`ref:${group}:${i}:${sc.refs.length}`, `${i}:${sc.refs.length}`, null, "Reference") : ""}</div>
+      ${i > 0 && video ? `<label class="check"><input type="checkbox" data-k="chain" ${sc.chain ? "checked" : ""}>Continue from shot ${i} (seamless stitch)</label>` : ""}
+      ${i > 0 && !video ? `<label class="check"><input type="checkbox" data-k="match" ${sc.match ? "checked" : ""}>Match previous frame (same character drawing, palette and style)</label>` : ""}
+      <div class="bar"><button class="btn small ghost" data-act="up">↑</button><button class="btn small ghost" data-act="down">↓</button><button class="btn small ghost" data-act="dup">Duplicate</button><button class="btn small ghost" data-act="del">Delete</button></div></div>`;
+  }).join("");
+}
+function renderScenes() {
+  $("#f_scenes").innerHTML = sceneCards("frames");
+  $("#s_scenes").innerHTML = sceneCards("shots");
+  $("#f_count").textContent = `${S.frames.scenes.length} frame${S.frames.scenes.length > 1 ? "s" : ""}`;
+  $("#s_count").textContent = `${S.shots.scenes.length} shot${S.shots.scenes.length > 1 ? "s" : ""}`;
+  $("#f_engineNote").textContent = S.frames.engine === "agent"
+    ? "Flow's agent renders every frame at once (about a minute for 30) and rewrites each prompt itself. No references, no frame matching."
+    : "Each frame runs on its own with your exact prompt, references and matching — about a minute each.";
+}
+document.addEventListener("input", (e) => {
+  const k = e.target.dataset.k; if (!k) return;
+  const card = e.target.closest(".scene"); if (!card) return;
+  const sc = S[card.dataset.group].scenes[+card.dataset.i];
+  sc[k] = e.target.type === "checkbox" ? e.target.checked : e.target.value;
+  if (k === "chain" && sc.chain) sc.first = null;
+  save(); if (k !== "prompt") renderAll(); else estimate();
+});
+document.addEventListener("click", (e) => {
+  const act = e.target.closest("[data-act]"); if (!act) return;
+  const card = act.closest(".scene"), group = card.dataset.group, i = +card.dataset.i, L = S[group].scenes;
+  if (act.dataset.act === "del") L.length > 1 ? L.splice(i, 1) : (L[0] = blank());
+  if (act.dataset.act === "dup") L.splice(i + 1, 0, structuredClone(L[i]));
+  if (act.dataset.act === "up" && i > 0) [L[i - 1], L[i]] = [L[i], L[i - 1]];
+  if (act.dataset.act === "down" && i < L.length - 1) [L[i + 1], L[i]] = [L[i], L[i + 1]];
+  L[0].chain = false; L[0].match = false; save(); renderAll();
+});
+document.addEventListener("click", (e) => {
+  const add = e.target.closest("[data-add]"); if (!add) return;
+  S[add.dataset.add].scenes.push(blank()); save(); renderAll();
+});
+/* script splitter */
+function splitScript(text) {
+  const label = /^\s*(?:#\s*\d+|(?:scene|shot|clip|frame|image)\s*\d+|\d+)\s*[.):\-–—]*\s*/i;
+  const lines = text.replace(/\r/g, "").split("\n");
+  const numbered = lines.filter((l) => label.test(l) && /^\s*(?:#|scene|shot|clip|frame|image|\d)/i.test(l)).length >= 2;
+  const out = []; let cur = [];
+  const flush = () => { const t = cur.join(" ").replace(/\s+/g, " ").trim(); if (t) out.push(t); cur = []; };
+  for (const line of lines) { if (numbered ? label.test(line) : !line.trim()) flush(); if (line.trim()) cur.push(numbered ? line.replace(label, "") : line.trim()); }
+  flush(); return out;
 }
 document.addEventListener("click", (e) => {
-  const c = e.target.closest("[data-clearaudio]"); if (c) { S.audio[c.dataset.clearaudio] = null; save(); return renderAudio(); }
-  const a = e.target.closest("[data-audio]"); if (a) { pickTarget = { kind: a.dataset.audio, i: 0 }; $("#file").accept = "audio/*"; $("#file").click(); }
+  const b = e.target.closest("[data-split]"); if (!b) return;
+  const [group, mode] = b.dataset.split.split("-");
+  const parts = splitScript($("#f_script").value);
+  if (!parts.length) return toast("Paste a script first.", true);
+  const made = parts.map((prompt) => ({ ...blank(), prompt }));
+  const keep = mode === "append" ? S[group].scenes.filter((x) => x.prompt.trim()) : [];
+  S[group].scenes = [...keep, ...made].slice(0, 100); save(); renderAll();
+  toast(`${parts.length} frame(s) created`);
 });
-$("#vol").oninput = (e) => ($("#volOut").textContent = e.target.value + "%");
-$("#assemble").onclick = async () => {
-  $("#assemble").disabled = true; $("#assemble").textContent = "Cutting…";
-  try { const out = await api("assemble", { project: S.slate.project, music: S.audio.music?.path, voiceover: S.audio.voiceover?.path, music_volume: Number($("#vol").value) / 100, output_name: "final" });
-    $("#final").innerHTML = `<video controls playsinline src="${media(out.output)}&t=${Date.now()}" style="width:100%;border-radius:12px;background:#000"></video><p class="empty" style="margin-top:8px">${out.clips.length} clips · ${out.duration.toFixed(1)}s · ${esc(out.output)}</p>`;
-  } catch (err) { toast(err.message, true); }
-  $("#assemble").disabled = false; $("#assemble").textContent = "Assemble film";
+
+/* ---------- narrate ---------- */
+function renderNarrate() {
+  $("#n_voice").innerHTML = VOICES.map((v) => `<option value="${v.name}" ${v.name === S.narrate.voice ? "selected" : ""}>${v.name} — ${v.description}</option>`).join("");
+  const words = $("#n_text").value.trim().split(/\s+/).filter(Boolean).length;
+  const secs = Math.ceil(words / 2.5);
+  $("#n_fit").textContent = words ? `${words} words ≈ ${secs}s of speech — take length is ${S.narrate.duration}s.${secs > S.narrate.duration - 1 ? " Too long: shorten the line or pick a longer take." : " Fits."}` : "";
+}
+$("#n_text").addEventListener("input", () => { S.narrate.text = $("#n_text").value; save(); renderNarrate(); });
+$("#n_voice").addEventListener("change", () => { S.narrate.voice = $("#n_voice").value; save(); });
+$("#n_go").onclick = async () => {
+  if (!guard()) return;
+  const text = $("#n_text").value.trim(); if (!text) return toast("Write the line first.", true);
+  if (!confirm(`Record this line in ${S.narrate.voice}? A ${S.narrate.duration}s take costs about ${S.narrate.duration <= 4 ? 4 : S.narrate.duration <= 6 ? 5 : S.narrate.duration <= 8 ? 6 : 7} credits.`)) return;
+  try { await api("narrate", { project: $("#n_project").value.trim() || S.narrate.project, text, voice: S.narrate.voice, duration: S.narrate.duration }); toast("Recording…"); poll(); }
+  catch (err) { toast(err.message, true); }
 };
 
+/* ---------- restyle ---------- */
+$("#e_load").onclick = async () => {
+  if (!guard()) return;
+  const b = $("#e_load"); b.disabled = true; b.textContent = "Reading…";
+  try { const vids = await api("assets", { kind: "video" }); $("#e_asset").innerHTML = vids.map((v) => `<option>${esc(v.name)}</option>`).join("") || `<option value="">No clips in the project</option>`; }
+  catch (err) { toast(err.message, true); }
+  b.disabled = false; b.textContent = "Reload clips";
+};
+$("#e_go").onclick = async () => {
+  if (!guard()) return;
+  const asset = $("#e_asset").value, change = $("#e_change").value.trim();
+  if (!asset) return toast("Load and pick a clip first.", true);
+  if (!change) return toast("Describe what to change.", true);
+  if (!confirm("Flow gives no price before an edit. A 4-second clip cost 20 credits when measured. Continue?")) return;
+  try { await api("edit", { project: $("#e_project").value.trim() || "MyFilm", asset, prompt: change, acknowledge_cost: true }); $("#e_info").textContent = "Queued — watch the Monitor."; poll(); }
+  catch (err) { $("#e_info").textContent = err.message; toast(err.message, true); }
+};
+
+/* ---------- cut ---------- */
+$("#c_vol").oninput = (e) => ($("#c_volOut").textContent = e.target.value + "%");
+$("#c_hold").onchange = (e) => { S.cut.hold = e.target.checked; save(); };
+$("#c_go").onclick = async () => {
+  if (!guard()) return;
+  const b = $("#c_go"); b.disabled = true; b.textContent = "Cutting…";
+  try {
+    const out = await api("assemble", { project: $("#c_project").value.trim() || "MyFilm", music: S.cut.music?.path, voiceover: S.cut.voiceover?.path, music_volume: +$("#c_vol").value / 100, hold_last_frame: $("#c_hold").checked, output_name: "final" });
+    $("#c_out").innerHTML = `<video controls playsinline src="${media(out.output)}&t=${Date.now()}" style="width:100%;border-radius:12px;background:#000"></video>
+      <p class="empty" style="margin-top:8px">${out.clips.length} clip(s) · ${out.duration.toFixed(1)}s${out.held_last_frame ? ` · last frame held ${out.held_last_frame}s for the narration` : ""}<br>${esc(out.output)}</p>`;
+    loadGallery();
+  } catch (err) { toast(err.message, true); }
+  b.disabled = false; b.textContent = "Assemble film";
+};
+
+/* ---------- library ---------- */
 const chosen = new Set();
-$("#loadLib").onclick = async () => {
-  if (!LIVE) return toast("Not connected. Start Flow Studio first (see the red note at the top).", true);
-  const b = $("#loadLib"); b.disabled = true; b.textContent = "Reading Flow…";
-  $("#lib").innerHTML = `<p class="empty">Scrolling through your Flow project to list its media. This takes a few seconds.</p>`;
-  try { await loadLibrary(); chosen.clear(); renderLib(); if (!LIB.length) $("#lib").innerHTML = `<p class="empty">The open Flow project has no media yet.</p>`; }
-  catch (err) { $("#lib").innerHTML = `<p class="empty" style="color:var(--bad)">${esc(err.message)}</p>`; toast(err.message, true); }
+$("#l_load").onclick = async () => {
+  if (!guard()) return;
+  const b = $("#l_load"); b.disabled = true; b.textContent = "Reading Flow…";
+  $("#l_list").innerHTML = `<p class="empty">Scrolling the project…</p>`;
+  try { LIB = await api("assets"); chosen.clear(); renderLib(); if (!LIB.length) $("#l_list").innerHTML = `<p class="empty">Nothing in the project yet.</p>`; }
+  catch (err) { $("#l_list").innerHTML = `<p class="empty" style="color:var(--bad)">${esc(err.message)}</p>`; }
   b.disabled = false; b.textContent = "Reload library";
 };
-function renderLib() { $("#lib").innerHTML = LIB.map((a, n) => `<button data-n="${n}" class="${chosen.has(n) ? "on" : ""}"><span>${chosen.has(n) ? "✓ " : ""}${esc(a.name)}</span><em>${a.kind}</em></button>`).join(""); $("#dlLib").disabled = $("#dlLibHd").disabled = !chosen.size; }
-$("#lib").addEventListener("click", (e) => { const b = e.target.closest("button[data-n]"); if (!b) return; const n = Number(b.dataset.n); chosen.has(n) ? chosen.delete(n) : chosen.add(n); renderLib(); });
-const dl = (quality) => async () => { toast("Downloading from Flow…"); try { const out = await api("download", { project: S.slate.project, assets: [...chosen].map((n) => LIB[n].name), quality }); toast(`Saved ${out.files.length} file(s) to ${out.dir}`); } catch (err) { toast(err.message, true); } };
-$("#dlLib").onclick = dl("original"); $("#dlLibHd").onclick = dl("upscaled");
-
-function scriptSub() {
-  const s = S.slate, per = sceneCost(blankScene());
-  $("#scriptSub").textContent = s.type === "image" ? (s.engine === "agent" ? "up to 50 images · all at once · free" : "up to 100 images · one by one · free") : `one clip per scene · ${isOmni() ? "4–10 s" : "8 s"} each · ${per} credits per clip now`;
+function renderLib() {
+  $("#l_list").innerHTML = LIB.map((a, n) => `<button data-n="${n}" class="${chosen.has(n) ? "on" : ""}"><span>${chosen.has(n) ? "✓ " : ""}${esc(a.name)}</span><em>${a.kind}</em></button>`).join("");
+  $("#l_dl").disabled = $("#l_dlhd").disabled = !chosen.size;
 }
+$("#l_list").addEventListener("click", (e) => { const b = e.target.closest("button[data-n]"); if (!b) return; const n = +b.dataset.n; chosen.has(n) ? chosen.delete(n) : chosen.add(n); renderLib(); });
+const dl = (quality) => async () => { if (!guard()) return; toast("Downloading…"); try { const out = await api("download", { project: $("#l_project").value.trim() || "MyFilm", assets: [...chosen].map((n) => LIB[n].name), quality }); toast(`Saved ${out.files.length} file(s)`); loadGallery(); } catch (err) { toast(err.message, true); } };
+$("#l_dl").onclick = dl("original"); $("#l_dlhd").onclick = dl("upscaled");
+
+/* ---------- roll ---------- */
+const sceneCost = (sc) => {
+  const m = VIDEO_COST[S.shots.model];
+  const per = typeof m === "number" ? m : m[S.shots.resolution][S.shots.duration];
+  return per * S.shots.variants;
+};
 function estimate() {
-  scriptSub();
-  const ready = S.scenes.filter((s) => s.prompt.trim()), total = ready.reduce((n, s) => n + sceneCost(s), 0);
-  $("#estNum").textContent = `≈ ${total} credit${total === 1 ? "" : "s"}`;
-  $("#estSub").textContent = `${ready.length} scene${ready.length === 1 ? "" : "s"} ready`;
-  $("#roll").disabled = busy || !ready.length || !S.slate.project.trim();
+  const tab = S.tab;
+  const btn = $("#roll");
+  btn.textContent = tab === "shots" ? "Roll" : tab === "frames" ? "Render" : "Roll";
+  if (tab === "frames") {
+    const ready = S.frames.scenes.filter((s) => s.prompt.trim()).length;
+    $("#estNum").textContent = "0 credits";
+    $("#estSub").textContent = `${ready} frame(s) ready · images are free`;
+    btn.disabled = busy || !ready;
+  } else if (tab === "shots") {
+    const ready = S.shots.scenes.filter((s) => s.prompt.trim());
+    const total = ready.reduce((n, s) => n + sceneCost(s), 0);
+    $("#estNum").textContent = `≈ ${total} credits`;
+    $("#estSub").textContent = `${ready.length} shot(s) ready`;
+    btn.disabled = busy || !ready.length;
+  } else {
+    $("#estNum").textContent = { cast: "Free", narrate: "≈ 4–7 credits", restyle: "≈ 20 credits", cut: "Free", library: "Free" }[tab] ?? "";
+    $("#estSub").textContent = { cast: "characters cost nothing", narrate: "use Record take", restyle: "use Restyle clip", cut: "use Assemble film", library: "downloads cost nothing" }[tab] ?? "";
+    btn.disabled = true;
+  }
 }
 $("#roll").onclick = async () => {
-  if (!LIVE) return toast("Not connected. Start Flow Studio first (see the red note at the top).", true);
-  const s = S.slate, ref = (v) => (v ? (v.asset ? `asset:${v.asset}` : v.path) : undefined);
-  const list = S.scenes.filter((x) => x.prompt.trim());
-  if (s.type === "image" && s.engine === "agent") {
-    const skipped = list.filter((x) => x.refs.length).length;
-    if (skipped && !confirm(`${skipped} scene(s) have reference images, which the agent engine ignores. Continue anyway?`)) return;
-    const texts = list.map((x) => { const t = TECH.find((k) => k.id === x.technique); return t ? `${x.prompt.trim().replace(/\.?$/, ".")} ${t.phrase}` : x.prompt.trim(); });
-    if (texts.length > 50) return toast("The agent engine takes up to 50 scenes per batch. Roll the first 50, then the rest.", true);
-    try { await api("agent", { project: s.project.trim(), scenes: texts, aspect_ratio: s.aspect, download_quality: s.quality }); toast(`Handed ${texts.length} scenes to Flow's agent.`); poll(); } catch (err) { toast(err.message, true); }
+  if (!guard()) return;
+  const group = S.tab === "shots" ? "shots" : "frames";
+  const cfg = S[group], video = group === "shots";
+  const list = cfg.scenes.filter((x) => x.prompt.trim());
+  if (!list.length) return;
+  const ref = (v) => (v ? (v.asset ? `asset:${v.asset}` : v.path) : undefined);
+  if (!video && cfg.engine === "agent") {
+    try { await api("agent", { project: cfg.project, scenes: list.map((s) => s.prompt.trim()), aspect_ratio: cfg.aspect }); toast("Handed to Flow's agent."); poll(); } catch (err) { toast(err.message, true); }
     return;
   }
   const scenes = list.map((sc, i) => ({
-    prompt: sc.prompt.trim(), type: s.type, model: s.model, aspect_ratio: s.aspect, max_credits: s.max, download_quality: s.quality,
-    variants: Number(sc.variants) || s.variants, technique: sc.technique || undefined,
-    ...(s.type === "video" && isOmni() ? { duration: Number(sc.duration) || s.duration, resolution: s.resolution } : {}),
-    ...(s.type === "video" ? { chain_previous: (i > 0 && sc.chain) || undefined, first_frame: sc.chain ? undefined : ref(sc.first), last_frame: ref(sc.last) } : {}),
+    prompt: sc.prompt.trim(),
+    type: video ? "video" : "image",
+    aspect_ratio: cfg.aspect,
+    variants: cfg.variants,
+    technique: sc.technique || undefined,
     reference_images: sc.refs.length ? sc.refs.map(ref) : undefined,
+    ...(video
+      ? { model: cfg.model, max_credits: cfg.max, download_quality: cfg.quality, ...(cfg.model.startsWith("Omni") ? { duration: cfg.duration, resolution: cfg.resolution } : {}), chain_previous: (i > 0 && sc.chain) || undefined, first_frame: sc.chain ? undefined : ref(sc.first), last_frame: ref(sc.last) }
+      : { max_credits: 0, reference_previous: (i > 0 && sc.match) || undefined }),
   }));
-  const cost = list.reduce((n, x) => n + sceneCost(x), 0);
-  if (cost > 0 && !confirm(`Queue ${scenes.length} scene(s) for about ${cost} credits?`)) return;
-  try { await api("generate", { project: s.project.trim(), scenes }); toast("Rolling. Flow runs one scene at a time."); poll(); } catch (err) { toast(err.message, true); }
+  const cost = video ? list.reduce((n, s) => n + sceneCost(s), 0) : 0;
+  if (cost > 0 && !confirm(`Queue ${scenes.length} shot(s) for about ${cost} credits?`)) return;
+  try { await api("generate", { project: cfg.project, scenes }); toast(video ? "Rolling." : "Rendering frames."); poll(); } catch (err) { toast(err.message, true); }
 };
 
-function renderStatus(st) {
-  const f = st.flow, active = st.jobs.some((j) => j.status === "running" || j.status === "queued");
-  busy = false;
-  const cls = !f.signedIn || !f.inProject ? "down" : active ? "rolling" : "ready";
-  const text = !f.signedIn ? "Not signed in" : !f.inProject ? "No project open" : active ? "Rolling" : "Ready";
-  if (f.credits_remaining !== undefined) renderStatus.credits = f.credits_remaining; if (f.plan) renderStatus.plan = f.plan;
-  $("#status").innerHTML = `<span class="pill"><i class="tally ${cls}"></i>${text}</span>${renderStatus.plan ? `<span class="pill">${esc(renderStatus.plan)}</span>` : ""}${renderStatus.credits !== undefined ? `<span class="pill">${renderStatus.credits.toLocaleString()} credits</span>` : ""}`;
-  $("#hint").innerHTML = f.hint ? `<div class="hint">${esc(f.hint)}</div>` : "";
-  $("#pacing").innerHTML = st.pacing ? `<div class="pacing">⏱ ${esc(st.pacing)}</div>` : "";
-  const jobs = [...st.jobs].reverse();
-  const sig = JSON.stringify(jobs.map((j) => [j.id, j.status, j.progress, j.files.length, j.credits, j.attempts]));
-  if (sig !== renderStatus.sig) { if (renderStatus.sig && LIVE) loadGallery(slateFolder()); renderStatus.sig = sig;
-    $("#jobs").innerHTML = jobs.map((j) => `<div class="job"><div class="top"><span class="name">${esc(j.project.split("/").pop())} · ${esc(j.scene)}</span><span class="badge ${j.status}">${j.status}${j.progress ? " " + esc(j.progress) : ""}</span>${j.credits !== undefined ? `<span class="badge">${j.credits} cr</span>` : ""}${j.attempts > 1 ? `<span class="badge">try ${j.attempts}</span>` : ""}${j.status === "queued" ? `<button class="btn small ghost" data-cancel="${j.id}">Cancel</button>` : ""}${j.status === "failed" || j.status === "cancelled" ? `<button class="btn small" data-retry="${j.id}">Retry</button>` : ""}</div>
-      ${j.status === "running" ? `<div class="meter"><i style="width:${parseInt(j.progress) || 4}%"></i></div>` : ""}
-      <p>${esc(j.prompt)}</p>${j.note ? `<p style="color:var(--warn)">${esc(j.note)}</p>` : ""}${j.error ? `<p class="err">${esc(j.error)}</p>` : ""}
-      ${j.files.map((p) => (/\.(mp4|webm|mov)$/i.test(p) ? `<video controls playsinline preload="metadata" src="${media(p)}"></video>` : `<img class="out" src="${media(p)}">`)).join("")}</div>`).join("") || `<p class="empty">Nothing queued. Build the reel and hit Roll.</p>`; }
-  estimate(); return active;
-}
-$("#jobs").addEventListener("click", async (e) => { const r = e.target.closest("[data-retry]"); if (r) { try { await api("retry", { job_ids: [r.dataset.retry] }); poll(); } catch (err) { toast(err.message, true); } return; }
-  const c = e.target.closest("[data-cancel]"); if (c) { try { await api("cancel", { job_id: c.dataset.cancel }); poll(); } catch (err) { toast(err.message, true); } } });
-
-let GAL = [];
-const slateFolder = () => S.slate.project.trim().replace(/[^\w.-]+/g, "_");
+/* ---------- monitor + gallery ---------- */
+const slateFolder = () => (S[S.tab]?.project ?? S.frames.project).trim().replace(/[^\w.-]+/g, "_");
 async function loadGallery(prefer) {
   try { GAL = (await api("outputs")).projects; } catch { return; }
   const sel = $("#galProject"), want = prefer || sel.value || slateFolder();
-  sel.innerHTML = GAL.map((p) => `<option value="${esc(p.name)}">${esc(p.name)} · ${p.files.length} file${p.files.length === 1 ? "" : "s"}</option>`).join("") || `<option value="">Nothing saved yet</option>`;
+  sel.innerHTML = GAL.map((p) => `<option value="${esc(p.name)}">${esc(p.name)} · ${p.files.length}</option>`).join("") || `<option value="">Nothing saved yet</option>`;
   if (GAL.some((p) => p.name === want)) sel.value = want;
   renderGallery();
 }
 function renderGallery() {
   const p = GAL.find((x) => x.name === $("#galProject").value);
-  $("#galInfo").textContent = p ? p.dir : "Finished scenes are saved on this Mac and listed here, even after a restart.";
+  $("#galInfo").textContent = p ? p.dir : "Finished work is saved on this Mac and listed here.";
   $("#gal").innerHTML = (p?.files ?? []).map((f, n) => `<figure data-n="${n}">${f.kind === "video" ? `<video muted playsinline preload="metadata" src="${media(f.path)}#t=0.1"></video>` : `<img loading="lazy" src="${media(f.path)}">`}<figcaption>${esc(f.name)}</figcaption></figure>`).join("");
 }
 $("#galProject").onchange = renderGallery;
-$("#gal").addEventListener("click", (e) => { const fig = e.target.closest("figure"); if (!fig) return; const f = GAL.find((x) => x.name === $("#galProject").value).files[Number(fig.dataset.n)];
-  $("#viewerBody").innerHTML = f.kind === "video" ? `<video controls autoplay playsinline src="${media(f.path)}"></video>` : `<img src="${media(f.path)}">`; $("#viewerPath").textContent = f.path; viewer.showModal(); });
+$("#gal").addEventListener("click", (e) => {
+  const fig = e.target.closest("figure"); if (!fig) return;
+  const f = GAL.find((x) => x.name === $("#galProject").value).files[+fig.dataset.n];
+  $("#viewerBody").innerHTML = f.kind === "video" ? `<video controls autoplay playsinline src="${media(f.path)}"></video>` : `<img src="${media(f.path)}">`;
+  $("#viewerPath").textContent = f.path; viewer.showModal();
+});
 $("#viewer").addEventListener("close", () => ($("#viewerBody").innerHTML = ""));
-
+$("#jobs").addEventListener("click", async (e) => {
+  const r = e.target.closest("[data-retry]"), c = e.target.closest("[data-cancel]");
+  try { if (r) await api("retry", { job_ids: [r.dataset.retry] }); if (c) await api("cancel", { job_id: c.dataset.cancel }); if (r || c) poll(); }
+  catch (err) { toast(err.message, true); }
+});
+function renderStatus(st) {
+  const f = st.flow, active = st.jobs.some((j) => j.status === "running" || j.status === "queued");
+  busy = false;
+  const cls = !f.signedIn || !f.inProject ? "down" : active ? "rolling" : "ready";
+  const text = !f.signedIn ? "Not signed in" : !f.inProject ? "No project open" : active ? "Working" : "Ready";
+  if (f.credits_remaining !== undefined) renderStatus.credits = f.credits_remaining;
+  if (f.plan) renderStatus.plan = f.plan;
+  $("#status").innerHTML = `<span class="pill"><i class="tally ${cls}"></i>${text}</span>${renderStatus.plan ? `<span class="pill">${esc(renderStatus.plan)}</span>` : ""}${renderStatus.credits !== undefined ? `<span class="pill">${renderStatus.credits.toLocaleString()} credits</span>` : ""}`;
+  $("#hint").innerHTML = f.hint ? `<div class="hint">${esc(f.hint)}</div>` : "";
+  $("#pacing").innerHTML = st.pacing ? `<div class="pacing">⏱ ${esc(st.pacing)}</div>` : "";
+  const jobs = [...st.jobs].reverse();
+  const sig = JSON.stringify(jobs.map((j) => [j.id, j.status, j.progress, j.files.length, j.credits, j.attempts]));
+  if (sig !== renderStatus.sig) {
+    if (renderStatus.sig && LIVE) loadGallery(slateFolder());
+    renderStatus.sig = sig;
+    $("#jobs").innerHTML = jobs.map((j) => `<div class="job"><div class="top"><span class="name">${esc((j.project || "").split("/").pop())} · ${esc(j.scene)}</span>
+      <span class="badge ${j.status}">${j.status}${j.progress ? " " + esc(j.progress) : ""}</span>${j.credits !== undefined ? `<span class="badge">${j.credits} cr</span>` : ""}${j.attempts > 1 ? `<span class="badge">try ${j.attempts}</span>` : ""}
+      ${j.status === "queued" ? `<button class="btn small ghost" data-cancel="${j.id}">Cancel</button>` : ""}${/failed|cancelled/.test(j.status) ? `<button class="btn small" data-retry="${j.id}">Retry</button>` : ""}</div>
+      ${j.status === "running" ? `<div class="meter"><i style="width:${parseInt(j.progress) || 4}%"></i></div>` : ""}
+      <p>${esc(j.prompt)}</p>${j.note ? `<p style="color:var(--warn)">${esc(j.note)}</p>` : ""}${j.error ? `<p class="err">${esc(j.error)}</p>` : ""}
+      ${j.files.map((p) => (/\.(mp4|webm|mov)$/i.test(p) ? `<video controls playsinline preload="metadata" src="${media(p)}"></video>` : /\.(m4a|mp3|wav)$/i.test(p) ? `<audio controls src="${media(p)}"></audio>` : `<img class="out" src="${media(p)}">`)).join("")}</div>`).join("") || `<p class="empty">Nothing queued yet.</p>`;
+  }
+  estimate();
+  return active;
+}
 let timer, wasActive = false;
 async function poll(detailed = false) {
   clearTimeout(timer);
-  try { const active = renderStatus(await api("status", { detailed }));
+  try {
+    const active = renderStatus(await api("status", { detailed }));
     if (wasActive && !active) { wasActive = false; loadGallery(slateFolder()); return poll(true); }
     wasActive = active; timer = setTimeout(poll, active ? 3000 : 20000);
-  } catch (err) { $("#status").innerHTML = `<span class="pill"><i class="tally down"></i>Server offline</span>`; timer = setTimeout(poll, 5000); }
+  } catch { $("#status").innerHTML = `<span class="pill"><i class="tally down"></i>Server offline</span>`; timer = setTimeout(poll, 5000); }
 }
-function renderAll() { renderSlate(); renderScenes(); renderAudio(); renderCast(); estimate(); save(); }
+
+/* ---------- boot ---------- */
+function renderAll() {
+  for (const [id, val] of [["f_project", S.frames.project], ["s_project", S.shots.project], ["n_project", S.narrate.project], ["c_project", S.cut.project], ["e_project", S.cut.project], ["l_project", S.cut.project]]) if ($("#" + id) && !$("#" + id).value) $("#" + id).value = val;
+  $("#s_model").innerHTML = Object.keys(VIDEO_COST).map((m) => `<option ${m === S.shots.model ? "selected" : ""}>${m}</option>`).join("");
+  renderSegs(); renderScenes(); renderCast(); renderNarrate();
+  const mus = $('[data-slot="music"]'), vo = $('[data-slot="voiceover"]');
+  if (mus) mus.outerHTML = slotHtml("music", 0, S.cut.music, "Music track");
+  if (vo) vo.outerHTML = slotHtml("voiceover", 0, S.cut.voiceover, "Narration");
+  $("#c_hold").checked = S.cut.hold;
+  estimate(); save();
+}
+$("#s_model").addEventListener("change", (e) => { S.shots.model = e.target.value; save(); renderAll(); });
+for (const [id, path] of [["f_project", "frames"], ["s_project", "shots"], ["n_project", "narrate"], ["c_project", "cut"]])
+  $("#" + id).addEventListener("input", (e) => { S[path].project = e.target.value; save(); });
 (async () => {
   if (!LIVE) {
-    $("#offline").innerHTML = `<div class="hint" style="border-color:var(--bad)"><b>This is only a static preview of the page, so nothing here is connected.</b><br>Start the real panel: double-click <b>Flow Studio.command</b> in the flow-mcp folder (or run <code>npm run studio</code>), then use the page that opens at <b>http://127.0.0.1:8787</b>.</div>`;
+    $("#offline").innerHTML = `<div class="hint" style="border-color:var(--bad)"><b>This is a static preview — nothing here is connected.</b><br>Start the real panel: double-click <b>Flow Studio.command</b> in the flow-mcp folder, then use <b>http://127.0.0.1:8787</b>.</div>`;
     $("#status").innerHTML = `<span class="pill"><i class="tally down"></i>Not connected</span>`;
-    renderAll(); return;
+    renderAll(); showTab(S.tab); return;
   }
-  try { TECH = await api("techniques"); } catch {}
-  api("characters").then((c) => { CAST = c; renderCast(); }).catch(() => {});
-  renderAll(); poll(true); loadGallery();
+  try { [TECH, VOICES] = await Promise.all([api("techniques"), api("voices")]); } catch {}
+  loadCast().then((c) => { CAST = c; renderCast(); }).catch(() => {});
+  renderAll(); showTab(S.tab); poll(true); loadGallery();
 })();
 </script>
 </body>
