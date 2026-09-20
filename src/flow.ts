@@ -600,6 +600,7 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
 
   const files: string[] = [];
   const done = new Set<number>();
+  let agentTimedOut = false;
   try {
     await setAgentMode(page, true);
     await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9");
@@ -619,6 +620,7 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
     const deadline = Date.now() + (3 * 60_000 + scenes.length * 30_000);
     const stop = page.getByRole("button", { name: "Stop", exact: true });
     let idleSince = 0;
+    let timedOut = false;
     for (;;) {
       await pause(page, 3000);
       const working = (await stop.isVisible().catch(() => false)) || /\d+%/.test(await page.locator("main").first().innerText());
@@ -627,9 +629,16 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
       if (working) idleSince = 0;
       else if (!idleSince) idleSince = Date.now();
       else if (Date.now() - idleSince > 8000) break;
-      if (Date.now() > deadline) throw new Error("Timed out waiting for Flow's agent to finish the batch.");
+      // A tile that hangs (busy servers) must not sink the batch: stop the agent, keep what finished, re-run the rest.
+      if (Date.now() > deadline) {
+        timedOut = true;
+        if (await stop.isVisible().catch(() => false)) await stop.click().catch(() => {});
+        await pause(page, 2000);
+        break;
+      }
     }
 
+    agentTimedOut = timedOut;
     const fresh = (await scanGrid(page)).filter((t) => t.id && !before.has(t.id) && t.kind === "image");
 
     // Tiles finish in any order and the agent rewords prompts, so each image is matched back to its scene by the
@@ -695,6 +704,7 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
   job.progress = undefined;
   files.sort();
   job.note = [
+    agentTimedOut ? "the agent stalled and was stopped" : "",
     `${done.size} of ${scenes.length} scenes came from the agent`,
     missing.length ? `${missing.length - failed.length} re-run one by one` : "",
     failed.length ? `still failed: scene ${failed.join(", ")} (use Retry)` : "",

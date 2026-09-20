@@ -93,3 +93,7 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   (matchScenes, ≥50 % of the scene's words), and re-runs unmatched scenes through runGeneration (2 attempts each).
   `Reuse prompt` on an agent-made tile opens the agent session panel (`Start new session`, `Close`) which hides the normal
   composer; closeAgentSession handles it. This retry does not depend on what a failed tile looks like.
+- HONESTY NOTE: the agent retry was only exercised with a SIMULATED missing scene. A genuine Flow failure (busy servers)
+  has still never been observed: unknown whether a failed tile hangs at "NN%", disappears, or shows an error, and whether
+  the `Stop` button clears. On deadline the batch now stops the agent, keeps what finished and re-runs the rest instead
+  of throwing. When a real failure shows up, dump that tile's DOM and check the wait loop ends promptly.
