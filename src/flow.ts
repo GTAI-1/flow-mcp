@@ -159,12 +159,19 @@ async function uploadAsset(page: Page, job: Job, file: string, label: string): P
   return name;
 }
 
+// The frame pickers attach on click; the ingredients picker only previews and needs "Add to prompt".
+// Option names are "<asset name>" or "<asset name> Image|Video", so match on the prefix.
 async function attachAsset(page: Page, opener: Locator, assetName: string): Promise<void> {
   await opener.click();
-  const option = page.getByRole("option", { name: assetName, exact: true });
+  const list = page.getByRole("listbox", { name: "Asset list" });
+  await list.waitFor({ state: "visible", timeout: 10_000 });
+  const escaped = assetName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const option = list.getByRole("option", { name: new RegExp(`^${escaped}`) }).first();
   await option.waitFor({ state: "visible", timeout: 10_000 });
   await option.click();
-  await option.waitFor({ state: "hidden", timeout: 10_000 });
+  const add = page.getByRole("button", { name: "Add to prompt", exact: true });
+  if (await add.waitFor({ state: "visible", timeout: 1500 }).then(() => true, () => false)) await add.click().catch(() => {});
+  await list.waitFor({ state: "hidden", timeout: 10_000 });
   await pause(page, 500);
 }
 

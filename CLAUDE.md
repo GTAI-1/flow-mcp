@@ -43,6 +43,8 @@ OmniFlow (lingoflow.pro/omniflow), using subscription credits instead of the API
 
 ## Status
 
-Verified end to end: image generation, text→video, first+last-frame video, upload, download, credit guard, pacing.
+Verified end to end through the MCP: image generation, upload, download, credit guard, pacing.
+Verified in two halves (generation ran via the MCP; tile detection + download were fixed afterwards and
+checked against the finished tiles): text→video and first+last-frame video. One unattended video run is still owed.
 Written but untested: `reference_images` (ingredients picker), `chain_previous` (ffmpeg part tested), variants > 1.
 Not built: `flow_edit`, scene/timeline stitching, characters (@name), library asset reuse, 1080p upscale download, local Studio UI.

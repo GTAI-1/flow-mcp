@@ -4,10 +4,12 @@ import { join, resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { assemble } from "./assemble.js";
 import { extractLastFrame } from "./chain.js";
 import { getFlowState, runGeneration } from "./flow.js";
 import { PLAYBOOK } from "./playbook.js";
 import { JobQueue, type Job } from "./queue.js";
+import { TECHNIQUES, techniqueById } from "./techniques.js";
 
 const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out");
 
@@ -22,6 +24,8 @@ const queue: JobQueue = new JobQueue(async (job) => {
   return runGeneration(job);
 });
 const server = new McpServer({ name: "flow-mcp", version: "0.1.0" });
+
+const projectDir = (project: string) => resolve(OUTPUT_ROOT, project.replace(/[^\w.-]+/g, "_"));
 
 const result = (data: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
@@ -72,6 +76,10 @@ const sceneSchema = z.object({
   first_frame: z.string().optional().describe("Absolute path to an image used as the first frame."),
   last_frame: z.string().optional().describe("Absolute path to an image used as the last frame."),
   reference_images: z.array(z.string()).max(3).optional().describe("Absolute paths to ingredient/reference images."),
+  technique: z
+    .string()
+    .optional()
+    .describe("Id from flow_techniques (e.g. 'orbit-360'); its exact phrase is appended to the prompt. One per scene."),
   chain_previous: z
     .boolean()
     .optional()
@@ -91,7 +99,7 @@ server.registerTool(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   async ({ project, scenes }) => {
-    const output_dir = resolve(OUTPUT_ROOT, project.replace(/[^\w.-]+/g, "_"));
+    const output_dir = projectDir(project);
     const offset = queue.list().filter((j) => j.params.output_dir === output_dir).length;
     const invalid = scenes.findIndex((s, i) => s.chain_previous && (i === 0 || s.first_frame || s.type === "image"));
     if (invalid >= 0) {
@@ -100,11 +108,17 @@ server.registerTool(
         isError: true,
       };
     }
+    const unknown = scenes.find((s) => s.technique && !techniqueById(s.technique));
+    if (unknown) {
+      return { ...result({ error: `Unknown technique "${unknown.technique}". Call flow_techniques for valid ids.` }), isError: true };
+    }
     const jobs: Job[] = [];
-    for (const [i, { chain_previous, ...scene }] of scenes.entries()) {
+    for (const [i, { chain_previous, technique, ...scene }] of scenes.entries()) {
+      const phrase = technique ? techniqueById(technique)!.phrase : "";
       jobs.push(
         queue.add({
           ...scene,
+          prompt: phrase ? `${scene.prompt.trim().replace(/\.?$/, ".")} ${phrase}` : scene.prompt,
           chain_from: chain_previous ? jobs[i - 1].id : undefined,
           output_dir,
           file_stem: `scene-${String(offset + i + 1).padStart(2, "0")}`,
@@ -112,6 +126,43 @@ server.registerTool(
       );
     }
     return result({ output_dir, jobs: jobs.map(jobView) });
+  },
+);
+
+server.registerTool(
+  "flow_techniques",
+  {
+    title: "Film technique presets",
+    description:
+      "List ready-made prompt phrases for camera moves, product shots, first→last-frame transitions and image commands. Pass an id as a scene's `technique` in flow_generate.",
+    inputSchema: { category: z.enum(["camera", "product", "transition", "image"]).optional() },
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ category }) => result(TECHNIQUES.filter((t) => !category || t.category === category)),
+);
+
+server.registerTool(
+  "flow_assemble",
+  {
+    title: "Assemble clips into one video",
+    description:
+      "Join a project's downloaded scene clips in order into one MP4 (local ffmpeg, no credits). Keeps each clip's own sound and can lay a music track and a voiceover on top.",
+    inputSchema: {
+      project: z.string().min(1).describe("Same project name used in flow_generate."),
+      clips: z.array(z.string()).optional().describe("Absolute clip paths in play order. Default: every scene-NN.mp4 in the project folder (first variant of each)."),
+      music: z.string().optional().describe("Absolute path to a music file; looped and trimmed to the film length."),
+      music_volume: z.number().min(0).max(1).default(0.25),
+      voiceover: z.string().optional().describe("Absolute path to a voiceover audio file, starts at 0:00."),
+      output_name: z.string().default("final"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ project, ...rest }) => {
+    try {
+      return result(await assemble({ dir: projectDir(project), ...rest }));
+    } catch (err) {
+      return { ...result({ error: err instanceof Error ? err.message : String(err) }), isError: true };
+    }
   },
 );
 

@@ -34,6 +34,11 @@ Claude Desktop (`claude_desktop_config.json`):
 | `flow_generate` | Queue scenes: prompt, type (video/image), model, aspect, duration, resolution, variants, first/last frame, reference images, `max_credits` cap |
 | `flow_wait` | Block until jobs finish; returns file paths |
 | `flow_cancel` | Cancel a queued job |
+| `flow_techniques` | 39 film-technique prompt presets (camera, product, transitions, image commands); pass an id as a scene's `technique` |
+| `flow_assemble` | Join a project's clips into one MP4 with optional music and voiceover (local ffmpeg, no credits) |
+
+Scene continuity: `chain_previous` (last frame of the previous clip becomes this clip's first frame),
+`first_frame` + `last_frame` (animate between two stills), `reference_images` (keep a product/person consistent).
 
 Clips are saved to `~/flow-mcp-out/<project>/scene-NN.ext`.
 
