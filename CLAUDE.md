@@ -108,3 +108,11 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
 - Two flow-mcp processes attached to the same Chrome (e.g. Studio running while a test drives the MCP) break downloads:
   Playwright's per-connection artifact dir is swept while the other process saves → `download.saveAs ... ENOENT`.
   downloadTile now falls back to copying from `download.path()`; still, stop the Studio server before running MCP tests.
+- AGENT-MODE FAILURES (observed live 2026-09-20, 20-scene batch): 4 of 20 tiles failed. An agent-made `flow-error-tile`
+  offers ONLY a `Delete` button - no `Retry`, no `Reuse prompt` (a manually generated failure does offer Retry). So Flow's
+  native retry is unavailable for agent batches; recovery is: ask the AGENT again for just the missing scene numbers
+  (parallel, what the user asked for), up to 2 extra rounds, then one-by-one runGeneration as a last resort.
+- Agent batch lessons from that run: (1) the retry step must never throw - 16 good images were lost when it did;
+  (2) `done.add(sceneIndex)` must only happen when a tile was really downloaded, otherwise missing scenes are silently
+  skipped and the note lies ("20 of 20"); (3) freshness must be judged by media id, NOT by title - the agent reuses the
+  same titles across runs, so a name-based `before` set hid 12 of 20 new tiles.

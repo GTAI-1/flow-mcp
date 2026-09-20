@@ -1,0 +1,12 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+const c = new Client({ name: "edit", version: "0" });
+await c.connect(new StdioClientTransport({ command: "node", args: ["dist/index.js"], env: process.env }));
+const call = async (n, a = {}) => JSON.parse((await c.callTool({ name: n, arguments: a }, undefined, { timeout: 2400000 })).content[0].text);
+const log = (...m) => console.log(new Date().toLocaleTimeString("en-GB"), ...m);
+log("credits before:", (await call("flow_status")).flow.credits_remaining);
+const e = await call("flow_edit", { project: "EditTest", asset: "Vintage bicycle leans against wall", prompt: "Change the time of day to a golden hour sunset with warm orange light and long shadows", acknowledge_cost: true });
+let w; do { w = await call("flow_wait", { job_ids: [e.jobs[0].id], timeout_seconds: 60 }); const j = w.jobs[0]; log(j.status, "|", j.progress ?? "-"); } while (!w.finished);
+log("RESULT:", JSON.stringify(w.jobs[0], null, 1));
+log("credits after:", (await call("flow_status")).flow.credits_remaining);
+await c.close(); process.exit(0);

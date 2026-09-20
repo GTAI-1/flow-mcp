@@ -88,6 +88,13 @@ async function scrollToTop(page: Page): Promise<void> {
   await pause(page, 400);
 }
 
+// Titles survive re-scans; the signed thumbnail URL used as a fallback handle does not (Flow re-signs it), so
+// anything that has to find the same tile again should go through here.
+const tileOf = (page: Page, asset: FlowAsset) =>
+  asset.name
+    ? page.locator(`flow-grid-tile-container[aria-label="${asset.name.replace(/"/g, '\\"')}"]`).first()
+    : mediaTile(page, asset.id!);
+
 const mediaTile = (page: Page, id: string) =>
   page
     .locator(
@@ -113,23 +120,31 @@ export async function newErrorTiles(page: Page, known: Iterable<string>): Promis
 }
 
 // Flow's Retry replaces the failed tile with a fresh render of the same prompt and settings, free of charge.
-async function retryErrorTiles(page: Page, count: number): Promise<void> {
-  for (let i = 0; i < count; i++) {
-    const tile = page.locator("flow-grid-tile-container:has(flow-error-tile)").first();
-    await tile.scrollIntoViewIfNeeded();
-    await tile.hover();
-    await tile.getByRole("button", { name: "Retry" }).click();
-    await pause(page, 1500);
-    await scrollToTop(page);
-  }
+// Tiles produced by Agent mode only offer Delete, so the button may not be there at all.
+async function retryErrorTile(page: Page, tile: Locator): Promise<boolean> {
+  await tile.scrollIntoViewIfNeeded();
+  await tile.hover();
+  const retry = tile.getByRole("button", { name: "Retry" });
+  if (!(await retry.isVisible({ timeout: 2000 }).catch(() => false))) return false;
+  await retry.click({ timeout: 10_000 });
+  await pause(page, 1500);
+  await scrollToTop(page);
+  return true;
 }
 
 // Big batches put more new tiles in the grid than Flow renders at once, so this walks down from the top, pressing
 // Retry on every failed tile it meets, until it reaches a tile that existed before the job (or the end of the grid).
-export async function retryNewErrorTiles(page: Page, known: Iterable<string>, dryRun = false): Promise<{ errors: number; reachedKnown: boolean }> {
+// Agent-mode failures offer no Retry button; the walk then stops and reports what it counted.
+export async function retryNewErrorTiles(
+  page: Page,
+  known: Iterable<string>,
+  dryRun = false,
+): Promise<{ errors: number; reachedKnown: boolean; retried: number }> {
   const ids = [...known];
   let errors = 0;
+  let retried = 0;
   let reachedKnown = false;
+  let retryable = true;
   for (let pass = 0; pass < 80; pass++) {
     await scrollToTop(page);
     let found = false;
@@ -148,13 +163,10 @@ export async function retryNewErrorTiles(page: Page, known: Iterable<string>, dr
       else if (state === "error") {
         found = true;
         errors++;
-        if (!dryRun) {
-          const tile = page.locator("flow-grid-tile-container:has(flow-error-tile)").first();
-          await tile.scrollIntoViewIfNeeded();
-          await tile.hover();
-          await tile.getByRole("button", { name: "Retry" }).click();
-          await pause(page, 1500);
-        }
+        if (dryRun) break;
+        retryable = await retryErrorTile(page, page.locator("flow-grid-tile-container:has(flow-error-tile)").first());
+        if (!retryable) break;
+        retried++;
       } else {
         const moved = await page.evaluate(() => {
           const el = document.querySelector(".page-container");
@@ -167,12 +179,11 @@ export async function retryNewErrorTiles(page: Page, known: Iterable<string>, dr
         await pause(page, 400);
       }
     }
-    // After a Retry the grid reshuffles (the new render jumps to the top), so start over; a dry run cannot clear
-    // the tile it found, so it stops at the first one.
-    if (!found || dryRun) break;
+    // A successful Retry reshuffles the grid (the new render jumps to the top), so the walk starts again.
+    if (!found || dryRun || !retryable) break;
   }
   await scrollToTop(page);
-  return { errors, reachedKnown };
+  return { errors, reachedKnown, retried };
 }
 
 async function waitForNewMedia(page: Page, before: string[], count: number, timeoutMs: number, job?: Job): Promise<string[]> {
@@ -194,8 +205,8 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
     if (retriesLeft > 0) {
       retriesLeft--;
       if (job) job.progress = "Flow failed, retrying";
-      await retryErrorTiles(page, errors);
-      continue;
+      const retried = await retryErrorTile(page, page.locator("flow-grid-tile-container:has(flow-error-tile)").first());
+      if (retried) continue;
     }
     if (fresh.length) return fresh;
     throw new Error(`Flow failed this generation ${failures} time(s) ("Sorry, this image/video failed to generate"). Nothing was charged. Try again later or reword the prompt.`);
@@ -474,8 +485,7 @@ export async function downloadAsset(name: string, targetStem: string, quality: D
   const matches = (a: FlowAsset) => a.name.toLowerCase().startsWith(name.toLowerCase());
   const found = (await scanGrid(page, (assets) => assets.some(matches))).find(matches);
   if (!found) throw new Error(`No asset whose title starts with "${name}". Use flow_assets to list titles.`);
-  const tile = found.id ? mediaTile(page, found.id) : page.locator(`flow-grid-tile-container[aria-label="${found.name}"]`).first();
-  return downloadTile(page, tile, targetStem, quality);
+  return downloadTile(page, tileOf(page, found), targetStem, quality);
 }
 
 export interface CharacterParams {
@@ -579,7 +589,7 @@ export async function runEdit(job: Job): Promise<string[]> {
   await scrollToTop(page);
   const before = await mediaIds(page);
 
-  const tile = found.id ? mediaTile(page, found.id) : page.locator(`flow-grid-tile-container[aria-label="${found.name}"]`).first();
+  const tile = tileOf(page, found);
   await tile.scrollIntoViewIfNeeded();
   await tile.click();
   await page.waitForURL(/\/edit\//, { timeout: 20_000 });
@@ -691,8 +701,114 @@ export function matchScenes(scenes: string[], prompts: string[]): number[][] {
   return out;
 }
 
+interface RoundOutcome {
+  produced: number;
+  timedOut: boolean;
+  failedTiles: number;
+}
+
+// One pass through Flow's agent for the given scene numbers: ask, wait, match the new tiles back to those scenes
+// and download them. Returns how many scenes it actually delivered.
+async function agentRound(
+  page: Page,
+  job: Job,
+  scenes: string[],
+  indexes: number[],
+  retry: boolean,
+  files: string[],
+  done: Set<number>,
+): Promise<RoundOutcome> {
+  const s = job.params;
+  const aspect = s.aspect_ratio ?? "16:9";
+  await ensureProjectGrid(page);
+  const seenBefore = await scanGrid(page);
+  // Ids are unique per generation; titles are not (the agent reuses wording), so only id-less tiles fall back to a name.
+  const before = new Set<string>(seenBefore.map((a) => a.id).filter((v): v is string => Boolean(v)));
+  const beforeNames = new Set<string>(seenBefore.filter((a) => !a.id).map((a) => a.name));
+  await scrollToTop(page);
+
+  const clear = page.getByRole("button", { name: "Clear prompt" });
+  if (await clear.isVisible().catch(() => false)) await clear.click();
+  const script = indexes.map((i) => `Scene ${i + 1}: ${scenes[i].replace(/\s*\n+\s*/g, " ").trim()}`).join(" ");
+  const lead = retry
+    ? `${indexes.length} image(s) from the last batch failed to generate. Generate them again now, one image per scene`
+    : `Generate exactly ${indexes.length} separate images, one image per scene, in scene order`;
+  const ask = `${lead}. Images only, never video. ${aspect} aspect ratio. Do not ask questions, generate them now. ${script}`;
+  await page.locator(".ProseMirror").first().click();
+  await page.keyboard.insertText(ask);
+  await pause(page, 800);
+  const start = page.getByRole("button", { name: "Start generation" });
+  if (!(await start.isEnabled())) throw new Error("Flow's agent did not accept the script (Start generation stayed disabled).");
+  await start.click();
+
+  // The agent shows a Stop button while it works and "NN%" on every tile it is rendering.
+  const deadline = Date.now() + (3 * 60_000 + indexes.length * 30_000);
+  const stop = page.getByRole("button", { name: "Stop", exact: true });
+  let idleSince = 0;
+  let timedOut = false;
+  for (;;) {
+    await pause(page, 3000);
+    const main = await page.locator("main").first().innerText();
+    const pending = main.match(/\d+%/g) ?? [];
+    const working = pending.length > 0 || (await stop.isVisible().catch(() => false));
+    job.progress = working ? `${pending.length} rendering` : undefined;
+    if (working) idleSince = 0;
+    else if (!idleSince) idleSince = Date.now();
+    else if (Date.now() - idleSince > 8000) break;
+    if (Date.now() > deadline) {
+      // A tile that hangs must not sink the batch: stop the agent and keep whatever finished.
+      timedOut = true;
+      if (await stop.isVisible().catch(() => false)) await stop.click().catch(() => {});
+      await pause(page, 2000);
+      break;
+    }
+  }
+
+  const failedTiles = await retryNewErrorTiles(page, before, true)
+    .then((r) => r.errors)
+    .catch(() => 0);
+  const fresh = (await scanGrid(page)).filter((t) => t.id && !before.has(t.id) && !beforeNames.has(t.name) && t.kind === "image");
+
+  // Tiles finish in any order and the agent rewords prompts, so each image is matched back to its scene by the
+  // prompt Flow stored for it ("Reuse prompt" puts that text in the composer).
+  const prompts: string[] = [];
+  for (const tile of fresh) {
+    await scanGrid(page, (seen) => seen.some((x) => x.id === tile.id));
+    const el = mediaTile(page, tile.id!);
+    await el.scrollIntoViewIfNeeded();
+    await el.hover();
+    await el.getByRole("button", { name: "Reuse prompt" }).click();
+    await pause(page, 900);
+    prompts.push(await page.locator(".ProseMirror").first().innerText());
+  }
+  await closeAgentSession(page);
+
+  const assigned = matchScenes(
+    indexes.map((i) => scenes[i]),
+    prompts,
+  );
+  const drop = Number(process.env.FLOW_MCP_SIMULATE_MISSING ?? 0); // test hook: pretend this scene number failed
+  mkdirSync(s.output_dir, { recursive: true });
+  const base = Number(s.file_stem.match(/\d+/)?.[0] ?? 1);
+  let produced = 0;
+  for (const [n, tileIndexes] of assigned.entries()) {
+    const sceneIndex = indexes[n];
+    if (!tileIndexes.length || sceneIndex + 1 === drop) continue;
+    for (const [v, tileIndex] of tileIndexes.entries()) {
+      const id = fresh[tileIndex].id!;
+      await scanGrid(page, (seen) => seen.some((x) => x.id === id));
+      const stem = join(s.output_dir, `scene-${String(base + sceneIndex).padStart(2, "0")}${v ? `-v${v + 1}` : ""}`);
+      files.push(await downloadTile(page, mediaTile(page, id), stem, s.download_quality ?? "original"));
+      await pause(page, 800);
+    }
+    done.add(sceneIndex);
+    produced++;
+  }
+  return { produced, timedOut, failedTiles };
+}
+
 // Hands a whole multi-scene script to Flow's own agent, which generates every image in parallel (seconds instead
-// of one paced job per scene). Images only: the agent runs unconfirmed, and images cost no credits.
+// of one paced job per scene). Scenes the agent drops are asked for again, then re-run one by one as a last resort.
 export async function runAgentBatch(job: Job): Promise<string[]> {
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
@@ -702,93 +818,26 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
 
   await ensureProjectGrid(page);
   const balance = await readCredits(page).catch(() => undefined);
-  const seenBefore = await scanGrid(page);
-  const before = new Set<string>(seenBefore.flatMap((a) => [a.id, a.name]).filter((v): v is string => Boolean(v)));
-  await scrollToTop(page);
 
   const files: string[] = [];
   const done = new Set<number>();
   let agentTimedOut = false;
-  let nativeRetries = 0;
+  let failedTiles = 0;
+  let agentRetries = 0;
   try {
     await setAgentMode(page, true);
     await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9");
-    const clear = page.getByRole("button", { name: "Clear prompt" });
-    if (await clear.isVisible().catch(() => false)) await clear.click();
-
-    const script = scenes.map((t, i) => `Scene ${i + 1}: ${t.replace(/\s*\n+\s*/g, " ").trim()}`).join(" ");
-    const ask = `Generate exactly ${scenes.length} separate images, one image per scene, in scene order. Images only, never video. ${s.aspect_ratio ?? "16:9"} aspect ratio. Do not ask questions, generate them now. ${script}`;
-    await page.locator(".ProseMirror").first().click();
-    await page.keyboard.insertText(ask);
-    await pause(page, 800);
-    const start = page.getByRole("button", { name: "Start generation" });
-    if (!(await start.isEnabled())) throw new Error("Flow's agent did not accept the script (Start generation stayed disabled).");
-    await start.click();
-
-    // The agent shows a Stop button while it works and "NN%" on every tile it is rendering.
-    const deadline = Date.now() + (3 * 60_000 + scenes.length * 30_000);
-    const stop = page.getByRole("button", { name: "Stop", exact: true });
-    let idleSince = 0;
-    let timedOut = false;
-    let retryRounds = 0;
-    for (;;) {
-      await pause(page, 3000);
-      const working = (await stop.isVisible().catch(() => false)) || /\d+%/.test(await page.locator("main").first().innerText());
-      const pending = (await page.locator("main").first().innerText()).match(/\d+%/g) ?? [];
-      job.progress = working ? `${pending.length} rendering` : undefined;
-      if (working) idleSince = 0;
-      else if (!idleSince) idleSince = Date.now();
-      else if (Date.now() - idleSince > 8000) {
-        // Busy servers leave "Failed" tiles behind: press Flow's own Retry on them, at most two rounds.
-        if (retryRounds >= 2) break;
-        job.progress = "checking for failed tiles";
-        const { errors } = await retryNewErrorTiles(page, before);
-        if (!errors) break;
-        retryRounds++;
-        nativeRetries += errors;
-        job.progress = `retrying ${errors} failed`;
-        idleSince = 0;
+    for (let round = 0; round < 3; round++) {
+      const todo = scenes.map((_, i) => i).filter((i) => !done.has(i));
+      if (!todo.length) break;
+      if (round) {
+        agentRetries += todo.length;
+        job.progress = `asking the agent again for ${todo.length} scene(s)`;
       }
-      // A tile that hangs (busy servers) must not sink the batch: stop the agent, keep what finished, re-run the rest.
-      if (Date.now() > deadline) {
-        timedOut = true;
-        if (await stop.isVisible().catch(() => false)) await stop.click().catch(() => {});
-        await pause(page, 2000);
-        break;
-      }
-    }
-
-    agentTimedOut = timedOut;
-    const fresh = (await scanGrid(page)).filter((t) => t.id && !before.has(t.id) && !before.has(t.name) && t.kind === "image");
-
-    // Tiles finish in any order and the agent rewords prompts, so each image is matched back to its scene by the
-    // prompt Flow stored for it ("Reuse prompt" puts that text in the composer).
-    const prompts: string[] = [];
-    for (const tile of fresh) {
-      await scanGrid(page, (seen) => seen.some((x) => x.id === tile.id));
-      const el = mediaTile(page, tile.id!);
-      await el.scrollIntoViewIfNeeded();
-      await el.hover();
-      await el.getByRole("button", { name: "Reuse prompt" }).click();
-      await pause(page, 900);
-      prompts.push(await page.locator(".ProseMirror").first().innerText());
-    }
-    await closeAgentSession(page);
-
-    const assigned = matchScenes(scenes, prompts);
-    const drop = Number(process.env.FLOW_MCP_SIMULATE_MISSING ?? 0); // test hook: pretend this scene number failed
-    mkdirSync(s.output_dir, { recursive: true });
-    const base = Number(s.file_stem.match(/\d+/)?.[0] ?? 1);
-    for (const [sceneIndex, tileIndexes] of assigned.entries()) {
-      if (sceneIndex + 1 === drop) continue;
-      for (const [v, tileIndex] of tileIndexes.entries()) {
-        const id = fresh[tileIndex].id!;
-        await scanGrid(page, (seen) => seen.some((x) => x.id === id));
-        const stem = join(s.output_dir, `scene-${String(base + sceneIndex).padStart(2, "0")}${v ? `-v${v + 1}` : ""}`);
-        files.push(await downloadTile(page, mediaTile(page, id), stem, s.download_quality ?? "original"));
-        await pause(page, 800);
-      }
-      done.add(sceneIndex);
+      const out = await agentRound(page, job, scenes, todo, round > 0, files, done);
+      agentTimedOut ||= out.timedOut;
+      failedTiles = out.failedTiles;
+      if (!out.produced) break; // the agent delivered nothing this round: stop asking it
     }
   } finally {
     await ensureProjectGrid(page).catch(() => {});
@@ -798,16 +847,24 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
     await setAgentMode(page, false).catch(() => {});
   }
 
-  // Whatever the agent did not deliver (server overload, a block, a skipped scene) is re-run one by one.
+  // Anything the agent still has not delivered is generated one by one, which is slower but exact.
   const missing = scenes.map((_, i) => i).filter((i) => !done.has(i));
   const failed: number[] = [];
   const base = Number(s.file_stem.match(/\d+/)?.[0] ?? 1);
   for (const [n, i] of missing.entries()) {
-    job.progress = `re-running scene ${i + 1} (${n + 1}/${missing.length})`;
+    job.progress = `re-running scene ${i + 1} one by one (${n + 1}/${missing.length})`;
     const single: Job = {
       ...job,
       files: [],
-      params: { prompt: scenes[i], type: "image", max_credits: 0, aspect_ratio: s.aspect_ratio, download_quality: s.download_quality, output_dir: s.output_dir, file_stem: `scene-${String(base + i).padStart(2, "0")}` },
+      params: {
+        prompt: scenes[i],
+        type: "image",
+        max_credits: 0,
+        aspect_ratio: s.aspect_ratio,
+        download_quality: s.download_quality,
+        output_dir: s.output_dir,
+        file_stem: `scene-${String(base + i).padStart(2, "0")}`,
+      },
     };
     let ok = false;
     for (let attempt = 0; attempt < 2 && !ok; attempt++) {
@@ -816,7 +873,7 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
         files.push(...(await runGeneration(single)));
         ok = true;
       } catch {
-        /* second attempt below */
+        /* one more attempt, then give up on this scene */
       }
     }
     if (!ok) failed.push(i + 1);
@@ -825,12 +882,16 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
   files.sort();
   job.note = [
     agentTimedOut ? "the agent stalled and was stopped" : "",
-    nativeRetries ? `${nativeRetries} failed tile(s) retried in Flow` : "",
     `${done.size} of ${scenes.length} scenes came from the agent`,
+    agentRetries ? `${agentRetries} asked again` : "",
+    failedTiles ? `${failedTiles} tile(s) failed in Flow` : "",
     missing.length ? `${missing.length - failed.length} re-run one by one` : "",
     failed.length ? `still failed: scene ${failed.join(", ")} (use Retry)` : "",
-  ].filter(Boolean).join(" · ");
+  ]
+    .filter(Boolean)
+    .join(" · ");
   if (!files.length) throw new Error("No image could be generated for any scene. Open the Flow tab to see what Flow reported.");
+
   const left = await readCredits(page).catch(() => undefined);
   if (balance !== undefined && left !== undefined) job.credits = balance - left;
   return files;
