@@ -17,7 +17,7 @@ export interface FlowState {
 
 const IMAGE_TIMEOUT_MS = 3 * 60_000;
 const VIDEO_TIMEOUT_MS = 12 * 60_000;
-const FAILURE_TEXT = /fail|error|couldn.t|unable|violat|policy|try again/i;
+const FAILURE_TEXT = /failed|couldn.t|unable/i;
 
 const pause = (page: Page, ms: number) => page.waitForTimeout(ms);
 
@@ -86,28 +86,57 @@ async function scrollToTop(page: Page): Promise<void> {
 
 const mediaTile = (page: Page, id: string) => page.locator(`flow-grid-tile-container:has([src*="${id}"])`).first();
 
+// A failed generation becomes a <flow-error-tile> ("Failed ... You have not been charged") with Flow's own Retry
+// button. Old failures can sit anywhere in the grid, so only error tiles above the first already-known tile count.
+export async function newErrorTiles(page: Page, known: Iterable<string>): Promise<number> {
+  return page.evaluate((ids) => {
+    const seen = new Set(ids);
+    let errors = 0;
+    for (const tile of document.querySelectorAll("flow-grid-tile-container")) {
+      const id = tile.querySelector("img[src], video[src]")?.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0];
+      if (id && seen.has(id)) break;
+      if (tile.querySelector("flow-error-tile")) errors++;
+    }
+    return errors;
+  }, [...known]);
+}
+
+// Flow's Retry replaces the failed tile with a fresh render of the same prompt and settings, free of charge.
+async function retryErrorTiles(page: Page, count: number): Promise<void> {
+  for (let i = 0; i < count; i++) {
+    const tile = page.locator("flow-grid-tile-container:has(flow-error-tile)").first();
+    await tile.scrollIntoViewIfNeeded();
+    await tile.hover();
+    await tile.getByRole("button", { name: "Retry" }).click();
+    await pause(page, 1500);
+    await scrollToTop(page);
+  }
+}
+
 async function waitForNewMedia(page: Page, before: string[], count: number, timeoutMs: number, job?: Job): Promise<string[]> {
   const deadline = Date.now() + timeoutMs;
+  let retriesLeft = job?.params.retries ?? 1;
+  let failures = 0;
   while (Date.now() < deadline) {
     await pause(page, 2000);
     const fresh = [...new Set((await mediaIds(page)).filter((id) => !before.includes(id)))];
     // New tiles are listed first, so anything beyond the requested count is not ours.
     if (fresh.length >= count) return fresh.slice(0, count);
-    // Tiles that are neither finished nor showing a percentage have usually failed.
-    const tiles = await page.evaluate(() =>
-      [...document.querySelectorAll("flow-grid-tile-container")].slice(0, 8).map((t) => ({
-        done: Boolean(t.querySelector("flow-image-tile img[src], flow-video-tile img[src], flow-video-tile video[src]")),
-        text: (t as HTMLElement).innerText.trim(),
-      })),
+    const progress = await page.evaluate(() =>
+      [...document.querySelectorAll("flow-grid-tile-container")].slice(0, 8).map((t) => (t as HTMLElement).innerText.match(/\d+%/)?.[0]).filter(Boolean),
     );
-    const pending = tiles.filter((t) => !t.done);
-    const progress = pending.map((t) => t.text.match(/\d+%/)?.[0]).filter(Boolean);
     if (job) job.progress = progress.join(", ") || undefined;
-    const failed = pending.find((t) => !/\d+%/.test(t.text) && FAILURE_TEXT.test(t.text));
-    if (failed) {
-      if (fresh.length) return fresh;
-      throw new Error(`Flow reported a failed generation: ${failed.text.replace(/\s+/g, " ").slice(0, 300)}`);
+    const errors = progress.length ? 0 : await newErrorTiles(page, before);
+    if (!errors) continue;
+    failures += errors;
+    if (retriesLeft > 0) {
+      retriesLeft--;
+      if (job) job.progress = "Flow failed, retrying";
+      await retryErrorTiles(page, errors);
+      continue;
     }
+    if (fresh.length) return fresh;
+    throw new Error(`Flow failed this generation ${failures} time(s) ("Sorry, this image/video failed to generate"). Nothing was charged. Try again later or reword the prompt.`);
   }
   throw new Error(`Timed out after ${Math.round(timeoutMs / 1000)}s waiting for Flow to finish.`);
 }
@@ -601,6 +630,7 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
   const files: string[] = [];
   const done = new Set<number>();
   let agentTimedOut = false;
+  let nativeRetries = 0;
   try {
     await setAgentMode(page, true);
     await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9");
@@ -621,6 +651,7 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
     const stop = page.getByRole("button", { name: "Stop", exact: true });
     let idleSince = 0;
     let timedOut = false;
+    let retryRounds = 0;
     for (;;) {
       await pause(page, 3000);
       const working = (await stop.isVisible().catch(() => false)) || /\d+%/.test(await page.locator("main").first().innerText());
@@ -628,7 +659,16 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
       job.progress = working ? `${pending.length} rendering` : undefined;
       if (working) idleSince = 0;
       else if (!idleSince) idleSince = Date.now();
-      else if (Date.now() - idleSince > 8000) break;
+      else if (Date.now() - idleSince > 8000) {
+        // Busy servers leave "Failed" tiles behind: press Flow's own Retry on them, at most two rounds.
+        const errors = retryRounds < 2 ? await newErrorTiles(page, before as Set<string>) : 0;
+        if (!errors) break;
+        retryRounds++;
+        nativeRetries += errors;
+        job.progress = `retrying ${errors} failed`;
+        await retryErrorTiles(page, errors);
+        idleSince = 0;
+      }
       // A tile that hangs (busy servers) must not sink the batch: stop the agent, keep what finished, re-run the rest.
       if (Date.now() > deadline) {
         timedOut = true;
@@ -705,6 +745,7 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
   files.sort();
   job.note = [
     agentTimedOut ? "the agent stalled and was stopped" : "",
+    nativeRetries ? `${nativeRetries} failed tile(s) retried in Flow` : "",
     `${done.size} of ${scenes.length} scenes came from the agent`,
     missing.length ? `${missing.length - failed.length} re-run one by one` : "",
     failed.length ? `still failed: scene ${failed.join(", ")} (use Retry)` : "",

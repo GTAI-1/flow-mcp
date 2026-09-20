@@ -93,7 +93,11 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   (matchScenes, ≥50 % of the scene's words), and re-runs unmatched scenes through runGeneration (2 attempts each).
   `Reuse prompt` on an agent-made tile opens the agent session panel (`Start new session`, `Close`) which hides the normal
   composer; closeAgentSession handles it. This retry does not depend on what a failed tile looks like.
-- HONESTY NOTE: the agent retry was only exercised with a SIMULATED missing scene. A genuine Flow failure (busy servers)
-  has still never been observed: unknown whether a failed tile hangs at "NN%", disappears, or shows an error, and whether
-  the `Stop` button clears. On deadline the batch now stops the agent, keeps what finished and re-runs the rest instead
-  of throwing. When a real failure shows up, dump that tile's DOM and check the wait loop ends promptly.
+- REAL failed tile observed 2026-09-20 (user's own image, busy servers): `flow-grid-tile-container` with EMPTY aria-label →
+  `flow-image-tile` → `flow-error-tile` (`.error-title` "Failed", `.error-message-text` "Sorry, this image failed to
+  generate.", `.disclaimer-message` "You have not been charged for this generation."), buttons `Retry`, `Reuse prompt`,
+  `Delete`. No "%" text, so wait loops end normally. Pressing `Retry` removes the error tile and starts a fresh progress tile
+  at the TOP of the grid (done in ~25 s); verified by hand on that tile. Old failed tiles stay in the grid forever, so
+  newErrorTiles only counts error tiles above the first already-known tile (unit-checked with injected stand-ins).
+  Both engines now press Flow's Retry (exact: `retries`, default 1; agent: up to 2 rounds) before giving up; agent scenes
+  still missing afterwards are re-run one by one. NOT yet seen live: an automated run hitting a genuine failure end to end.

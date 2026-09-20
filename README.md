@@ -34,7 +34,7 @@ Claude Desktop (`claude_desktop_config.json`):
 | `flow_generate` | Queue scenes: prompt, type (video/image), model, aspect, duration, resolution, variants, first/last frame, reference images, `max_credits` cap |
 | `flow_wait` | Block until jobs finish; returns file paths |
 | `flow_cancel` | Cancel a queued job |
-| `flow_retry` | Re-queue failed jobs with the same settings and file names (scenes also retry once automatically when Flow reports a failure) |
+| `flow_retry` | Re-queue failed jobs with the same settings and file names (failed tiles are first retried inside Flow with its own free Retry button: `retries`, default 1) |
 | `flow_assets` | List images/videos already in the Flow project (usable as `asset:<title>`) |
 | `flow_download` | Download existing project media without regenerating (original or free 1080p/2K upscale) |
 | `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (8 images in ~85 s), 0 credits. Every image is matched back to its scene by its stored prompt (correct file numbers in any finish order), and scenes the agent did not deliver are re-run one by one automatically. Confirm setting is restored to Always afterwards |

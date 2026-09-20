@@ -124,8 +124,9 @@ export class JobQueue {
           job.error = undefined;
         } catch (err) {
           job.error = err instanceof Error ? err.message : String(err);
-          // Only failures Flow itself reports are retried automatically: a timeout may still have spent credits.
-          const retryable = /Flow reported a failed|agent finished without creating/i.test(job.error);
+          // Failed tiles are already retried inside Flow (its own Retry button); only an agent that produced nothing
+          // is re-queued here. Timeouts are never retried automatically: they may still have spent credits.
+          const retryable = /agent finished without creating/i.test(job.error);
           job.status = retryable && job.attempts <= (job.params.retries ?? 1) ? "queued" : "failed";
         }
         job.finishedAt = new Date().toISOString();
