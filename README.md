@@ -38,8 +38,8 @@ Claude Desktop (`claude_desktop_config.json`):
 | `flow_assets` | List images/videos already in the Flow project (usable as `asset:<title>`) |
 | `flow_download` | Download existing project media without regenerating (original or free 1080p/2K upscale) |
 | `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (8 images in ~85 s), 0 credits. Every image is matched back to its scene by its stored prompt (correct file numbers in any finish order). Scenes the agent drops are asked of the agent again (up to 2 extra rounds), then re-run one by one as a last resort. Confirm setting is restored to Always afterwards |
-| `flow_narrate` | Speak a line in a Flow voice and keep just the audio (throwaway 360p take, ~4-7 credits) |
-| `flow_voices` | List Flow's narrator voices |
+| `flow_narrate` | Narration audio: `engine: "flow"` speaks in a Flow voice (throwaway 360p take, ~4-7 credits) or `engine: "mac"` uses an installed macOS voice (free, any length) |
+| `flow_voices` | Narrator voices: Flow's 15, plus the English voices installed on this Mac |
 | `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). No prior quote; ~20 credits for a 4 s clip |
 | `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with personality and a stock voice; reference it as `asset:<name>` |
 | `flow_characters` | List the project's characters |

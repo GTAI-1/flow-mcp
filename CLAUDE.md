@@ -135,3 +135,7 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   Real speech only comes from generating a video with the voice attached as an ingredient; flow_narrate does that with a
   cheap 360p take and extracts the audio. Frames and Ingredients are mutually exclusive in Flow, so a narration take
   cannot also lock first/last frames.
+- Narration has two engines: `flow` (Flow voice, 4-7 credits, capped by take length) and `mac` (`say -v <voice>`,
+  free, any length, cleaned up through ffmpeg loudnorm; the .aiff intermediate is removed). localVoices() filters
+  `say -v ?` down to en_* and drops the novelty voices. Premium macOS voices appear automatically once the user
+  installs them in System Settings - Claude must not install them (system settings are the user's to change).

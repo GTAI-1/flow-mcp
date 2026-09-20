@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -50,6 +50,29 @@ function defaultClips(dir: string): string[] {
 // Pulls the spoken track out of a generated clip so Flow's voices can be used as narration.
 export async function extractAudio(video: string, target: string): Promise<{ output: string; duration: number }> {
   await run(FFMPEG, ["-y", "-i", video, "-vn", "-af", "highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=5:release=120,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target]);
+  const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
+  return { output: target, duration: Number(stdout.trim()) };
+}
+
+const SAY = process.env.FLOW_MCP_SAY ?? "say";
+
+// The voices macOS has installed. Premium ones appear here as soon as the user downloads them in System Settings.
+export async function localVoices(): Promise<{ name: string; description: string }[]> {
+  const { stdout } = await run(SAY, ["-v", "?"], { maxBuffer: 4 * 1024 * 1024 }).catch(() => ({ stdout: "" }));
+  return stdout
+    .split("\n")
+    .map((line) => line.match(/^(.+?)\s{2,}(\w{2}_\w{2})\s+#\s*(.*)$/))
+    .filter((m): m is RegExpMatchArray => Boolean(m) && /^en_/.test(m![2]))
+    .map((m) => ({ name: m[1].trim(), description: `${m[2].replace("_", "-")} · macOS, free` }))
+    .filter((v) => !/^(Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Albert|Fred|Grandma|Grandpa|Junior|Kathy|Princess|Ralph|Rocko|Shelley|Sandy|Eddy|Flo|Reed|Rishi)/.test(v.name));
+}
+
+// Speaks a line with a macOS voice. Free and instant, but only as good as the installed voice.
+export async function speakLocally(text: string, voice: string, target: string): Promise<{ output: string; duration: number }> {
+  const raw = target.replace(/\.\w+$/, "") + ".aiff";
+  await run(SAY, ["-v", voice, "-r", "168", "-o", raw, text]);
+  await run(FFMPEG, ["-y", "-i", raw, "-af", "highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=5:release=120,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target]);
+  rmSync(raw, { force: true });
   const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
   return { output: target, duration: Number(stdout.trim()) };
 }

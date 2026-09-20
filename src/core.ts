@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
-import { assemble, extractAudio } from "./assemble.js";
+import { assemble, extractAudio, localVoices, speakLocally } from "./assemble.js";
 import { extractLastFrame } from "./chain.js";
 import { characterLook, createCharacter, downloadAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
@@ -80,6 +80,10 @@ export const shapes = {
   voices: {},
   narrate: {
     project: z.string().min(1).describe("Folder for the narration audio."),
+    engine: z
+      .enum(["flow", "mac"])
+      .default("flow")
+      .describe("'flow' speaks in a Flow voice (costs 4-7 credits, best quality). 'mac' uses a voice installed on this Mac: free and instant, and good if a Premium voice is installed."),
     text: z.string().min(1).max(400).describe("The line to speak. About 20 words fits 8 s, 30 words fits 12 s; anything longer needs a longer take."),
     voice: z.string().min(1).default("Charon").describe("Flow voice name, e.g. Charon (male, informative), Aoede (female, breezy), Gacrux (female, mature)."),
     duration: z.union([z.literal(4), z.literal(6), z.literal(8), z.literal(10)]).default(10).describe("Take length in seconds; the line must fit inside it."),
@@ -368,11 +372,17 @@ export class LocalCore implements Core {
   }
 
   async voices() {
-    return VOICES;
+    return { flow: VOICES, mac: await localVoices() };
   }
 
-  async narrate({ project, text, voice, duration, max_credits }: Args<"narrate">) {
+  async narrate({ project, text, voice, duration, max_credits, engine }: Args<"narrate">) {
     const output_dir = projectDir(project);
+    if (engine === "mac") {
+      mkdirSync(output_dir, { recursive: true });
+      const target = join(output_dir, `${this.nextStem(output_dir, "narration")}.m4a`);
+      const spoken = await speakLocally(text.trim(), voice, target);
+      return { output_dir, credits: 0, ...spoken };
+    }
     const job = this.queue.add({
       prompt: `A plain dark grey background, nothing moving, no people, no text on screen. A warm, steady narrator speaks this line clearly and unhurriedly from start to finish, with no other sound at all: "${text.trim()}"`,
       type: "video",
