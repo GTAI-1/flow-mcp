@@ -28,9 +28,11 @@ export const GEMINI_VOICES = [
   { name: "Sadaltager", description: "knowledgeable" }, { name: "Sulafat", description: "warm" },
 ];
 
+// Real keys look like "AIza..." and are ~39 chars; anything shorter or still holding template text is not a key.
 export const geminiKey = (): string | undefined => {
   const key = (process.env.GEMINI_API_KEY ?? (existsSync(KEY_FILE) ? readFileSync(KEY_FILE, "utf8") : "")).trim();
-  return key && key !== "YOUR_KEY_HERE" ? key : undefined;
+  if (!key || key.length < 20 || /^(YOUR|PASTE|<|\$)/i.test(key) || /_KEY|KEY_HERE|EXAMPLE/i.test(key)) return undefined;
+  return key;
 };
 
 interface TtsPart {
@@ -41,9 +43,15 @@ interface TtsPart {
 export async function speakWithGemini(text: string, voice: string, target: string, style?: string): Promise<{ output: string; duration: number }> {
   const key = geminiKey();
   if (!key) {
+    const placeholder = existsSync(KEY_FILE) && readFileSync(KEY_FILE, "utf8").trim().length > 0;
     throw new Error(
-      "No Gemini key. Get one at aistudio.google.com (Get API key), then save it yourself:\n" +
-        `  printf '%s' 'YOUR_KEY' > ${KEY_FILE} && chmod 600 ${KEY_FILE}`,
+      (placeholder
+        ? `The key file still holds placeholder text, not a key.\n\n`
+        : `No Gemini key yet.\n\n`) +
+        `1. Open aistudio.google.com and click "Get API key", then "Create API key".\n` +
+        `2. Copy it — it starts with AIza and is about 39 characters.\n` +
+        `3. In your terminal, with your own key in place of the quoted text:\n` +
+        `   printf '%s' 'AIza…your real key…' > ${KEY_FILE} && chmod 600 ${KEY_FILE}`,
     );
   }
   const prompt = style ? `Say ${style}: ${text}` : text;

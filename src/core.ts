@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
-import { assemble, extractAudio, localVoices, speakLocally } from "./assemble.js";
+import { assemble, localVoices, speakLocally } from "./assemble.js";
 import { GEMINI_VOICES, geminiKey, speakWithGemini } from "./gemini.js";
 import { extractLastFrame } from "./chain.js";
 import { characterLook, createCharacter, downloadAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runEdit, runGeneration } from "./flow.js";
@@ -82,15 +82,13 @@ export const shapes = {
   narrate: {
     project: z.string().min(1).describe("Folder for the narration audio."),
     engine: z
-      .enum(["gemini", "flow", "mac"])
+      .enum(["gemini", "mac"])
       .default("gemini")
       .describe(
-        "'gemini' uses Google's own TTS with the same voices Flow has - free on the AI Studio tier, no length limit, needs a key in ~/.flow-mcp/gemini-key. 'flow' speaks through a throwaway Flow clip (4-7 credits, capped by take length). 'mac' uses a voice installed on this Mac (free, instant).",
+        "'gemini' uses Google AI Studio's text-to-speech - the same voices Flow has, free on the AI Studio tier, no length limit, needs a key in ~/.flow-mcp/gemini-key. 'mac' uses a voice installed on this Mac: free, instant, no key.",
       ),
     text: z.string().min(1).max(400).describe("The line to speak. About 20 words fits 8 s, 30 words fits 12 s; anything longer needs a longer take."),
-    voice: z.string().min(1).default("Charon").describe("Flow voice name, e.g. Charon (male, informative), Aoede (female, breezy), Gacrux (female, mature)."),
-    duration: z.union([z.literal(4), z.literal(6), z.literal(8), z.literal(10)]).default(10).describe("Take length in seconds; the line must fit inside it."),
-    max_credits: z.number().int().min(0).default(8).describe("Cap for the 'flow' engine only: a 360p take costs 4-7 credits depending on length."),
+    voice: z.string().min(1).default("Charon").describe("Voice name from flow_voices, e.g. Charon (informative), Aoede (breezy), Gacrux (mature) for Google; Zoe or Samantha for macOS."),
     style: z.string().max(200).optional().describe("Delivery note for the 'gemini' engine, e.g. 'slowly and warmly, like a documentary narrator'."),
   },
   edit: {
@@ -164,6 +162,7 @@ export interface Core {
   outputs(): Promise<unknown>;
 }
 
+// Flow's own voices: still offered when giving a character a voice, but narration no longer goes through Flow.
 export const VOICES = [
   { name: "Achernar", description: "female, soft, high pitch" },
   { name: "Achird", description: "male, friendly, mid pitch" },
@@ -199,13 +198,7 @@ export class LocalCore implements Core {
     }
     if (job.params.agent_scenes) return runAgentBatch(job);
     if (job.params.edit_asset) return runEdit(job);
-    const made = await runGeneration(job);
-    if (!job.params.narration) return made;
-    // A narration take is generated as a throwaway clip; only its spoken track is kept.
-    const clip = made.find((f) => /\.(mp4|webm|mov)$/i.test(f));
-    if (!clip) throw new Error("The narration take produced no clip.");
-    const { output } = await extractAudio(clip, clip.replace(/\.\w+$/, ".m4a"));
-    return [output, ...made];
+    return runGeneration(job);
   });
 
   async status({ detailed }: Args<"status">) {
@@ -376,36 +369,15 @@ export class LocalCore implements Core {
   }
 
   async voices() {
-    return { gemini: GEMINI_VOICES, gemini_ready: Boolean(geminiKey()), flow: VOICES, mac: await localVoices() };
+    return { gemini: GEMINI_VOICES, gemini_ready: Boolean(geminiKey()), mac: await localVoices() };
   }
 
-  async narrate({ project, text, voice, duration, max_credits, engine, style }: Args<"narrate">) {
+  async narrate({ project, text, voice, engine, style }: Args<"narrate">) {
     const output_dir = projectDir(project);
-    if (engine === "gemini") {
-      mkdirSync(output_dir, { recursive: true });
-      const target = join(output_dir, `${this.nextStem(output_dir, "narration")}.m4a`);
-      return { output_dir, credits: 0, ...(await speakWithGemini(text.trim(), voice, target, style)) };
-    }
-    if (engine === "mac") {
-      mkdirSync(output_dir, { recursive: true });
-      const target = join(output_dir, `${this.nextStem(output_dir, "narration")}.m4a`);
-      const spoken = await speakLocally(text.trim(), voice, target);
-      return { output_dir, credits: 0, ...spoken };
-    }
-    const job = this.queue.add({
-      prompt: `A plain dark grey background, nothing moving, no people, no text on screen. A warm, steady narrator speaks this line clearly and unhurriedly from start to finish, with no other sound at all: "${text.trim()}"`,
-      type: "video",
-      model: "Omni 1.1 Flash",
-      resolution: "360p",
-      aspect_ratio: "16:9",
-      duration,
-      max_credits,
-      reference_images: [`asset:${voice}`],
-      narration: true,
-      output_dir,
-      file_stem: this.nextStem(output_dir, "narration"),
-    });
-    return { output_dir, jobs: [jobView(job)] };
+    mkdirSync(output_dir, { recursive: true });
+    const target = join(output_dir, `${this.nextStem(output_dir, "narration")}.m4a`);
+    const spoken = engine === "mac" ? await speakLocally(text.trim(), voice, target) : await speakWithGemini(text.trim(), voice, target, style);
+    return { output_dir, credits: 0, engine, voice, ...spoken };
   }
 
   async techniques({ category }: Args<"techniques">) {

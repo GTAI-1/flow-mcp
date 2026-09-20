@@ -180,7 +180,7 @@ server.registerTool(
   {
     title: "Record narration in a Flow voice",
     description:
-      "Speak a line in one of Flow's voices and keep just the audio (a cheap throwaway 360p clip is generated, about 4-7 credits, and its spoken track is extracted). Use flow_voices for the list. Returns a job; flow_wait gives the .m4a path, which flow_assemble can lay over a film.",
+      "Record narration as an .m4a, free and instantly. `engine: \"gemini\"` uses Google AI Studio's text-to-speech (the same voices Flow has, needs a free key in ~/.flow-mcp/gemini-key, and takes a `style` note like 'warmly, like a documentary narrator'); `engine: \"mac\"` uses a voice installed on this Mac. Neither costs credits or caps the length. flow_assemble can lay the result over a film.",
     inputSchema: shapes.narrate,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
@@ -191,7 +191,7 @@ server.registerTool(
   "flow_voices",
   {
     title: "List Flow voices",
-    description: "The narrator voices Flow offers, with a short description of each.",
+    description: "Narrator voices available for flow_narrate: Google AI Studio's (with whether a key is set up) and the English voices installed on this Mac.",
     inputSchema: shapes.voices,
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   },

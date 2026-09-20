@@ -38,8 +38,8 @@ Claude Desktop (`claude_desktop_config.json`):
 | `flow_assets` | List images/videos already in the Flow project (usable as `asset:<title>`) |
 | `flow_download` | Download existing project media without regenerating (original or free 1080p/2K upscale) |
 | `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (8 images in ~85 s), 0 credits. Every image is matched back to its scene by its stored prompt (correct file numbers in any finish order). Scenes the agent drops are asked of the agent again (up to 2 extra rounds), then re-run one by one as a last resort. Confirm setting is restored to Always afterwards |
-| `flow_narrate` | Narration audio in three engines: `gemini` (Google TTS, same voices as Flow, free on the AI Studio tier, any length — needs a key in `~/.flow-mcp/gemini-key`), `flow` (throwaway 360p take, ~4-7 credits, capped by take length) or `mac` (installed macOS voice, free) |
-| `flow_voices` | Narrator voices: Gemini's 30, Flow's 15, and the English voices installed on this Mac |
+| `flow_narrate` | Free narration audio, any length: `gemini` (Google AI Studio TTS — the same voices Flow has, plus a `style` note; needs a key in `~/.flow-mcp/gemini-key`) or `mac` (a voice installed on this Mac, no key) |
+| `flow_voices` | Narrator voices: Google AI Studio's 30 (and whether a key is set up) plus the English voices installed on this Mac |
 | `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). No prior quote; ~20 credits for a 4 s clip |
 | `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with personality and a stock voice; reference it as `asset:<name>` |
 | `flow_characters` | List the project's characters |
@@ -64,8 +64,7 @@ Opening `studio/index.html` directly as a file does nothing: the page needs this
 
 Tabbed workspace, one tab per stage: **Cast** (create/edit reusable characters), **Frames** (stills, with
 *match previous frame* so a set stays on-model, plus a script splitter and the agent engine), **Shots** (video
-clips with first/last frames, chaining and a live credit estimate), **Voice** (narration in a Flow voice, with a
-words-to-seconds fit check), **Restyle** (`flow_edit` on an existing clip), **Cut** (assemble with music,
+clips with first/last frames, chaining and a live credit estimate), **Voice** (free narration from Google AI Studio or a macOS voice), **Restyle** (`flow_edit` on an existing clip), **Cut** (assemble with music,
 narration and hold-last-frame) and **Library** (browse and download what is already in Flow). A Monitor and a
 Gallery of everything saved locally stay visible alongside every tab.
 

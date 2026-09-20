@@ -16,7 +16,6 @@ export interface SceneParams {
   reference_images?: string[];
   chain_from?: string;
   reference_from?: string;
-  narration?: boolean;
   edit_asset?: string;
   agent_scenes?: string[];
   retries?: number;

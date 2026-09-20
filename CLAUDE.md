@@ -146,3 +146,7 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   the mimeType (`audio/L16;rate=24000`), so ffmpeg wraps it with -f s16le -ar <rate>. Key comes from GEMINI_API_KEY or
   ~/.flow-mcp/gemini-key (the user writes it themselves; Claude never handles the key). Gemini and Flow share the voice
   family, so a Gemini take matches a Flow one. UNTESTED until a real key exists - the no-key path is verified.
+- Narration through Flow was REMOVED (2026-09-20): it cost 4-7 credits, capped the line to the take length and could
+  paraphrase. flow_narrate is now gemini | mac only, both free and unlimited in length. Flow's own VOICES list stays in
+  core.ts solely for giving a CHARACTER a voice. Verified in the panel: both engines record, the style note shows for
+  Google only, and the Google take used the same Charon voice a Flow take had cost 7 credits for.
