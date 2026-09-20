@@ -10,6 +10,7 @@ export interface FlowState {
   signedIn: boolean;
   inProject: boolean;
   plan?: string;
+  credits_remaining?: number;
   composer?: string;
   hint?: string;
 }
@@ -20,7 +21,8 @@ const FAILURE_TEXT = /fail|error|couldn.t|unable|violat|policy|try again/i;
 
 const pause = (page: Page, ms: number) => page.waitForTimeout(ms);
 
-export async function getFlowState(): Promise<FlowState> {
+// `detailed` opens the account panel to read the balance, so it must not run while a generation is driving the page.
+export async function getFlowState(detailed = false): Promise<FlowState> {
   const page = await getFlowPage();
   const url = page.url();
   // Signed-out visitors are bounced to the marketing page or Google's sign-in.
@@ -29,11 +31,35 @@ export async function getFlowState(): Promise<FlowState> {
   const state: FlowState = { url, signedIn, inProject };
   if (!signedIn) state.hint = "Not signed in. Run `npm run login` and sign in to Google in the Flow Chrome window.";
   else if (!inProject) state.hint = "Signed in, but no project is open. Open or create a project in the Flow Chrome window.";
-  else {
+  else if (detailed) {
     state.plan = await page.getByRole("button", { name: "Account details" }).innerText().then((t) => t.trim().split("\n")[0], () => undefined);
+    state.credits_remaining = await readCredits(page).catch(() => undefined);
     state.composer = await settingsTrigger(page).innerText().then((t) => t.replace(/\s+/g, " ").trim(), () => undefined);
   }
   return state;
+}
+
+// Menus close on Escape; the account panel does not and needs its own close button.
+async function dismissOverlays(page: Page): Promise<void> {
+  await page.keyboard.press("Escape");
+  const closePanel = page.getByRole("button", { name: "Close account panel" });
+  if (await closePanel.isVisible().catch(() => false)) await closePanel.click({ timeout: 5000 }).catch(() => {});
+}
+
+// The balance only shows inside the account panel. That panel also holds "Sign out": never touch anything else in it.
+async function readCredits(page: Page): Promise<number | undefined> {
+  await dismissOverlays(page);
+  await scrollToTop(page);
+  await page.getByRole("button", { name: "Account details" }).click({ timeout: 5000 });
+  const link = page.getByRole("link", { name: /Google Flow credits/ });
+  try {
+    await link.waitFor({ state: "visible", timeout: 5000 });
+    const n = Number((await link.innerText()).replace(/[^\d]/g, ""));
+    return Number.isNaN(n) ? undefined : n;
+  } finally {
+    await dismissOverlays(page);
+    await pause(page, 300);
+  }
 }
 
 const settingsTrigger = (page: Page) => page.getByRole("button", { name: "Settings trigger" });
@@ -143,8 +169,12 @@ async function applySettings(page: Page, job: Job): Promise<number> {
   return cost;
 }
 
+const ASSET_PREFIX = "asset:";
+
 // Uploads under a unique filename so the asset can be picked unambiguously afterwards.
+// "asset:<name>" refers to something already in the Flow project (image, video, character) and skips the upload.
 async function uploadAsset(page: Page, job: Job, file: string, label: string): Promise<string> {
+  if (file.startsWith(ASSET_PREFIX)) return file.slice(ASSET_PREFIX.length).trim();
   if (!existsSync(file)) throw new Error(`File not found: ${file}`);
   const name = `fm-${job.id}-${label}${extname(file).toLowerCase()}`;
   const staged = join(mkdtempSync(join(tmpdir(), "flow-mcp-")), name);
@@ -185,17 +215,25 @@ async function typePrompt(page: Page, prompt: string): Promise<void> {
   await pause(page, 500);
 }
 
-export async function downloadMedia(page: Page, mediaId: string, targetStem: string): Promise<string> {
-  const tile = mediaTile(page, mediaId);
+export type DownloadQuality = "original" | "upscaled";
+
+export async function downloadMedia(page: Page, mediaId: string, targetStem: string, quality: DownloadQuality = "original"): Promise<string> {
+  return downloadTile(page, mediaTile(page, mediaId), targetStem, quality);
+}
+
+async function downloadTile(page: Page, tile: Locator, targetStem: string, quality: DownloadQuality): Promise<string> {
   await tile.scrollIntoViewIfNeeded();
-  const download = page.waitForEvent("download", { timeout: 120_000 });
+  // Upscales are rendered on demand, so they can take minutes before the file arrives.
+  const download = page.waitForEvent("download", { timeout: quality === "upscaled" ? 600_000 : 120_000 });
   download.catch(() => {});
   await tile.click({ button: "right" });
   await page.getByRole("menuitem", { name: "Download", exact: true }).click();
-  // Images and videos offer a size submenu; take the original (no upscale wait, no extra cost).
+  // Size submenu: "720p Original size" / "1K Original size", or the first upscale the plan allows (1080p / 2K).
   const original = page.getByRole("menuitem", { name: /original/i }).first();
   if (await original.waitFor({ state: "visible", timeout: 2500 }).then(() => true, () => false)) {
-    await original.click();
+    const upscaled = page.locator('[role="menuitem"]:not([aria-disabled="true"]):not([disabled])').filter({ hasText: /upscaled/i }).first();
+    const wanted = quality === "upscaled" && (await upscaled.isVisible().catch(() => false)) ? upscaled : original;
+    await wanted.click();
   }
   const file = await download;
   const target = `${targetStem}${extname(file.suggestedFilename()) || ".bin"}`;
@@ -212,7 +250,7 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const page = await getFlowPage();
   const s = job.params;
 
-  await page.keyboard.press("Escape");
+  await dismissOverlays(page);
   await scrollToTop(page);
   const agent = page.getByRole("button", { name: "Agent", exact: true });
   if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
@@ -252,8 +290,63 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const files: string[] = [];
   for (const [i, id] of fresh.entries()) {
     const stem = join(s.output_dir, fresh.length > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem);
-    files.push(await downloadMedia(page, id, stem));
+    files.push(await downloadMedia(page, id, stem, s.download_quality));
     await pause(page, 1500);
   }
   return files;
+}
+
+export interface FlowAsset {
+  name: string;
+  kind: "image" | "video";
+  id?: string;
+}
+
+// Walks the virtualised grid from the top and collects every tile it passes.
+async function scanGrid(page: Page, stopAt?: (assets: FlowAsset[]) => boolean): Promise<FlowAsset[]> {
+  await dismissOverlays(page);
+  await scrollToTop(page);
+  const seen = new Map<string, FlowAsset>();
+  for (let step = 0; step < 200; step++) {
+    const batch = await page.evaluate(() =>
+      [...document.querySelectorAll("flow-grid-tile-container")].map((t) => ({
+        name: t.getAttribute("aria-label") ?? "",
+        kind: t.querySelector("flow-video-tile") ? ("video" as const) : ("image" as const),
+        id: t.querySelector("img[src], video[src]")?.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0],
+      })),
+    );
+    for (const a of batch) if (a.name) seen.set(a.id ?? a.name, a);
+    if (stopAt?.([...seen.values()])) break;
+    const moved = await page.evaluate(() => {
+      const el = document.querySelector(".page-container");
+      if (!el) return false;
+      const before = el.scrollTop;
+      el.scrollTop = before + el.clientHeight * 0.8;
+      return el.scrollTop > before;
+    });
+    if (!moved) break;
+    await pause(page, 500);
+  }
+  return [...seen.values()];
+}
+
+export async function listAssets(): Promise<FlowAsset[]> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  const assets = await scanGrid(page);
+  await scrollToTop(page);
+  return assets;
+}
+
+// Downloads media that already exists in the project, matched by (the start of) its title.
+export async function downloadAsset(name: string, targetStem: string, quality: DownloadQuality): Promise<string> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  const matches = (a: FlowAsset) => a.name.toLowerCase().startsWith(name.toLowerCase());
+  const found = (await scanGrid(page, (assets) => assets.some(matches))).find(matches);
+  if (!found) throw new Error(`No asset whose title starts with "${name}". Use flow_assets to list titles.`);
+  const tile = found.id ? mediaTile(page, found.id) : page.locator(`flow-grid-tile-container[aria-label="${found.name}"]`).first();
+  return downloadTile(page, tile, targetStem, quality);
 }

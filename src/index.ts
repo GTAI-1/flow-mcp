@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -6,7 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { assemble } from "./assemble.js";
 import { extractLastFrame } from "./chain.js";
-import { getFlowState, runGeneration } from "./flow.js";
+import { downloadAsset, getFlowState, listAssets, runGeneration } from "./flow.js";
 import { PLAYBOOK } from "./playbook.js";
 import { JobQueue, type Job } from "./queue.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
@@ -51,7 +52,7 @@ server.registerTool(
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
   async () => {
-    const flow = await getFlowState();
+    const flow = await getFlowState(!queue.busy);
     return result({ flow, pacing: queue.pausedReason, output_root: OUTPUT_ROOT, jobs: queue.list().map(jobView), playbook: PLAYBOOK });
   },
 );
@@ -73,9 +74,14 @@ const sceneSchema = z.object({
     .default(25)
     .describe("Safety cap: the scene is skipped (nothing spent) if Flow quotes more credits than this."),
   variants: z.number().int().min(1).max(4).optional().describe("Outputs per prompt (each one spends credits). Default 1."),
-  first_frame: z.string().optional().describe("Absolute path to an image used as the first frame."),
-  last_frame: z.string().optional().describe("Absolute path to an image used as the last frame."),
-  reference_images: z.array(z.string()).max(3).optional().describe("Absolute paths to ingredient/reference images."),
+  first_frame: z.string().optional().describe("First frame: absolute image path, or 'asset:<title>' for an image already in the Flow project."),
+  last_frame: z.string().optional().describe("Last frame: absolute image path, or 'asset:<title>'."),
+  reference_images: z
+    .array(z.string())
+    .max(3)
+    .optional()
+    .describe("Ingredient/reference media: absolute image paths, or 'asset:<title>' for media or characters already in the Flow project."),
+  download_quality: z.enum(["original", "upscaled"]).optional().describe("'upscaled' fetches 1080p video / 2K image and takes longer. Default original."),
   technique: z
     .string()
     .optional()
@@ -126,6 +132,56 @@ server.registerTool(
       );
     }
     return result({ output_dir, jobs: jobs.map(jobView) });
+  },
+);
+
+const BUSY = "A generation is running in the Flow tab. Call flow_wait first, then retry.";
+const failure = (err: unknown) => ({ ...result({ error: err instanceof Error ? err.message : String(err) }), isError: true });
+
+server.registerTool(
+  "flow_assets",
+  {
+    title: "List project media",
+    description: "List the images and videos in the open Flow project (title and kind). Titles can be used as 'asset:<title>' in flow_generate or with flow_download.",
+    inputSchema: { kind: z.enum(["image", "video"]).optional() },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  async ({ kind }) => {
+    if (queue.busy) return failure(BUSY);
+    try {
+      const assets = await listAssets();
+      return result(assets.filter((a) => !kind || a.kind === kind).map(({ name, kind }) => ({ name, kind })));
+    } catch (err) {
+      return failure(err);
+    }
+  },
+);
+
+server.registerTool(
+  "flow_download",
+  {
+    title: "Download existing project media",
+    description: "Download media that already exists in the Flow project, without regenerating it (no credits). Matches by the start of the title.",
+    inputSchema: {
+      project: z.string().min(1).describe("Local folder name under the output root."),
+      assets: z.array(z.string().min(1)).min(1).max(30).describe("Titles (or title prefixes) from flow_assets, in the order they should be numbered."),
+      quality: z.enum(["original", "upscaled"]).default("original"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ project, assets, quality }) => {
+    if (queue.busy) return failure(BUSY);
+    const dir = projectDir(project);
+    mkdirSync(dir, { recursive: true });
+    const files: string[] = [];
+    try {
+      for (const [i, name] of assets.entries()) {
+        files.push(await downloadAsset(name, join(dir, `clip-${String(i + 1).padStart(2, "0")}`), quality));
+      }
+      return result({ dir, files });
+    } catch (err) {
+      return failure(new Error(`${err instanceof Error ? err.message : err} (downloaded so far: ${files.length})`));
+    }
   },
 );
 

@@ -43,8 +43,20 @@ OmniFlow (lingoflow.pro/omniflow), using subscription credits instead of the API
 
 ## Status
 
-Verified end to end through the MCP: image generation, upload, download, credit guard, pacing.
-Verified in two halves (generation ran via the MCP; tile detection + download were fixed afterwards and
-checked against the finished tiles): text→video and first+last-frame video. One unattended video run is still owed.
-Written but untested: `reference_images` (ingredients picker), `chain_previous` (ffmpeg part tested), variants > 1.
-Not built: `flow_edit`, scene/timeline stitching, characters (@name), library asset reuse, 1080p upscale download, local Studio UI.
+Verified unattended through the MCP: image, text→video, first+last frame, reference_images, chain_previous,
+download, credit guard, pacing, flow_techniques, flow_assemble.
+Untested: variants > 1, image generation with reference_images.
+Not built: `flow_edit` (needs one paid run to learn cost/result placement), characters tool, reuse of existing library
+assets by name, 1080p upscaled download, local Studio web panel.
+
+## More UI map (2026-09-19)
+
+- Ingredients picker (`Add ingredients to the prompt box`): tabs All/Images/Videos/Voices/Characters/Avatars/Uploads,
+  `Upload media`, listbox `Asset list` with options named "<name> Image|Video|Avatar"; clicking only previews
+  (videos get Trim start/end sliders) and `Add to prompt` attaches. Frame pickers (`Start`/`End`) attach on click.
+- Characters: left-nav `Characters` → with none yet opens `/character` (describe + Nano Banana 2, `Upload`,
+  `Add from project` → dialog `Select media` → option → `Add media`). That creates `/character/<uuid>` with
+  textbox `Character name`, `Select a voice`, `Character personality`, `Reroll`, `Portrait`, `Create body`, `Done editing`.
+  Afterwards the composer shows the character as a chip. A test character "zz-test-bicycle…" exists in the mapping project.
+- Scenes nav is just a filter; scenes are made via tile menu `Add to scene` / Add media → `New scene`. Assembly is done locally (flow_assemble) instead.
+- Edit composer shows no credit quote before starting, so `max_credits` cannot be enforced for edits; cost must be measured with one paid run before building `flow_edit`.

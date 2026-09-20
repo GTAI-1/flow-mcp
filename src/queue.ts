@@ -15,6 +15,7 @@ export interface SceneParams {
   last_frame?: string;
   reference_images?: string[];
   chain_from?: string;
+  download_quality?: "original" | "upscaled";
   output_dir: string;
   file_stem: string;
 }
@@ -57,6 +58,10 @@ export class JobQueue {
     this.jobs.set(job.id, job);
     void this.work();
     return job;
+  }
+
+  get busy(): boolean {
+    return this.list().some((j) => j.status === "running");
   }
 
   get(id: string): Job | undefined {
