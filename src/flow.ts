@@ -583,11 +583,12 @@ export async function runEdit(job: Job): Promise<string[]> {
 
   await ensureProjectGrid(page);
   const balance = await readCredits(page).catch(() => undefined);
+  // New tiles always appear at the top, so the "before" snapshot is taken there, ahead of the search: scrolling
+  // back to the top after the scan would unmount the tile we are about to click (the grid is virtualised).
+  const before = await mediaIds(page);
   const matches = (a: FlowAsset) => a.kind === "video" && a.name.toLowerCase().startsWith(title.toLowerCase());
   const found = (await scanGrid(page, (assets) => assets.some(matches))).find(matches);
   if (!found) throw new Error(`No video whose title starts with "${title}". Use flow_assets to list titles.`);
-  await scrollToTop(page);
-  const before = await mediaIds(page);
 
   const tile = tileOf(page, found);
   await tile.scrollIntoViewIfNeeded();

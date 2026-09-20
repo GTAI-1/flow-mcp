@@ -46,14 +46,13 @@ OmniFlow (lingoflow.pro/omniflow), using subscription credits instead of the API
 
 ## Status
 
-Verified unattended: image (incl. x2 variants), text→video, first+last frame, reference_images (files and `asset:`
-characters), chain_previous, download (original + free 1080p upscale), credit guard, pacing, credits readout,
-flow_assets, flow_download, flow_techniques, flow_assemble, flow_character (upload + personality + stock voice),
-Studio panel (image scene end to end, script splitter), MCP-as-client via RemoteCore.
-Omni 1.1 Flash quotes: 360p 4/5/6/7 and 720p 7/10/12/15 credits for 4/6/8/10 s. A 4 s edit cost 20 credits.
-Built from a manual paid run but not yet run unattended: `flow_edit` (runEdit). Next paid run should verify it.
-Untested: music/voiceover mix in flow_assemble, characters created via `asset:` image.
-Verified: `flow_agent_images` (8 scenes → 8 files in scene order, 84 s, 0 credits) incl. from the Studio (engine toggle).
+Verified unattended end to end: image (incl. x2 variants), text→video, first+last frame, reference_images (files and
+`asset:` characters), chain_previous, download (original + free 1080p upscale), credit guard, pacing, credits readout,
+flow_assets, flow_download, flow_techniques, flow_assemble (incl. looping music + voiceover mix, checked with
+volumedetect), flow_character, flow_edit (20 credits for a 4 s clip, result verified visually), flow_agent_images
+(20 scenes → 20 files in scene order, 204 s, 0 credits; and the re-ask + one-by-one recovery path), Studio panel,
+MCP-as-client via RemoteCore.
+Omni 1.1 Flash quotes: 360p 4/5/6/7 and 720p 7/10/12/15 credits for 4/6/8/10 s.
 Not built: "improve prompt (AI)" in Studio (bundled Claude Code CLI exists at
 ~/Library/Application Support/Claude/claude-code/<ver>/claude.app/Contents/MacOS/claude but is not logged in).
 The app's Browser pane shows `studio/index.html` as a static file after edits: that view is NOT connected (the page
@@ -116,3 +115,6 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   (2) `done.add(sceneIndex)` must only happen when a tile was really downloaded, otherwise missing scenes are silently
   skipped and the note lies ("20 of 20"); (3) freshness must be judged by media id, NOT by title - the agent reuses the
   same titles across runs, so a name-based `before` set hid 12 of 20 new tiles.
+- Virtual grid trap (cost two failed flow_edit runs): after `scanGrid` finds a tile far down the list, DO NOT
+  `scrollToTop` before clicking it - the tile is unmounted and every locator times out. Take the "before" snapshot
+  first (new tiles always appear at the top), then scan and act on the tile where it is.
