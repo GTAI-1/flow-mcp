@@ -1,0 +1,14 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+const c = new Client({ name: "rt", version: "0" });
+await c.connect(new StdioClientTransport({ command: "node", args: ["dist/index.js"], env: { ...process.env, FLOW_MCP_SIMULATE_MISSING: "2" } }));
+const call = async (n, a = {}) => JSON.parse((await c.callTool({ name: n, arguments: a }, undefined, { timeout: 2400000 })).content[0].text);
+const log = (...m) => console.log(new Date().toLocaleTimeString("en-GB"), ...m);
+const scenes = ["A ceramic teapot on a windowsill, steam rising", "A stack of three books beside a reading lamp", "An open notebook with a fountain pen resting on it", "A woollen blanket folded over the arm of a chair"];
+const t0 = Date.now();
+const a = await call("flow_agent_images", { project: "RoundTest", scenes, aspect_ratio: "1:1" });
+let w; do { w = await call("flow_wait", { job_ids: [a.jobs[0].id], timeout_seconds: 45 }); const j = w.jobs[0]; log(j.status, "|", j.progress ?? "-", "|", j.files.length, "files"); } while (!w.finished);
+const j = w.jobs[0];
+log("RESULT:", j.status, "|", Math.round((Date.now() - t0) / 1000) + "s", "| note:", j.note ?? "-", "| error:", j.error ?? "-");
+log("files:", JSON.stringify(j.files.map(f => f.split("/").pop())));
+await c.close(); process.exit(0);
