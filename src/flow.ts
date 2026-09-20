@@ -64,16 +64,20 @@ async function readCredits(page: Page): Promise<number | undefined> {
 
 const settingsTrigger = (page: Page) => page.getByRole("button", { name: "Settings trigger" });
 
-// A finished tile is keyed by the media uuid in its <img>/<video> src. Image tiles also carry
-// data-media-id, but video tiles at rest only show a thumbnail <img>, so the src is the common handle.
+// Every finished tile carries its media id in data-media-id; some thumbnails also have it in the URL, but Flow
+// serves signed /asb/ links with no uuid, so the attribute comes first and the URL is only a fallback.
+// Video tiles at rest expose neither: their signed thumbnail URL is unique per clip, so it serves as the handle.
+const TILE_ID_JS = `(tile) => {
+  const media = tile.querySelector("img[data-media-id], video[data-media-id], img[src], video[src]");
+  if (!media) return undefined;
+  const src = media.getAttribute("src") || "";
+  return media.getAttribute("data-media-id") || src.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0] || src || undefined;
+}`;
+
 export async function mediaIds(page: Page): Promise<string[]> {
-  return page.evaluate(() =>
-    [...document.querySelectorAll("flow-grid-tile-container")]
-      .map((tile) => {
-        const media = tile.querySelector("flow-image-tile img[src], flow-video-tile img[src], flow-video-tile video[src]");
-        return media?.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0];
-      })
-      .filter((id): id is string => Boolean(id)),
+  return page.evaluate(
+    (js) => [...document.querySelectorAll("flow-grid-tile-container")].map(eval(js)).filter(Boolean) as string[],
+    TILE_ID_JS,
   );
 }
 
@@ -84,21 +88,28 @@ async function scrollToTop(page: Page): Promise<void> {
   await pause(page, 400);
 }
 
-const mediaTile = (page: Page, id: string) => page.locator(`flow-grid-tile-container:has([src*="${id}"])`).first();
+const mediaTile = (page: Page, id: string) =>
+  page
+    .locator(
+      id.startsWith("http")
+        ? `flow-grid-tile-container:has([src="${id}"])`
+        : `flow-grid-tile-container:has([data-media-id="${id}"]), flow-grid-tile-container:has([src*="${id}"])`,
+    )
+    .first();
 
 // A failed generation becomes a <flow-error-tile> ("Failed ... You have not been charged") with Flow's own Retry
 // button. Old failures can sit anywhere in the grid, so only error tiles above the first already-known tile count.
 export async function newErrorTiles(page: Page, known: Iterable<string>): Promise<number> {
-  return page.evaluate((ids) => {
+  return page.evaluate(([ids, js]: [string[], string]) => {
     const seen = new Set(ids);
     let errors = 0;
     for (const tile of document.querySelectorAll("flow-grid-tile-container")) {
-      const id = tile.querySelector("img[src], video[src]")?.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0];
+      const id = (eval(js) as (t: Element) => string | undefined)(tile);
       if (id && seen.has(id)) break;
       if (tile.querySelector("flow-error-tile")) errors++;
     }
     return errors;
-  }, [...known]);
+  }, [[...known], TILE_ID_JS] as [string[], string]);
 }
 
 // Flow's Retry replaces the failed tile with a fresh render of the same prompt and settings, free of charge.
@@ -111,6 +122,57 @@ async function retryErrorTiles(page: Page, count: number): Promise<void> {
     await pause(page, 1500);
     await scrollToTop(page);
   }
+}
+
+// Big batches put more new tiles in the grid than Flow renders at once, so this walks down from the top, pressing
+// Retry on every failed tile it meets, until it reaches a tile that existed before the job (or the end of the grid).
+export async function retryNewErrorTiles(page: Page, known: Iterable<string>, dryRun = false): Promise<{ errors: number; reachedKnown: boolean }> {
+  const ids = [...known];
+  let errors = 0;
+  let reachedKnown = false;
+  for (let pass = 0; pass < 80; pass++) {
+    await scrollToTop(page);
+    let found = false;
+    for (let step = 0; step < 60 && !found && !reachedKnown; step++) {
+      const state = await page.evaluate(([known, js]: [string[], string]) => {
+        const seen = new Set(known);
+        for (const tile of document.querySelectorAll("flow-grid-tile-container")) {
+          const id = (eval(js) as (t: Element) => string | undefined)(tile);
+          const name = tile.getAttribute("aria-label");
+          if ((id && seen.has(id)) || (name && seen.has(name))) return "known";
+          if (tile.querySelector("flow-error-tile")) return "error";
+        }
+        return "none";
+      }, [ids, TILE_ID_JS] as [string[], string]);
+      if (state === "known") reachedKnown = true;
+      else if (state === "error") {
+        found = true;
+        errors++;
+        if (!dryRun) {
+          const tile = page.locator("flow-grid-tile-container:has(flow-error-tile)").first();
+          await tile.scrollIntoViewIfNeeded();
+          await tile.hover();
+          await tile.getByRole("button", { name: "Retry" }).click();
+          await pause(page, 1500);
+        }
+      } else {
+        const moved = await page.evaluate(() => {
+          const el = document.querySelector(".page-container");
+          if (!el) return false;
+          const top = el.scrollTop;
+          el.scrollTop = top + el.clientHeight * 0.8;
+          return el.scrollTop > top;
+        });
+        if (!moved) reachedKnown = true;
+        await pause(page, 400);
+      }
+    }
+    // After a Retry the grid reshuffles (the new render jumps to the top), so start over; a dry run cannot clear
+    // the tile it found, so it stops at the first one.
+    if (!found || dryRun) break;
+  }
+  await scrollToTop(page);
+  return { errors, reachedKnown };
 }
 
 async function waitForNewMedia(page: Page, before: string[], count: number, timeoutMs: number, job?: Job): Promise<string[]> {
@@ -272,7 +334,15 @@ async function downloadTile(page: Page, tile: Locator, targetStem: string, quali
   }
   const file = await download;
   const target = `${targetStem}${extname(file.suggestedFilename()) || ".bin"}`;
-  await file.saveAs(target);
+  try {
+    await file.saveAs(target);
+  } catch (err) {
+    // Chrome keeps the bytes in a temp file that belongs to this connection; another flow-mcp process attaching to
+    // the same Chrome can sweep it away mid-save. Copy straight from the temp path as a fallback.
+    const temp = await file.path().catch(() => null);
+    if (!temp || !existsSync(temp)) throw err;
+    copyFileSync(temp, target);
+  }
   await page.keyboard.press("Escape");
   await scrollToTop(page);
   return target;
@@ -349,22 +419,30 @@ export interface FlowAsset {
   id?: string;
 }
 
-// Walks the virtualised grid from the top and collects every tile it passes.
+// Walks the virtualised grid from the top and collects every tile it passes. Recycled tiles sometimes have no
+// media id yet, so entries are keyed by title and the id is filled in from whichever pass saw it.
 async function scanGrid(page: Page, stopAt?: (assets: FlowAsset[]) => boolean): Promise<FlowAsset[]> {
   await dismissOverlays(page);
-  await scrollToTop(page);
   await page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true }).click().catch(() => {});
   await pause(page, 600);
+  await scrollToTop(page);
   const seen = new Map<string, FlowAsset>();
   for (let step = 0; step < 200; step++) {
-    const batch = await page.evaluate(() =>
-      [...document.querySelectorAll("flow-grid-tile-container")].map((t) => ({
-        name: t.getAttribute("aria-label") ?? "",
-        kind: t.querySelector("flow-video-tile") ? ("video" as const) : ("image" as const),
-        id: t.querySelector("img[src], video[src]")?.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0],
-      })),
+    const batch = await page.evaluate(
+      (js) =>
+        [...document.querySelectorAll("flow-grid-tile-container")].map((t) => ({
+          name: t.getAttribute("aria-label") ?? "",
+          kind: t.querySelector("flow-video-tile") ? ("video" as const) : ("image" as const),
+          id: (eval(js) as (t: Element) => string | undefined)(t),
+        })),
+      TILE_ID_JS,
     );
-    for (const a of batch) if (a.name) seen.set(a.id ?? a.name, a);
+    for (const a of batch) {
+      if (!a.name) continue;
+      const known = seen.get(a.name);
+      if (!known) seen.set(a.name, a);
+      else if (!known.id && a.id) known.id = a.id;
+    }
     if (stopAt?.([...seen.values()])) break;
     const moved = await page.evaluate(() => {
       const el = document.querySelector(".page-container");
@@ -374,7 +452,7 @@ async function scanGrid(page: Page, stopAt?: (assets: FlowAsset[]) => boolean): 
       return el.scrollTop > before;
     });
     if (!moved) break;
-    await pause(page, 500);
+    await pause(page, 700);
   }
   return [...seen.values()];
 }
@@ -624,7 +702,8 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
 
   await ensureProjectGrid(page);
   const balance = await readCredits(page).catch(() => undefined);
-  const before = new Set((await scanGrid(page)).map((a) => a.id).filter(Boolean));
+  const seenBefore = await scanGrid(page);
+  const before = new Set<string>(seenBefore.flatMap((a) => [a.id, a.name]).filter((v): v is string => Boolean(v)));
   await scrollToTop(page);
 
   const files: string[] = [];
@@ -661,12 +740,13 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
       else if (!idleSince) idleSince = Date.now();
       else if (Date.now() - idleSince > 8000) {
         // Busy servers leave "Failed" tiles behind: press Flow's own Retry on them, at most two rounds.
-        const errors = retryRounds < 2 ? await newErrorTiles(page, before as Set<string>) : 0;
+        if (retryRounds >= 2) break;
+        job.progress = "checking for failed tiles";
+        const { errors } = await retryNewErrorTiles(page, before);
         if (!errors) break;
         retryRounds++;
         nativeRetries += errors;
         job.progress = `retrying ${errors} failed`;
-        await retryErrorTiles(page, errors);
         idleSince = 0;
       }
       // A tile that hangs (busy servers) must not sink the batch: stop the agent, keep what finished, re-run the rest.
@@ -679,7 +759,7 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
     }
 
     agentTimedOut = timedOut;
-    const fresh = (await scanGrid(page)).filter((t) => t.id && !before.has(t.id) && t.kind === "image");
+    const fresh = (await scanGrid(page)).filter((t) => t.id && !before.has(t.id) && !before.has(t.name) && t.kind === "image");
 
     // Tiles finish in any order and the agent rewords prompts, so each image is matched back to its scene by the
     // prompt Flow stored for it ("Reuse prompt" puts that text in the composer).

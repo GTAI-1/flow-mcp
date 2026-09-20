@@ -101,3 +101,10 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   newErrorTiles only counts error tiles above the first already-known tile (unit-checked with injected stand-ins).
   Both engines now press Flow's Retry (exact: `retries`, default 1; agent: up to 2 rounds) before giving up; agent scenes
   still missing afterwards are re-run one by one. NOT yet seen live: an automated run hitting a genuine failure end to end.
+- Tile identity (fixed 2026-09-20): Flow now serves thumbnails from signed `https://flow.google.com/asb/...` URLs with NO
+  uuid, so the old "uuid in src" extraction silently returned nothing for most tiles (listAssets: 5/42 ids). Use
+  TILE_ID_JS: `data-media-id` (images) → uuid in src → the signed src URL itself (video tiles at rest have only a
+  thumbnail `img[alt="Generated video thumbnail"]`). mediaTile handles both a uuid and a URL handle. Re-verified: 42/42.
+- Two flow-mcp processes attached to the same Chrome (e.g. Studio running while a test drives the MCP) break downloads:
+  Playwright's per-connection artifact dir is swept while the other process saves → `download.saveAs ... ENOENT`.
+  downloadTile now falls back to copying from `download.path()`; still, stop the Studio server before running MCP tests.
