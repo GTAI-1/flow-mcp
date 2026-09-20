@@ -36,6 +36,8 @@ Claude Desktop (`claude_desktop_config.json`):
 | `flow_cancel` | Cancel a queued job |
 | `flow_assets` | List images/videos already in the Flow project (usable as `asset:<title>`) |
 | `flow_download` | Download existing project media without regenerating (original or free 1080p/2K upscale) |
+| `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). No prior quote; ~20 credits for a 4 s clip |
+| `flow_character` | Create a reusable character from one image, with personality and a stock voice; reference it as `asset:<name>` |
 | `flow_techniques` | 39 film-technique prompt presets (camera, product, transitions, image commands); pass an id as a scene's `technique` |
 | `flow_assemble` | Join a project's clips into one MP4 with optional music and voiceover (local ffmpeg, no credits) |
 
@@ -50,7 +52,7 @@ Clips are saved to `~/flow-mcp-out/<project>/scene-NN.ext`.
 npm run studio   # http://127.0.0.1:8787
 ```
 
-Slate (global settings), Reel (scene cards with technique presets, first/last frames, references, chaining,
+Script (paste a whole script and split it into up to 30 scenes), Slate (global settings), Reel (scene cards with technique presets, first/last frames, references, chaining,
 per-scene overrides), Monitor (live queue, progress, previews), Cutting room (ffmpeg assemble with music and
 voiceover) and Flow library (reuse or download media already in the project, incl. free 1080p/2K upscales).
 

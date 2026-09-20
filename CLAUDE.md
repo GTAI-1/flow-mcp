@@ -46,12 +46,15 @@ OmniFlow (lingoflow.pro/omniflow), using subscription credits instead of the API
 
 ## Status
 
-Verified unattended: image, text→video, first+last frame, reference_images, chain_previous, download (original +
-free 1080p upscale), credit guard, pacing, credits readout, flow_assets, flow_download, flow_techniques,
-flow_assemble, Studio panel (image scene end to end), MCP-as-client via RemoteCore.
-Omni 1.1 Flash quotes: 360p 4/5/6/7 and 720p 7/10/12/15 credits for 4/6/8/10 s.
-Untested: variants > 1, image generation with reference_images, music/voiceover mix in flow_assemble, `asset:` refs.
-Not built: `flow_edit` (needs one paid run to learn cost/result placement), characters tool, "improve prompt (AI)" in Studio.
+Verified unattended: image (incl. x2 variants), text→video, first+last frame, reference_images (files and `asset:`
+characters), chain_previous, download (original + free 1080p upscale), credit guard, pacing, credits readout,
+flow_assets, flow_download, flow_techniques, flow_assemble, flow_character (upload + personality + stock voice),
+Studio panel (image scene end to end, script splitter), MCP-as-client via RemoteCore.
+Omni 1.1 Flash quotes: 360p 4/5/6/7 and 720p 7/10/12/15 credits for 4/6/8/10 s. A 4 s edit cost 20 credits.
+Built from a manual paid run but not yet run unattended: `flow_edit` (runEdit). Next paid run should verify it.
+Untested: music/voiceover mix in flow_assemble, characters created via `asset:` image.
+Not built: Flow Agent-mode batch tool, "improve prompt (AI)" in Studio (bundled Claude Code CLI exists at
+~/Library/Application Support/Claude/claude-code/<ver>/claude.app/Contents/MacOS/claude but is not logged in).
 The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome screenshots instead.
 
 ## More UI map (2026-09-19)
@@ -65,3 +68,11 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   Afterwards the composer shows the character as a chip. A test character "zz-test-bicycle…" exists in the mapping project.
 - Scenes nav is just a filter; scenes are made via tile menu `Add to scene` / Add media → `New scene`. Assembly is done locally (flow_assemble) instead.
 - Edit composer shows no credit quote before starting, so `max_credits` cannot be enforced for edits; cost must be measured with one paid run before building `flow_edit`.
+- Edit run (paid, 2026-09-19): in `/edit/<uuid>` type into the last `.ProseMirror`, `Start generation`; progress shows as
+  "NN% <prompt>" text in the view and vanishes when done (~80 s for 4 s); URL does not change; the result is a NEW video
+  tile at the top of the grid with the same title as the source. No credit quote is shown anywhere beforehand.
+- Voice picker: `Select a voice` → dialog with listbox options "<Name> <description>" → `Add to character`. Filling
+  "Customize performance" switches the dialog to generating/saving a new voice (`Preview`, `Save new voice`), so the tool uses stock voices only.
+- Characters view lists `New character`, the user's own "Me" avatar and characters. Test characters left in the mapping
+  project: "zz-test-bicycle…", "zz-test-voice…", and "Mina the barista" (accidentally built from the clapperboard image).
+- Generations must start from the project root + `All media`; other views/pages give a wrong "before" tile snapshot.

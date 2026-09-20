@@ -15,6 +15,7 @@ export interface SceneParams {
   last_frame?: string;
   reference_images?: string[];
   chain_from?: string;
+  edit_asset?: string;
   download_quality?: "original" | "upscaled";
   output_dir: string;
   file_stem: string;

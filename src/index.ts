@@ -94,6 +94,30 @@ server.registerTool(
 );
 
 server.registerTool(
+  "flow_edit",
+  {
+    title: "Edit an existing video",
+    description:
+      "Video-to-video edit of a clip already in the Flow project (relight, change weather/background, remove or restyle objects) using Flow's edit view. Queued like a generation; use flow_wait for the file. Spends credits without a prior quote (about 20 for a 4 s clip), so ask the user before calling.",
+    inputSchema: shapes.edit,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  (args) => reply(core.edit(args)),
+);
+
+server.registerTool(
+  "flow_character",
+  {
+    title: "Create a reusable character",
+    description:
+      "Create a Flow character (person, mascot or product) from one image, optionally with a personality and a voice, so it stays consistent across scenes. Free. Afterwards pass 'asset:<name>' in a scene's reference_images.",
+    inputSchema: shapes.character,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  (args) => reply(core.character(args)),
+);
+
+server.registerTool(
   "flow_techniques",
   {
     title: "Film technique presets",

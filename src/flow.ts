@@ -91,7 +91,8 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
   while (Date.now() < deadline) {
     await pause(page, 2000);
     const fresh = [...new Set((await mediaIds(page)).filter((id) => !before.includes(id)))];
-    if (fresh.length >= count) return fresh;
+    // New tiles are listed first, so anything beyond the requested count is not ours.
+    if (fresh.length >= count) return fresh.slice(0, count);
     // Tiles that are neither finished nor showing a percentage have usually failed.
     const tiles = await page.evaluate(() =>
       [...document.querySelectorAll("flow-grid-tile-container")].slice(0, 8).map((t) => ({
@@ -189,14 +190,19 @@ async function uploadAsset(page: Page, job: Job, file: string, label: string): P
   return name;
 }
 
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Options read "<name>", "<name> Image|Video|Avatar" or "<voice> <description>", so match on the leading name.
+const optionByName = (list: Locator, name: string) =>
+  list.getByRole("option", { name: new RegExp(`^${escapeRe(name)}`, "i") }).first();
+
 // The frame pickers attach on click; the ingredients picker only previews and needs "Add to prompt".
 // Option names are "<asset name>" or "<asset name> Image|Video", so match on the prefix.
 async function attachAsset(page: Page, opener: Locator, assetName: string): Promise<void> {
   await opener.click();
   const list = page.getByRole("listbox", { name: "Asset list" });
   await list.waitFor({ state: "visible", timeout: 10_000 });
-  const escaped = assetName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const option = list.getByRole("option", { name: new RegExp(`^${escaped}`) }).first();
+  const option = optionByName(list, assetName);
   await option.waitFor({ state: "visible", timeout: 10_000 });
   await option.click();
   const add = page.getByRole("button", { name: "Add to prompt", exact: true });
@@ -243,6 +249,19 @@ async function downloadTile(page: Page, tile: Locator, targetStem: string, quali
   return target;
 }
 
+// Earlier steps (or the user) may have left Flow in a character/edit page or a filtered view.
+async function ensureProjectGrid(page: Page): Promise<void> {
+  await dismissOverlays(page);
+  const root = page.url().match(/^https:\/\/[^/]+\/project\/[0-9a-f-]{36}/)?.[0];
+  if (root && page.url() !== root) {
+    await page.goto(root, { waitUntil: "domcontentloaded" });
+    await pause(page, 2500);
+  }
+  await page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true }).click().catch(() => {});
+  await pause(page, 800);
+  await scrollToTop(page);
+}
+
 // Drives one generation in the Flow tab and returns the downloaded file paths.
 export async function runGeneration(job: Job): Promise<string[]> {
   const state = await getFlowState();
@@ -250,8 +269,7 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const page = await getFlowPage();
   const s = job.params;
 
-  await dismissOverlays(page);
-  await scrollToTop(page);
+  await ensureProjectGrid(page);
   const agent = page.getByRole("button", { name: "Agent", exact: true });
   if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
   const clear = page.getByRole("button", { name: "Clear prompt" });
@@ -306,6 +324,8 @@ export interface FlowAsset {
 async function scanGrid(page: Page, stopAt?: (assets: FlowAsset[]) => boolean): Promise<FlowAsset[]> {
   await dismissOverlays(page);
   await scrollToTop(page);
+  await page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true }).click().catch(() => {});
+  await pause(page, 600);
   const seen = new Map<string, FlowAsset>();
   for (let step = 0; step < 200; step++) {
     const batch = await page.evaluate(() =>
@@ -349,4 +369,149 @@ export async function downloadAsset(name: string, targetStem: string, quality: D
   if (!found) throw new Error(`No asset whose title starts with "${name}". Use flow_assets to list titles.`);
   const tile = found.id ? mediaTile(page, found.id) : page.locator(`flow-grid-tile-container[aria-label="${found.name}"]`).first();
   return downloadTile(page, tile, targetStem, quality);
+}
+
+export interface CharacterParams {
+  name: string;
+  image: string;
+  personality?: string;
+  voice?: string;
+}
+
+// Creates a reusable Flow character from an image (local file, or "asset:<title>" already in the project).
+// Afterwards it can be attached to any scene as reference "asset:<character name>".
+export async function createCharacter(c: CharacterParams): Promise<{ name: string; url: string }> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  const projectUrl = page.url();
+  await dismissOverlays(page);
+  await scrollToTop(page);
+
+  await page.getByRole("navigation", { name: "Project navigation" }).getByText("Characters", { exact: true }).click();
+  await pause(page, 1500);
+  // With no characters yet Flow jumps straight to the creation page.
+  const create = page.getByRole("button", { name: "New character" });
+  if (await create.isVisible().catch(() => false)) await create.click();
+  await page.waitForURL(/\/character$/, { timeout: 15_000 });
+
+  if (c.image.startsWith(ASSET_PREFIX)) {
+    const title = c.image.slice(ASSET_PREFIX.length).trim();
+    await page.getByRole("button", { name: "Add from project", exact: true }).click();
+    const list = page.getByRole("listbox", { name: "Asset list" });
+    await list.waitFor({ state: "visible", timeout: 10_000 });
+    let option = optionByName(list, title);
+    if (!(await option.isVisible().catch(() => false))) {
+      await page.getByRole("tab", { name: "Uploads" }).click();
+      await pause(page, 1000);
+      option = optionByName(list, title);
+    }
+    if (!(await option.isVisible().catch(() => false))) {
+      await page.keyboard.press("Escape");
+      throw new Error(`No image titled "${title}" in the Flow project. Use flow_assets to list titles.`);
+    }
+    await option.click();
+    await page.getByRole("button", { name: "Add media", exact: true }).click();
+  } else {
+    if (!existsSync(c.image)) throw new Error(`File not found: ${c.image}`);
+    const chooser = page.waitForEvent("filechooser", { timeout: 10_000 });
+    await page.getByRole("button", { name: "Upload", exact: true }).click();
+    await (await chooser).setFiles(c.image);
+  }
+  await page.waitForURL(/\/character\/[0-9a-f-]{36}/, { timeout: 90_000 });
+  const url = page.url();
+
+  const name = page.getByRole("textbox", { name: "Character name" });
+  await name.waitFor({ state: "visible", timeout: 15_000 });
+  await name.fill(c.name);
+  await name.press("Enter");
+  if (c.personality) await page.getByRole("textbox", { name: "Character personality" }).fill(c.personality);
+
+  if (c.voice) {
+    await page.getByRole("button", { name: "Select a voice" }).click();
+    const voices = page.getByRole("listbox", { name: "Asset list" });
+    await voices.waitFor({ state: "visible", timeout: 10_000 });
+    const option = optionByName(voices, c.voice);
+    if (!(await option.isVisible().catch(() => false))) {
+      const available = (await voices.getByRole("option").allInnerTexts()).map((t) => t.split("\n").filter((l) => l && l !== "voice_selection").join(" - "));
+      await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
+      throw new Error(`Voice "${c.voice}" not found. Character was created without a voice. Available: ${available.join("; ")}`);
+    }
+    await option.click();
+    // "Customize performance" would turn this into generating a new voice (preview + save); stock voices only.
+    await page.getByRole("button", { name: "Add to character", exact: true }).click();
+    await pause(page, 1000);
+  }
+
+  await page.getByRole("button", { name: "Done editing" }).click();
+  await page.waitForURL((u) => !/\/character/.test(u.pathname), { timeout: 15_000 }).catch(() => page.goto(projectUrl));
+  await pause(page, 1000);
+  // Flow drops the new character into the composer; leave the composer empty for the next job.
+  const clear = page.getByRole("button", { name: "Clear prompt" });
+  if (await clear.isVisible().catch(() => false)) await clear.click();
+  await page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true }).click().catch(() => {});
+  return { name: c.name, url };
+}
+
+const EDIT_TIMEOUT_MS = 10 * 60_000;
+
+// Video-to-video edit in Flow's edit view ("make it sunset", "remove the cup"). Flow shows no quote here, so the
+// cost is measured from the balance instead (a 4 s Omni clip cost 20 credits). The result is a new tile.
+export async function runEdit(job: Job): Promise<string[]> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  const s = job.params;
+  const title = s.edit_asset!;
+
+  await ensureProjectGrid(page);
+  const balance = await readCredits(page).catch(() => undefined);
+  const matches = (a: FlowAsset) => a.kind === "video" && a.name.toLowerCase().startsWith(title.toLowerCase());
+  const found = (await scanGrid(page, (assets) => assets.some(matches))).find(matches);
+  if (!found) throw new Error(`No video whose title starts with "${title}". Use flow_assets to list titles.`);
+  await scrollToTop(page);
+  const before = await mediaIds(page);
+
+  const tile = found.id ? mediaTile(page, found.id) : page.locator(`flow-grid-tile-container[aria-label="${found.name}"]`).first();
+  await tile.scrollIntoViewIfNeeded();
+  await tile.click();
+  await page.waitForURL(/\/edit\//, { timeout: 20_000 });
+  await pause(page, 2500);
+
+  const box = page.locator(".ProseMirror").last();
+  await box.click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("Delete");
+  const prompt = s.prompt.replace(/\s*\n+\s*/g, " ").trim();
+  await page.keyboard.type(prompt, { delay: 8 });
+  await pause(page, 600);
+  const start = page.getByRole("button", { name: "Start generation" });
+  if (!(await start.isEnabled())) throw new Error("Flow did not accept the edit prompt (Start generation stayed disabled).");
+  await start.click();
+
+  // Progress shows as "NN% <prompt>" inside the edit view and disappears when the edit is ready.
+  const deadline = Date.now() + EDIT_TIMEOUT_MS;
+  let seenProgress = false;
+  for (;;) {
+    await pause(page, 3000);
+    const text = await page.locator("main").first().innerText();
+    const pct = text.match(/(\d+)%/)?.[0];
+    job.progress = pct;
+    if (pct) seenProgress = true;
+    else if (seenProgress) break;
+    const failure = text.split("\n").find((l) => FAILURE_TEXT.test(l) && !l.includes(prompt));
+    if (!pct && failure && Date.now() > deadline - EDIT_TIMEOUT_MS + 15_000) throw new Error(`Flow reported a failed edit: ${failure.slice(0, 300)}`);
+    if (Date.now() > deadline) throw new Error("Timed out waiting for Flow to finish the edit.");
+  }
+  job.progress = undefined;
+
+  await page.getByRole("button", { name: "Back button to go to previous page" }).click();
+  await pause(page, 2500);
+  await ensureProjectGrid(page);
+  const fresh = await waitForNewMedia(page, before, 1, 90_000);
+  mkdirSync(s.output_dir, { recursive: true });
+  const file = await downloadMedia(page, fresh[0], join(s.output_dir, s.file_stem), s.download_quality);
+  const after = await readCredits(page).catch(() => undefined);
+  if (balance !== undefined && after !== undefined) job.credits = balance - after;
+  return [file];
 }
