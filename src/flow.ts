@@ -338,12 +338,36 @@ async function typePrompt(page: Page, prompt: string): Promise<void> {
 export type DownloadQuality = "original" | "upscaled";
 
 export async function downloadMedia(page: Page, mediaId: string, targetStem: string, quality: DownloadQuality = "original"): Promise<string> {
-  // A tile that has just finished rendering is still settling and the grid re-renders around it, which leaves a stale
-  // handle whose toolbar never opens. Give it a moment and re-resolve before touching it.
+  // A tile that has just finished rendering is still settling and the grid re-renders around it, so give it a moment.
   await scrollToTop(page);
   await pause(page, 2500);
-  await mediaTile(page, mediaId).waitFor({ state: "visible", timeout: 30_000 });
-  return downloadTile(page, mediaTile(page, mediaId), targetStem, quality);
+  const tile = mediaTile(page, mediaId);
+  await tile.waitFor({ state: "visible", timeout: 30_000 });
+  // Grab the title NOW, while the id still resolves, so the download can re-find this exact tile later even if the
+  // virtualised grid unmounts and remounts it between steps.
+  const title = (await tile.getAttribute("aria-label").catch(() => null)) ?? undefined;
+  return downloadTile(page, tileByIdOrTitle(page, mediaId, title), targetStem, quality);
+}
+
+type TileResolver = () => Promise<Locator>;
+
+// Re-finds the tile on every attempt instead of trusting one handle that may have been unmounted by the virtual grid:
+// by id first, then by title. NOT a confirmed root cause for the post-generation download failures - the failure has
+// never reproduced on a settled tile - but it removes one whole class of staleness, and the menu dump below is what
+// will actually explain the next one. An empty "Untitled Scene" placeholder holds no media and its menu has no
+// Download, so :has([src]) makes sure we never grab one by title.
+function tileByIdOrTitle(page: Page, id: string, title?: string): TileResolver {
+  return async () => {
+    const byId = mediaTile(page, id);
+    if (await byId.count()) return byId;
+    if (title) {
+      const byTitle = page.locator(`flow-grid-tile-container[aria-label="${title.replace(/"/g, '\\"')}"]:has([src])`).first();
+      if (await byTitle.count()) return byTitle;
+    }
+    throw new Error(
+      `The finished tile is no longer in the grid${title ? ` ("${title}")` : ""}. The media is still in Flow: flow_download fetches it without spending credits again.`,
+    );
+  };
 }
 
 const DOWNLOAD_DIR = join(HOME_DIR, "downloads");
@@ -388,11 +412,13 @@ async function hoverTile(page: Page, tile: Locator): Promise<void> {
   }
 }
 
-async function downloadTile(page: Page, tile: Locator, targetStem: string, quality: DownloadQuality): Promise<string> {
+async function downloadTile(page: Page, target: Locator | TileResolver, targetStem: string, quality: DownloadQuality): Promise<string> {
   await useOwnDownloadDir(page);
+  const resolve: TileResolver = typeof target === "function" ? target : async () => target;
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
+      const tile = await resolve();
       const before = new Set(readdirSync(DOWNLOAD_DIR));
       // Flow only shows a tile's toolbar for a real pointer move over it - Playwright's hover() does not trigger it.
       // The toolbar's "More options" beats a right-click, which can land on the <video> and raise Chrome's own menu.
@@ -400,7 +426,13 @@ async function downloadTile(page: Page, tile: Locator, targetStem: string, quali
       const more = tile.getByRole("button", { name: "More options" });
       if (await more.isVisible({ timeout: 3000 }).catch(() => false)) await more.click();
       else await tile.click({ button: "right" });
-      await page.getByRole("menuitem", { name: "Download", exact: true }).click({ timeout: 10_000 });
+      const download = page.getByRole("menuitem", { name: "Download", exact: true });
+      if (!(await download.isVisible({ timeout: 8000 }).catch(() => false))) {
+        // Saying what Flow actually offered turns "locator timed out" into something that explains itself next time.
+        const items = await page.locator('[role="menuitem"]').evaluateAll((ms) => ms.map((m) => (m.textContent ?? "").replace(/\s+/g, " ").trim()));
+        throw new Error(items.length ? `Flow's tile menu has no Download item. It offered: ${items.join(" | ")}` : "Flow's tile menu did not open.");
+      }
+      await download.click({ timeout: 10_000 });
       // Size submenu: "720p Original size" / "1K Original size", or the best upscale the plan allows.
       const original = page.getByRole("menuitem", { name: /original/i }).first();
       if (await original.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false)) {
