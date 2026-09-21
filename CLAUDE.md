@@ -214,10 +214,14 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   locked, opening frame only approximate), names the tool in the prompt so the agent does not ask, and answers the
   question automatically if it asks anyway. Verified live: shot 2 opened on shot 1's exact last frame, same pose, same
   hand on the desk, invisible cut.
-  MULTIPLE LOCALCORES (unfixed, 2026-09-20): Claude Desktop spawns several MCP processes at once and they race on
-  port 8787 - more than one ends up driving Chrome with its OWN queue, so flow_status can answer from a process that
-  knows nothing about the running job (queue reads empty while Flow generates and charges). Ground truth is the grid,
-  or the owner process at 127.0.0.1:8787 queried directly with ~/.flow-mcp/token. Fix the race before trusting the
-  queue for anything that spends credits.
+  MULTIPLE LOCALCORES (FIXED 2026-09-20): Claude Desktop spawns several MCP processes in the same second. Binding the
+  port is atomic, so that part never raced - the bug was the fallback. A process that lost the bind did ONE 2 s health
+  check and, on a timeout, returned role "none", which means "drive Chrome myself with my own queue". A timeout proves
+  nothing when the owner is still booting or is busy inside a Playwright call, so several processes became local
+  drivers: flow_status answered from a process that knew nothing about the running job (queue empty while Flow
+  generated and charged), and a shot was paid for twice. startServer now retries the health check 8 times over ~12 s,
+  treats a VALID answer from something that is not flow-mcp as "the port belongs to another program, local is safe",
+  and on a never-confirmed holder defers as a client rather than overriding it - a client whose calls fail loudly
+  beats a second process silently spending credits. Checked with 5 processes racing one port: 1 owner, 4 clients.
 - Tile menus carry Material icon ligatures in their labels now ("downloadDownload"), but the accessible name still
   computes as "Download", so getByRole(..., { exact: true }) keeps working. Verified, not assumed.

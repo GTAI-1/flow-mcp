@@ -114,6 +114,22 @@ export async function startServer(core: Core): Promise<ServerRole> {
     writeFileSync(TOKEN_FILE, token, { mode: 0o600 });
     return "owner";
   }
-  const other = await fetch(`http://127.0.0.1:${PORT}/api/health`, { signal: AbortSignal.timeout(2000) }).then((r) => r.json(), () => null);
-  return (other as { name?: string } | null)?.name === "flow-mcp" ? "client" : "none";
+  // The port is taken. Who has it matters enormously: becoming a second LOCAL core means two processes drive the same
+  // Flow tab with separate queues, which is how a shot got generated and charged twice while flow_status reported an
+  // empty queue (2026-09-20). Claude Desktop starts several of these at once and the owner is often still booting, or
+  // busy inside a Playwright call, so one 2 s health check timing out proves nothing.
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const other = (await fetch(`http://127.0.0.1:${PORT}/api/health`, { signal: AbortSignal.timeout(3000) }).then(
+      (r) => r.json(),
+      () => null,
+    )) as { name?: string } | null;
+    if (other?.name === "flow-mcp") return "client";
+    // A valid answer from something that is NOT us means the port belongs to an unrelated program, and driving Flow
+    // locally is safe.
+    if (other) return "none";
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  // Never confirmed, but something holds the port and it is most likely a busy sibling. Defer to it: a client whose
+  // calls fail loudly is far better than a second process silently spending the user's credits.
+  return "client";
 }
