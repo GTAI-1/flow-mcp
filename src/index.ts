@@ -133,7 +133,7 @@ server.registerTool(
   {
     title: "Continue a clip, keeping a character attached",
     description:
-      "Start a new clip from the last frame of one already in the project, WITH a character or your own Flow avatar still attached. Flow's normal composer offers a start frame OR attached characters, never both; this drives Flow's agent mode, which does both (it saves the clip's final frame, animates it, and adds the character alongside). Use it for a continuous take where a person must stay on-model. Agent mode shows no credit quote beforehand, so ask the user before calling. Queued like a generation; use flow_wait for the file.",
+      "Start a new clip from the last frame of one already in the project, for a continuous take across a cut. It saves the source clip's real final frame, animates it through Flow's agent mode, and downloads the result. mode 'exact' (default) gives an invisible join - the clip opens on the actual last frame - but attached characters are ignored, so the likeness must come from that frame; mode 'likeness' keeps a character or your avatar locked at the cost of an only-approximate opening frame. Flow cannot do both at once. Agent mode shows no credit quote beforehand, so ask the user before calling. Queued like a generation; use flow_wait for the file.",
     inputSchema: shapes.continue_shot,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },

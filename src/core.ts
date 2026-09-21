@@ -114,6 +114,12 @@ export const shapes = {
       .optional()
       .describe("Characters or avatars to keep attached, by name, e.g. ['Me'] for your own Flow avatar or ['Pip']. This is the whole point of this tool: the normal composer cannot hold a character and a start frame at the same time."),
     aspect_ratio: z.enum(["16:9", "9:16"]).default("16:9"),
+    mode: z
+      .enum(["exact", "likeness"])
+      .default("exact")
+      .describe(
+        "'exact' uses Flow's first-frame animation (I2V): the clip begins on the source clip's real last frame, invisible cut, but attached characters are IGNORED - the likeness has to come from the frame itself. 'likeness' uses reference-to-video (R2V): the character stays locked but the opening frame is only approximate. Flow cannot do both; this is a model limit, not a UI one.",
+      ),
     acknowledge_cost: z
       .literal(true)
       .describe("Must be true. Agent mode shows no credit quote before it runs, so max_credits cannot protect you; the real cost is reported on the finished job."),
@@ -378,7 +384,7 @@ export class LocalCore implements Core {
   }
 
   // Flow's composer takes a start frame OR a character, never both; agent mode takes both, so this goes that way.
-  async continue_shot({ project, from_asset, prompt, attach, aspect_ratio, download_quality, force }: Args<"continue_shot">) {
+  async continue_shot({ project, from_asset, prompt, attach, aspect_ratio, mode, download_quality, force }: Args<"continue_shot">) {
     // A lost queue entry is not proof that nothing ran: when the owner process is replaced mid-job the job vanishes
     // while Flow carries on and charges for it. Re-running then spends twice, which is exactly what happened on
     // 2026-09-20. Flow's own grid is the only honest record, so ask it before starting another paid generation.
@@ -403,6 +409,7 @@ export class LocalCore implements Core {
       max_credits: 0,
       continue_from: from_asset,
       attach,
+      continue_mode: mode,
       aspect_ratio,
       download_quality,
       output_dir,

@@ -20,6 +20,7 @@ export interface SceneParams {
   agent_scenes?: string[];
   continue_from?: string;
   attach?: string[];
+  continue_mode?: "exact" | "likeness";
   retries?: number;
   download_quality?: "original" | "upscaled";
   output_dir: string;

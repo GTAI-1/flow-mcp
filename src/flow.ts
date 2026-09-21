@@ -1092,8 +1092,9 @@ export async function runContinue(job: Job): Promise<string[]> {
     await pause(page, 3500);
     await setAgentMode(page, true);
 
-    // 3. The second chip: an avatar ("Me") or any character, which the Frames composer cannot hold at the same time.
-    for (const name of s.attach ?? []) {
+    // 3. The second chip: an avatar ("Me") or any character. Only useful in likeness mode - Flow's first-frame tool
+    //    (I2V) ignores extra references, and attaching one just makes the agent stop and ask which we meant.
+    for (const name of s.continue_mode === "likeness" ? (s.attach ?? []) : []) {
       await attachAsset(page, page.getByRole("button", { name: "Add ingredients to the prompt box" }), name);
       await pause(page, 1200);
     }
@@ -1104,17 +1105,42 @@ export async function runContinue(job: Job): Promise<string[]> {
     // enough - without being told, the agent reads it as a style reference and stages a fresh shot. It has to be told
     // in words that the frame IS the opening frame. (Cost 15 credits to learn on 2026-09-20.)
     const cast = (s.attach ?? []).join(" and ");
+    const exact = s.continue_mode !== "likeness";
+    // Naming the tool settles it in one go. Flow offers first-frame animation (I2V), which continues an image exactly
+    // but ignores other references, or reference-to-video (R2V), which honours a character but only approximates the
+    // frame. Left unsaid, the agent stops mid-run and asks - which stalls an unattended job.
     await typePrompt(
       page,
-      `Continue the attached still image as a single video clip. The attached frame is the FIRST FRAME of this clip: ` +
-        `begin exactly on it, with the same framing, lighting, colours, wardrobe and set, and move on from there without ` +
-        `cutting, so this plays as an unbroken continuation of the shot it came from.` +
-        (cast ? ` Keep ${cast} looking exactly as in the attached reference.` : "") +
+      (exact
+        ? `Use I2V, Flow's first frame animation tool. The attached frame is the FIRST FRAME of this clip: begin exactly ` +
+          `on it, with the same framing, lighting, colours, wardrobe and set, and continue from there with no cut, as an ` +
+          `unbroken continuation of the shot it came from. Do not use any other reference.`
+        : `Use R2V, reference-to-video, with the attached frame and ${cast || "the attached reference"} both as references, ` +
+          `so the look and the person stay consistent through the clip. Open as close to the attached frame as you can.`) +
         ` ${s.prompt}`,
     );
     const before = await mediaIds(page);
     job.progress = "generating";
     await page.getByRole("button", { name: "Start generation" }).click();
+
+    // The agent sometimes still stops to ask which tool to use. Nobody is watching an unattended run, so answer it.
+    for (let i = 0; i < 12; i++) {
+      await pause(page, 5000);
+      const asking = await page.evaluate(() => /Would you like to|which you prefer|I2V|R2V/i.test(document.body.innerText));
+      const working = await page.evaluate(() => /\d{1,3}%/.test(document.body.innerText));
+      if (working) break;
+      if (!asking) continue;
+      job.progress = "answering the agent's question";
+      await typePrompt(
+        page,
+        exact
+          ? "Use I2V, first frame animation. Start exactly on that frame and continue from it with no cut. Do not use the other reference."
+          : "Use R2V, reference-to-video, using both attached references so the person stays consistent.",
+      );
+      await page.keyboard.press("Enter");
+      await pause(page, 6000);
+      break;
+    }
 
     const fresh = await waitForNewMedia(page, before, 1, VIDEO_TIMEOUT_MS, job);
     job.progress = undefined;

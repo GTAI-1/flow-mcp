@@ -205,5 +205,19 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   empty queue is NOT evidence that nothing ran; Flow's grid is the only honest record. flow_continue now checks
   listAssets for a fresh-looking continuation of the same source before starting, and refuses unless force: true.
   Whenever a paid job disappears from the queue, look at the grid before re-running anything.
+  I2V vs R2V - THE REAL CONSTRAINT (2026-09-20, straight from Flow's agent): "The first frame animation tool (I2V)
+  allows for an exact continuation of your image, but it doesn't support additional references like your avatar
+  (likeness)." So a frame-exact continuation and a separate character reference are mutually exclusive AT THE MODEL,
+  not just in the composer. Agent mode lets both chips be attached, then stops and asks which one to honour. Attaching
+  a likeness in exact mode therefore buys nothing and stalls the run on a question. flow_continue now takes
+  mode: exact (I2V, default - invisible join, likeness comes from the frame itself) or likeness (R2V - character
+  locked, opening frame only approximate), names the tool in the prompt so the agent does not ask, and answers the
+  question automatically if it asks anyway. Verified live: shot 2 opened on shot 1's exact last frame, same pose, same
+  hand on the desk, invisible cut.
+  MULTIPLE LOCALCORES (unfixed, 2026-09-20): Claude Desktop spawns several MCP processes at once and they race on
+  port 8787 - more than one ends up driving Chrome with its OWN queue, so flow_status can answer from a process that
+  knows nothing about the running job (queue reads empty while Flow generates and charges). Ground truth is the grid,
+  or the owner process at 127.0.0.1:8787 queried directly with ~/.flow-mcp/token. Fix the race before trusting the
+  queue for anything that spends credits.
 - Tile menus carry Material icon ligatures in their labels now ("downloadDownload"), but the accessible name still
   computes as "Download", so getByRole(..., { exact: true }) keeps working. Verified, not assumed.
