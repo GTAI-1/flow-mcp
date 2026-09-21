@@ -308,9 +308,12 @@ export class LocalCore implements Core {
     const dir = projectDir(project);
     mkdirSync(dir, { recursive: true });
     const files: string[] = [];
-    for (const [i, name] of assets.entries()) {
+    // Numbering from 1 every call overwrote clips fetched earlier - it destroyed a finished shot once. Carry on from
+    // the highest clip-NN already on disk instead.
+    let next = Math.max(0, ...readdirSync(dir).map((f) => Number(f.match(/^clip-(\d+)/)?.[1] ?? 0))) + 1;
+    for (const name of assets) {
       try {
-        files.push(await downloadAsset(name, join(dir, `clip-${String(i + 1).padStart(2, "0")}`), quality));
+        files.push(await downloadAsset(name, join(dir, `clip-${String(next++).padStart(2, "0")}`), quality));
       } catch (err) {
         throw new Error(`${err instanceof Error ? err.message : err} (downloaded so far: ${files.length})`);
       }

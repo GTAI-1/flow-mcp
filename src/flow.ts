@@ -1100,7 +1100,18 @@ export async function runContinue(job: Job): Promise<string[]> {
 
     // 4. Agent mode asks for confirmation unless told not to, which would stall an unattended run.
     await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9");
-    await typePrompt(page, s.prompt);
+    // Agent mode treats both chips as ingredients and decides what to do with them. Attaching the saved frame is not
+    // enough - without being told, the agent reads it as a style reference and stages a fresh shot. It has to be told
+    // in words that the frame IS the opening frame. (Cost 15 credits to learn on 2026-09-20.)
+    const cast = (s.attach ?? []).join(" and ");
+    await typePrompt(
+      page,
+      `Continue the attached still image as a single video clip. The attached frame is the FIRST FRAME of this clip: ` +
+        `begin exactly on it, with the same framing, lighting, colours, wardrobe and set, and move on from there without ` +
+        `cutting, so this plays as an unbroken continuation of the shot it came from.` +
+        (cast ? ` Keep ${cast} looking exactly as in the attached reference.` : "") +
+        ` ${s.prompt}`,
+    );
     const before = await mediaIds(page);
     job.progress = "generating";
     await page.getByRole("button", { name: "Start generation" }).click();

@@ -194,5 +194,11 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   has `Add to scene`/`Add to prompt` instead) -> Animate drops it in the composer AND turns Agent on by itself ->
   `Add ingredients to the prompt box` -> `Avatars` tab -> `Me` attaches on click, giving TWO chips.
   Agent mode shows no credit quote, so flow_continue takes acknowledge_cost like flow_edit.
+  ATTACHING THE FRAME IS NOT ENOUGH (cost 15 credits to learn, 2026-09-20): agent mode treats both chips as
+  ingredients and decides what to do with them, so a saved frame read as a style reference and the agent staged a
+  fresh shot instead of continuing. runContinue now prefixes the user's prompt with an explicit instruction that the
+  attached frame IS the first frame and the clip must begin exactly on it. Agent mode has to be TOLD, not just given.
+  flow_download used to number clip-NN from 1 on every call and silently overwrote earlier files - it destroyed a
+  finished shot. It now continues from the highest clip-NN already in the folder.
 - Tile menus carry Material icon ligatures in their labels now ("downloadDownload"), but the accessible name still
   computes as "Download", so getByRole(..., { exact: true }) keeps working. Verified, not assumed.
