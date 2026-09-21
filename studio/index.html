@@ -222,6 +222,26 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
         <h2 style="margin-top:28px">Shots <small id="s_count"></small></h2>
         <div id="s_scenes"></div>
         <button class="btn ghost add" data-add="shots">+ Add shot</button>
+
+        <h2 style="margin-top:28px">Carry on from a clip you already made</h2>
+        <p class="lede">Picks up on the real last frame of a finished clip, so the two play as one unbroken take with no visible cut. Flow makes you choose one of two things: an <b>exact</b> join, where the person's look comes from that frame itself, or a <b>locked character</b>, where the face stays put but the opening frame is only close. It cannot do both at once.</p>
+        <div class="card">
+          <label class="f">Project folder for the new clip</label><input type="text" id="k_project" placeholder="MyFilm">
+          <label class="f">Clip to carry on from</label>
+          <div class="rowbtns" style="margin-top:0"><button class="btn small ghost" id="k_load">Load clips from Flow</button></div>
+          <select id="k_asset" style="margin-top:10px"></select>
+          <label class="f">How it should join</label>
+          <select id="k_mode">
+            <option value="exact">Exact join — starts on the real last frame (recommended)</option>
+            <option value="likeness">Locked character — keeps a face or avatar, opening frame only close</option>
+          </select>
+          <div id="k_castwrap" style="display:none">
+            <label class="f">Who to keep locked</label><input type="text" id="k_cast" placeholder="Me">
+          </div>
+          <label class="f">What happens in the new clip</label><textarea id="k_prompt" style="min-height:100px" placeholder="He stands up, steps toward the camera and keeps talking, gesturing as he explains. The camera rises with him and arcs to his left."></textarea>
+          <div class="rowbtns"><button class="btn" id="k_go">Carry on from this clip</button></div>
+          <p class="empty" id="k_info" style="margin-top:12px"></p>
+        </div>
       </section>
 
       <!-- NARRATE -->
@@ -604,6 +624,36 @@ $("#e_go").onclick = async () => {
   if (!confirm("Flow gives no price before an edit. A 4-second clip cost 20 credits when measured. Continue?")) return;
   try { await api("edit", { project: $("#e_project").value.trim() || "MyFilm", asset, prompt: change, acknowledge_cost: true }); $("#e_info").textContent = "Queued — watch the Monitor."; poll(); }
   catch (err) { $("#e_info").textContent = err.message; toast(err.message, true); }
+};
+
+/* ---------- carry on from a clip ---------- */
+$("#k_mode").onchange = () => ($("#k_castwrap").style.display = $("#k_mode").value === "likeness" ? "" : "none");
+$("#k_load").onclick = async () => {
+  if (!guard()) return;
+  const b = $("#k_load"); b.disabled = true; b.textContent = "Reading…";
+  try { const vids = await api("assets", { kind: "video" }); $("#k_asset").innerHTML = vids.map((v) => `<option>${esc(v.name)}</option>`).join("") || `<option value="">No clips in the project</option>`; }
+  catch (err) { toast(err.message, true); }
+  b.disabled = false; b.textContent = "Reload clips";
+};
+$("#k_go").onclick = async () => {
+  if (!guard()) return;
+  const asset = $("#k_asset").value, prompt = $("#k_prompt").value.trim(), mode = $("#k_mode").value;
+  if (!asset) return toast("Load and pick a clip first.", true);
+  if (!prompt) return toast("Say what happens in the new clip.", true);
+  if (!confirm("Flow gives no price before this one. A 10-second clip cost 15 credits when measured. Continue?")) return;
+  const cast = $("#k_cast").value.trim();
+  try {
+    await api("continue_shot", {
+      project: $("#k_project").value.trim() || "MyFilm",
+      from_asset: asset,
+      prompt,
+      mode,
+      attach: mode === "likeness" && cast ? [cast] : undefined,
+      acknowledge_cost: true,
+    });
+    $("#k_info").textContent = "Queued — watch the Monitor.";
+    poll();
+  } catch (err) { $("#k_info").textContent = err.message; toast(err.message, true); }
 };
 
 /* ---------- cut ---------- */

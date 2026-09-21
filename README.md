@@ -108,7 +108,7 @@ or double-click **Flow Studio.command**.
 
 Seven tabs, in the order you would use them: **Cast** (reusable characters) → **Frames** (free
 stills, with *match previous frame* to keep a set on-model) → **Shots** (paid clips, with first/last
-frames, chaining and a live credit estimate) → **Voice** (free narration) → **Restyle** (change a
+frames, chaining, a live credit estimate, and a card that continues a finished clip from its own last frame) → **Voice** (free narration) → **Restyle** (change a
 clip you already have) → **Cut** (join everything, with music and narration) → **Library** (browse
 Flow and pull things back for free). A progress monitor and a gallery of finished work stay visible
 throughout.
