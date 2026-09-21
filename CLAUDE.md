@@ -67,7 +67,7 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
 - Characters: left-nav `Characters` → with none yet opens `/character` (describe + Nano Banana 2, `Upload`,
   `Add from project` → dialog `Select media` → option → `Add media`). That creates `/character/<uuid>` with
   textbox `Character name`, `Select a voice`, `Character personality`, `Reroll`, `Portrait`, `Create body`, `Done editing`.
-  Afterwards the composer shows the character as a chip. A test character "zz-test-bicycle…" exists in the mapping project.
+  Afterwards the composer shows the character as a chip.
 - Scenes nav is just a filter; scenes are made via tile menu `Add to scene` / Add media → `New scene`. Assembly is done locally (flow_assemble) instead.
 - Edit composer shows no credit quote before starting, so `max_credits` cannot be enforced for edits; cost must be measured with one paid run before building `flow_edit`.
 - Edit run (paid, 2026-09-19): in `/edit/<uuid>` type into the last `.ProseMirror`, `Start generation`; progress shows as
@@ -75,8 +75,9 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   tile at the top of the grid with the same title as the source. No credit quote is shown anywhere beforehand.
 - Voice picker: `Select a voice` → dialog with listbox options "<Name> <description>" → `Add to character`. Filling
   "Customize performance" switches the dialog to generating/saving a new voice (`Preview`, `Save new voice`), so the tool uses stock voices only.
-- Characters view lists `New character`, the user's own "Me" avatar and characters. Test characters left in the mapping
-  project: "zz-test-bicycle…", "zz-test-voice…", and "Mina the barista" (accidentally built from the clapperboard image).
+- Characters view lists `New character`, the user's own "Me" avatar and characters. Characters are PER PROJECT, not
+  account-wide (checked 2026-09-20 across all three projects). The account holds exactly two, both real: "Pip" and
+  "Sticky". The old "zz-test-*" and "Mina the barista" test characters are gone.
 - Generations must start from the project root + `All media`; other views/pages give a wrong "before" tile snapshot.
 - Agent mode (2026-09-19): `Agent` toggle on → composer gets `Agent instructions` + `Settings` (Agent settings: confirm
   Always/Never, image default aspect + x1–x4 + model, video defaults, `Save`). With confirm=Never a multi-scene prompt
