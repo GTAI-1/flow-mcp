@@ -31,7 +31,7 @@ const sceneSchema = z.object({
     .max(3)
     .optional()
     .describe(
-      "Reference media: absolute image paths, or 'asset:<title>' for media or characters already in the Flow project. Flow allows references OR first/last frames on a video scene, never both - with frames set these are skipped, because the frames already fix the look.",
+      "Reference media: absolute image paths, or 'asset:<title>' for media or characters already in the Flow project. Flow's COMPOSER takes references OR first/last frames on a video scene, never both, so with frames set these are skipped and the job says so. Flow itself can do both via agent mode (save the last frame, Animate it, then add the character).",
     ),
   download_quality: z.enum(["original", "upscaled"]).optional().describe("'upscaled' fetches 1080p video / 2K image (free, slower). Default original."),
   retries: z.number().int().min(0).max(3).default(1).describe("Automatic retries when Flow itself reports the generation failed."),

@@ -134,8 +134,8 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   ("match previous frame"), voice attachment (flow_narrate), character editing, flow_edit, hold-last-frame in assemble.
 - Flow's voice "Play preview" plays a CANNED sample from gstatic (voices/samples/<Name>.wav) - it never speaks your text.
   Real speech only comes from generating a video with the voice attached as an ingredient; flow_narrate does that with a
-  cheap 360p take and extracts the audio. Frames and Ingredients are mutually exclusive in Flow, so a narration take
-  cannot also lock first/last frames.
+  cheap 360p take and extracts the audio. Frames and Ingredients are mutually exclusive in the COMPOSER (see the agent
+  route below), so a composer narration take cannot also lock first/last frames.
 - Narration has two engines: `flow` (Flow voice, 4-7 credits, capped by take length) and `mac` (`say -v <voice>`,
   free, any length, cleaned up through ffmpeg loudnorm; the .aiff intermediate is removed). localVoices() filters
   `say -v ?` down to en_* and drops the novelty voices. Premium macOS voices appear automatically once the user
@@ -161,11 +161,26 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   right-click, which can land on the `<video>` and raise Chrome's own context menu instead of Flow's. `downloadMedia`
   now settles (scrollToTop + 2.5 s) and re-resolves the tile by id before touching it, because a tile that has just
   finished rendering is still being re-mounted by the virtual grid and the old handle's toolbar never opens.
-- Frames and Ingredients are mutually exclusive in the composer, so a video scene with `first_frame`/`last_frame`
-  cannot also carry `reference_images`. runGeneration drops the references (the frames already pin the look) and says
-  so in the job note rather than failing or silently ignoring them.
+- Frames and Ingredients are mutually exclusive IN THE COMPOSER ONLY (verified 2026-09-20: picking the `Frames` radio
+  removes the "Add ingredients to the prompt box" button from the page entirely and puts `Start`/`End` in its place).
+  runGeneration therefore drops references when frames are set, and says so in the job note. This is NOT a limit of
+  Flow - see the agent route below, which does both at once.
 - The server lives at `~/flow-mcp` (2026-09-20); `~/Desktop/flow-mcp` is a symlink to it. Claude Desktop's shared MCP
   pool could not start it from `~/Desktop`: `EPERM` opening `dist/index.js`, repeatedly, even with Full Disk Access
   granted to Claude - while a node spawned from that same path in another lane read the file fine. Cause not fully
   explained; keeping the runtime out of `~/Desktop` is the remedy being tested. Both `claude_desktop_config.json` and
   `~/.claude.json` point at the new path.
+
+- AGENT ROUTE - continue from a last frame AND keep a reference attached (user-demonstrated 2026-09-20, with
+  screenshots). The composer cannot do both; agent mode can. The steps:
+  1. Open the finished video (click its tile) -> the edit view. Scrub the playhead to the end and press `Save frame`
+     (icon button top-right of the player). That writes an image asset titled "Saved frame from <video title>".
+  2. Go back to All media. On THAT IMAGE's tile menu press `Animate` (an image-only menu item; a video's menu has
+     `Add to scene` / `Add to prompt` instead). It drops the image into the composer as a chip.
+  3. Agent mode MUST be on, otherwise the avatar cannot be added alongside it.
+  4. Press `+` in the composer and add the avatar (or any character), giving TWO chips at once: the saved frame and
+     the avatar. Then type the prompt and generate.
+  Never tell the user Flow "cannot" do something because the composer refuses it - check the agent route first.
+  Agent mode routinely offers combinations the composer gates, and the user has been right about this before.
+- Tile menus carry Material icon ligatures in their labels now ("downloadDownload"), but the accessible name still
+  computes as "Download", so getByRole(..., { exact: true }) keeps working. Verified, not assumed.
