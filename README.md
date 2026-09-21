@@ -1,83 +1,194 @@
 # flow-mcp
 
-Local MCP server that drives Google Flow (flow.google.com) in a dedicated Chrome profile, so
-generations run on your Google AI subscription credits instead of the paid API. No extension.
+Drive **Google Flow** (flow.google.com) from Claude, or from a local control panel, using the
+credits already included in your Google AI subscription — not the pay-per-use video API.
+
+It is a small program that runs on your own machine. It opens its own Chrome window, signs in
+as you, and clicks Flow's real buttons. There is no browser extension, no hosted service and no
+account to create.
 
 ```
-Claude ──stdio──> flow-mcp ──CDP──> Chrome (own profile, ~/.flow-mcp/chrome-profile) ──> Flow
+Claude ──stdio──> flow-mcp ──Chrome DevTools Protocol──> Chrome (its own profile) ──> Flow
 ```
 
-## Setup
+**MCP** = Model Context Protocol, the standard that lets Claude use outside tools.
+New here? [OVERVIEW.md](OVERVIEW.md) explains what it does in plain English, with no code names.
+
+---
+
+## What you need
+
+| | |
+|---|---|
+| **macOS** | Developed and tested here. The Mac-voice narration engine uses macOS `say`; everything else should port, but nothing else is tested |
+| **Node.js 22 or newer** | `node --version` |
+| **Google Chrome** | Any recent version |
+| **A Google AI subscription with Flow** | Pro or Ultra. This is where the credits come from |
+| **FFmpeg** *(optional)* | `brew install ffmpeg` — needed only to join clips, mix music or record narration |
+| **A Google AI Studio key** *(optional, free)* | Only for the Google narration voices. See below |
+
+A display must stay awake: the Chrome window is really being driven, so the machine cannot be
+headless or asleep mid-run.
+
+---
+
+## Install
 
 ```bash
-npm install && npm run build
-npm run login   # opens the dedicated Chrome; sign in to Google and open a Flow project
+git clone https://github.com/GTAI-1/flow-mcp.git
+cd flow-mcp
+npm install
+npm run build
 ```
 
-Claude Code:
+> **Do not put this folder in `~/Desktop`, `~/Documents` or `~/Downloads`.** macOS protects those
+> folders, and apps that launch the server from there can be refused permission to read its own
+> files (`EPERM: operation not permitted`). `~/flow-mcp` or anywhere in your home folder is fine.
+
+Then sign in, once:
 
 ```bash
-claude mcp add flow -- node /ABSOLUTE/PATH/flow-mcp/dist/index.js
+npm run login
 ```
 
-Claude Desktop (`claude_desktop_config.json`):
+That opens the dedicated Chrome window. Sign into Google by hand, open (or create) a Flow project,
+and leave the window open. The program never types your password — it only uses the session you
+created. That Chrome profile lives in `~/.flow-mcp/chrome-profile` and is separate from your
+everyday browser.
+
+---
+
+## Connect it to Claude
+
+**Claude Code**
+
+```bash
+claude mcp add flow -- node /absolute/path/to/flow-mcp/dist/index.js
+```
+
+**Claude Desktop** — add to `claude_desktop_config.json`:
 
 ```json
-{ "mcpServers": { "flow": { "command": "node", "args": ["/ABSOLUTE/PATH/flow-mcp/dist/index.js"] } } }
+{ "mcpServers": { "flow": { "command": "node", "args": ["/absolute/path/to/flow-mcp/dist/index.js"] } } }
 ```
+
+Restart Claude, then ask it: *"check my Flow session"*. You should get your plan and credit balance
+back. Everything after that is plain English — you never type tool names.
+
+---
+
+## Your first film
+
+Nothing below costs a credit until step 4, and Claude asks before spending.
+
+1. **Check the session.** *"Check my Flow session."* — confirms sign-in, plan and credits.
+2. **Make a character.** *"Create a character called Pip, a small lamplighter in a flat cartoon style."*
+   Flow draws the portrait. Free.
+3. **Draw the key frames.** *"Draw three stills with Pip: a dark rooftop, him lighting a lamp, the
+   whole hillside glowing. Match each one to the last."* Free — stills cost nothing, so get the look
+   right here before spending.
+4. **Shoot it.** *"Turn those into three 10-second shots, each starting where the last one ended,
+   720p, no more than 15 credits each."* This spends credits. The price is read from Flow's own
+   quote first and the scene is skipped if it is over your cap.
+5. **Narrate it.** *"Record this line with a warm documentary voice."* Free, any length.
+6. **Cut it.** *"Join the three shots under the narration, don't freeze the last frame."*
+   The finished file lands in `~/flow-mcp-out/<project>/`.
+
+---
+
+## The control panel
+
+The same features, without Claude in the loop:
+
+```bash
+npm run studio     # then open http://127.0.0.1:8787
+```
+
+or double-click **Flow Studio.command**.
+
+Seven tabs, in the order you would use them: **Cast** (reusable characters) → **Frames** (free
+stills, with *match previous frame* to keep a set on-model) → **Shots** (paid clips, with first/last
+frames, chaining and a live credit estimate) → **Voice** (free narration) → **Restyle** (change a
+clip you already have) → **Cut** (join everything, with music and narration) → **Library** (browse
+Flow and pull things back for free). A progress monitor and a gallery of finished work stay visible
+throughout.
+
+The panel ships with the repo but is not started for you — run `npm run studio` when you want it.
+Opening `studio/index.html` as a plain file does nothing; the page needs the server behind it, and
+says so in red if you try.
+
+Claude's own process serves the same panel while it runs. Whichever process starts first owns the
+Chrome tab and the job queue; the other talks to it over a local API, so Claude and the panel always
+agree on what is running. That API listens on 127.0.0.1 only and needs a per-run token
+(`~/.flow-mcp/token`).
+
+---
 
 ## Tools
 
 | Tool | Purpose |
 |---|---|
 | `flow_status` | Session state (signed in, project open, plan, credits left), queue, pacing, prompt playbook |
-| `flow_generate` | Queue scenes: prompt, type (video/image), model, aspect, duration, resolution, variants, first/last frame, reference images, `max_credits` cap |
+| `flow_generate` | Queue scenes: prompt, image or video, model, aspect, duration, resolution, variants, first/last frame, reference images, `max_credits` cap |
 | `flow_wait` | Block until jobs finish; returns file paths |
-| `flow_cancel` | Cancel a queued job |
-| `flow_retry` | Re-queue failed jobs with the same settings and file names (failed tiles are first retried inside Flow with its own free Retry button: `retries`, default 1) |
-| `flow_assets` | List images/videos already in the Flow project (usable as `asset:<title>`) |
-| `flow_download` | Download existing project media without regenerating (original or free 1080p/2K upscale) |
-| `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (8 images in ~85 s), 0 credits. Every image is matched back to its scene by its stored prompt (correct file numbers in any finish order). Scenes the agent drops are asked of the agent again (up to 2 extra rounds), then re-run one by one as a last resort. Confirm setting is restored to Always afterwards |
-| `flow_narrate` | Free narration audio, any length: `gemini` (Google AI Studio TTS — the same voices Flow has, plus a `style` note; needs a key in `~/.flow-mcp/gemini-key`) or `mac` (a voice installed on this Mac, no key) |
-| `flow_voices` | Narrator voices: Google AI Studio's 30 (and whether a key is set up) plus the English voices installed on this Mac |
-| `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). No prior quote; ~20 credits for a 4 s clip |
-| `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with personality and a stock voice; reference it as `asset:<name>` |
+| `flow_cancel` | Cancel a job that has not started |
+| `flow_retry` | Re-queue failed jobs with the same settings and file names (a failed tile is first retried inside Flow with its own free Retry button: `retries`, default 1) |
+| `flow_assets` | List images and videos already in the Flow project (usable as `asset:<title>`) |
+| `flow_download` | Download existing project media without regenerating — free, including the 1080p / 2K upscale |
+| `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (20 images in ~204 s), 0 credits. Each image is matched back to its scene by its stored prompt, so file numbers are right in any finish order. Scenes the agent drops are re-asked of it (up to 2 rounds), then re-run one by one |
+| `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). Flow shows no quote first; about 20 credits for a 4 s clip |
+| `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with a personality and a stock voice; use it as `asset:<name>` |
+| `flow_character_edit` | Restyle an existing character in place (free); name, personality and voice are kept, so every scene referencing it updates |
 | `flow_characters` | List the project's characters |
-| `flow_character_edit` | Restyle an existing character in place (Flow redraws the portrait, free); name, personality and voice are kept |
-| `flow_techniques` | 39 film-technique prompt presets (camera, product, transitions, image commands); pass an id as a scene's `technique` |
-| `flow_assemble` | Join a project's clips into one MP4 with optional music and voiceover (local ffmpeg, no credits) |
+| `flow_techniques` | 39 film-technique prompt presets (camera moves, product shots, transitions, image commands); pass an id as a scene's `technique` |
+| `flow_narrate` | Free narration audio, any length: `gemini` (Google AI Studio text-to-speech — the same voices Flow has, plus a `style` note) or `mac` (a voice installed on this Mac, no key needed) |
+| `flow_voices` | Narrator voices available, and whether a Google key is set up |
+| `flow_assemble` | Join a project's clips into one MP4 with optional music and voiceover (local FFmpeg, no credits) |
 
-Scene continuity: `chain_previous` (last frame of the previous clip becomes this clip's first frame),
-`first_frame` + `last_frame` (animate between two stills), `reference_images` (keep a product/person consistent).
+**Continuity between shots:** `chain_previous` (this clip starts on the last frame of the previous
+one), `first_frame` + `last_frame` (animate between two stills you chose), `reference_images` (keep a
+character or product consistent). Note that Flow allows *either* first/last frames *or* reference
+images on a clip, never both.
 
-Clips are saved to `~/flow-mcp-out/<project>/scene-NN.ext`.
+Output lands in `~/flow-mcp-out/<project>/scene-NN.ext`.
 
-## Studio (local control panel)
+### Narration with Google's voices (optional)
 
-Double-click `Flow Studio.command`, or:
+`flow_narrate` with `engine: "mac"` works out of the box. For Google's voices — the same ones Flow
+offers — get a free key from [Google AI Studio](https://aistudio.google.com/apikey) and save it
+yourself:
 
 ```bash
-npm run studio   # http://127.0.0.1:8787
+echo "YOUR_KEY" > ~/.flow-mcp/gemini-key
 ```
 
-Opening `studio/index.html` directly as a file does nothing: the page needs this server behind it (it says so in red).
+or set `GEMINI_API_KEY`. The key never passes through Claude.
 
-Tabbed workspace, one tab per stage: **Cast** (create/edit reusable characters), **Frames** (stills, with
-*match previous frame* so a set stays on-model, plus a script splitter and the agent engine), **Shots** (video
-clips with first/last frames, chaining and a live credit estimate), **Voice** (free narration from Google AI Studio or a macOS voice), **Restyle** (`flow_edit` on an existing clip), **Cut** (assemble with music,
-narration and hold-last-frame) and **Library** (browse and download what is already in Flow). A Monitor and a
-Gallery of everything saved locally stay visible alongside every tab.
+---
 
-Claude's MCP process serves the same panel while it is running. Whichever process starts first owns the Flow tab
-and the queue; the other one talks to it over the local API, so Claude and the panel always see the same queue.
-The API listens on 127.0.0.1 only and requires a per-run token (`~/.flow-mcp/token`).
+## Behaviour and settings
 
-## Behaviour
+- One generation at a time, with a random 25–70 second pause between them. The page carries an
+  invisible reCAPTCHA; this drives the real interface at human pace and does nothing to evade it.
+- Before each generation the server reads Flow's own credit quote and skips the scene if it exceeds
+  `max_credits` (default 25).
+- Environment variables: `GEMINI_API_KEY`, `FLOW_MCP_PORT` (8787), `FLOW_MCP_OUTPUT`,
+  `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`, `FLOW_MCP_PAUSE_MIN_S`,
+  `FLOW_MCP_PAUSE_MAX_S`.
 
-- One generation at a time, random 25–70 s pause between them (`FLOW_MCP_PAUSE_MIN_S` / `FLOW_MCP_PAUSE_MAX_S`).
-- Before each generation the server reads Flow's own credit quote and skips the scene if it exceeds `max_credits` (default 25).
-- The Chrome window must stay open; the machine needs a display.
-- Env: `GEMINI_API_KEY` (or `~/.flow-mcp/gemini-key`), `FLOW_MCP_PORT` (8787), `FLOW_MCP_OUTPUT`, `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`.
+## If something goes wrong
 
-This automates Flow's web UI: it can break when Google changes the UI, and automated use may
-be against Google's terms. Use on your own account at your own risk.
+| Symptom | Cause |
+|---|---|
+| The server will not start, `EPERM: operation not permitted` | The folder is in a macOS-protected location. Move it out of `~/Desktop`, `~/Documents` or `~/Downloads` and update the path in your Claude config |
+| *"Not signed in"* or *"no project open"* | Run `npm run login`, sign in, open a Flow project, leave the window open |
+| A clip generated but no file arrived | The media is still in Flow. `flow_download` pulls it back for nothing — never re-generate and pay twice |
+| Everything times out | The Chrome window was closed, or the machine slept. Reopen it with `npm run login` |
+
+---
+
+## Licence and risk
+
+This automates Flow's web interface. It can break whenever Google changes that interface, and
+automated use may be against Google's terms of service. Use it on your own account, at your own
+risk.

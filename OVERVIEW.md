@@ -58,7 +58,7 @@ logins and tabs stay untouched.
 | **Shot Builder** | The main one. Makes a still or a video clip for each scene — opening frame, closing frame, up to three look references, continue-from-last-clip, a camera move, aspect ratio, length and quality. Before spending a single credit it reads the price Flow itself quotes and stops if it's over your limit |
 | **Bulk Storyboard** | Hands up to 50 stills to Flow's own assistant, which draws them all at once in about a minute. Free |
 | **Restyle Clip** | Takes a clip you already made and changes it — relight it, change the weather, swap a background. Costs about 20 credits, and Flow shows no price beforehand, so this one always asks you first |
-| **Camera Move Library** | 41 ready-written camera directions: 360° orbit, crash zoom, pull-back reveal, drone fly-through, seamless loop, match cut, logo resolve, and more |
+| **Camera Move Library** | 39 ready-written camera directions: 360° orbit, crash zoom, pull-back reveal, drone fly-through, seamless loop, match cut, logo resolve, and more |
 
 ### Your cast
 
@@ -95,7 +95,7 @@ Seven tabs, in the order you'd use them:
 1. **Cast** — make characters and pick who's in the scene
 2. **Frames** — free key stills to lock the look before spending anything
 3. **Shots** — the paid clips, with a credit ceiling you set
-4. **Narrate** — record the voice, free
+4. **Voice** — record the narration, free
 5. **Restyle** — change a clip you already have
 6. **Cut** — join everything into a finished film
 7. **Library** — browse what Flow is holding and pull it back for free
