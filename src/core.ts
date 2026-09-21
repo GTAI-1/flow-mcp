@@ -10,6 +10,8 @@ import { JobQueue, type Job } from "./queue.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
 export const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out");
+const words = (s: string) => s.split(/[^a-z0-9]+/i).filter((w) => w.length > 3).map((w) => w.toLowerCase());
+
 export const projectDir = (project: string) => resolve(OUTPUT_ROOT, project.replace(/[^\w.-]+/g, "_"));
 
 const sceneSchema = z.object({
@@ -116,6 +118,10 @@ export const shapes = {
       .literal(true)
       .describe("Must be true. Agent mode shows no credit quote before it runs, so max_credits cannot protect you; the real cost is reported on the finished job."),
     download_quality: z.enum(["original", "upscaled"]).optional(),
+    force: z
+      .boolean()
+      .optional()
+      .describe("Skip the guard that refuses to run when Flow already holds a fresh-looking continuation of this clip. Only pass it when you have checked the grid and genuinely want another paid take."),
   },
   outputs: {},
   characters: {},
@@ -372,7 +378,24 @@ export class LocalCore implements Core {
   }
 
   // Flow's composer takes a start frame OR a character, never both; agent mode takes both, so this goes that way.
-  async continue_shot({ project, from_asset, prompt, attach, aspect_ratio, download_quality }: Args<"continue_shot">) {
+  async continue_shot({ project, from_asset, prompt, attach, aspect_ratio, download_quality, force }: Args<"continue_shot">) {
+    // A lost queue entry is not proof that nothing ran: when the owner process is replaced mid-job the job vanishes
+    // while Flow carries on and charges for it. Re-running then spends twice, which is exactly what happened on
+    // 2026-09-20. Flow's own grid is the only honest record, so ask it before starting another paid generation.
+    if (!force) {
+      const recent = (await listAssets()).slice(0, 6).filter((a) => a.kind === "video");
+      const source = from_asset.toLowerCase();
+      const echo = recent.find((a) => {
+        const n = a.name.toLowerCase();
+        return n !== source && !n.startsWith(source) && words(n).some((w) => words(source).includes(w));
+      });
+      if (echo) {
+        throw new Error(
+          `Flow already holds a recent clip called "${echo.name}", which looks like a continuation of "${from_asset}" that may have just been generated and charged for. ` +
+            `Check it with flow_assets / flow_download before spending again. Pass force: true if you really do want another take.`,
+        );
+      }
+    }
     const output_dir = projectDir(project);
     const job = this.queue.add({
       prompt,

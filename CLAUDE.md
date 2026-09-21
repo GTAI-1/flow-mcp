@@ -200,5 +200,10 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   attached frame IS the first frame and the clip must begin exactly on it. Agent mode has to be TOLD, not just given.
   flow_download used to number clip-NN from 1 on every call and silently overwrote earlier files - it destroyed a
   finished shot. It now continues from the highest clip-NN already in the folder.
+  DOUBLE-SPEND (2026-09-20, 30 credits): flow_wait timed out and the queue came back EMPTY, so the shot looked like it
+  had never run - but the owner process had been replaced mid-job while Flow carried on generating and charging. An
+  empty queue is NOT evidence that nothing ran; Flow's grid is the only honest record. flow_continue now checks
+  listAssets for a fresh-looking continuation of the same source before starting, and refuses unless force: true.
+  Whenever a paid job disappears from the queue, look at the grid before re-running anything.
 - Tile menus carry Material icon ligatures in their labels now ("downloadDownload"), but the accessible name still
   computes as "Download", so getByRole(..., { exact: true }) keeps working. Verified, not assumed.
