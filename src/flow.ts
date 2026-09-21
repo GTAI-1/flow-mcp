@@ -1046,6 +1046,82 @@ async function agentRound(
 
 // Hands a whole multi-scene script to Flow's own agent, which generates every image in parallel (seconds instead
 // of one paced job per scene). Scenes the agent drops are asked for again, then re-run one by one as a last resort.
+// Continues a clip from its own last frame WITH characters still attached - the combination the composer refuses.
+// Flow's composer offers Frames OR Ingredients, never both, but agent mode does both, and this is the route the user
+// demonstrated: save the clip's last frame, Animate that image (which switches Flow into agent mode by itself), then
+// add the avatar or character as a second chip. Verified step by step against the live UI on 2026-09-20.
+export async function runContinue(job: Job): Promise<string[]> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  const s = job.params;
+  const balance = await readCredits(page).catch(() => undefined);
+
+  await ensureProjectGrid(page);
+  const wanted = s.continue_from!.toLowerCase();
+  const matches = (a: FlowAsset) => a.kind === "video" && a.name.toLowerCase().startsWith(wanted);
+  const source = (await scanGrid(page, (assets) => assets.some(matches))).find(matches);
+  if (!source) throw new Error(`No video whose title starts with "${s.continue_from}". Use flow_assets to list titles.`);
+
+  try {
+    // 1. Open the clip and park the playhead on its final frame, then let Flow save that frame as an image.
+    job.progress = "saving the last frame";
+    const tile = tileOf(page, source);
+    await hoverTile(page, tile);
+    await tile.click();
+    await page.waitForURL(/\/edit\//, { timeout: 30_000 });
+    await pause(page, 4000);
+    await page.getByRole("button", { name: "Skip to next clip" }).click();
+    await pause(page, 2500);
+    await page.getByRole("button", { name: "Save frame" }).click();
+    await pause(page, 4500);
+    await page.getByRole("button", { name: "Back button to go to previous page" }).click();
+    await pause(page, 3500);
+    await ensureProjectGrid(page);
+    await scrollToTop(page);
+
+    // 2. Animate the frame we just saved. Flow names it after the source and puts the newest copy at the top, and
+    //    the click also flips Agent on, which is what lets a character ride along.
+    job.progress = "loading the frame into the composer";
+    const frame = page.locator(`flow-grid-tile-container[aria-label="${`Saved frame from ${source.name}`.replace(/"/g, '\\"')}"]`).first();
+    await frame.waitFor({ state: "visible", timeout: 30_000 });
+    await hoverTile(page, frame);
+    await frame.getByRole("button", { name: "More options" }).click();
+    await pause(page, 1500);
+    await page.getByRole("menuitem", { name: "Animate", exact: true }).click();
+    await pause(page, 3500);
+    await setAgentMode(page, true);
+
+    // 3. The second chip: an avatar ("Me") or any character, which the Frames composer cannot hold at the same time.
+    for (const name of s.attach ?? []) {
+      await attachAsset(page, page.getByRole("button", { name: "Add ingredients to the prompt box" }), name);
+      await pause(page, 1200);
+    }
+
+    // 4. Agent mode asks for confirmation unless told not to, which would stall an unattended run.
+    await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9");
+    await typePrompt(page, s.prompt);
+    const before = await mediaIds(page);
+    job.progress = "generating";
+    await page.getByRole("button", { name: "Start generation" }).click();
+
+    const fresh = await waitForNewMedia(page, before, 1, VIDEO_TIMEOUT_MS, job);
+    job.progress = undefined;
+    mkdirSync(s.output_dir, { recursive: true });
+    const file = await downloadMedia(page, fresh[0], join(s.output_dir, s.file_stem), s.download_quality);
+    const after = await readCredits(page).catch(() => undefined);
+    if (balance !== undefined && after !== undefined) job.credits = balance - after;
+    return [file];
+  } finally {
+    // Leave the composer the way the rest of the driver expects to find it.
+    await closeAgentSession(page).catch(() => {});
+    await setAgentSettings(page, "Always").catch(() => {});
+    await setAgentMode(page, false).catch(() => {});
+    const clear = page.getByRole("button", { name: "Clear prompt" });
+    if (await clear.isVisible().catch(() => false)) await clear.click().catch(() => {});
+  }
+}
+
 export async function runAgentBatch(job: Job): Promise<string[]> {
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);

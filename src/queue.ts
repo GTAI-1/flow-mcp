@@ -18,6 +18,8 @@ export interface SceneParams {
   reference_from?: string;
   edit_asset?: string;
   agent_scenes?: string[];
+  continue_from?: string;
+  attach?: string[];
   retries?: number;
   download_quality?: "original" | "upscaled";
   output_dir: string;

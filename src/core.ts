@@ -5,7 +5,7 @@ import { z } from "zod";
 import { assemble, localVoices, speakLocally } from "./assemble.js";
 import { GEMINI_VOICES, geminiKey, speakWithGemini } from "./gemini.js";
 import { extractLastFrame } from "./chain.js";
-import { characterLook, createCharacter, downloadAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runEdit, runGeneration } from "./flow.js";
+import { characterLook, createCharacter, downloadAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
@@ -102,6 +102,21 @@ export const shapes = {
       .describe("Must be true. Flow shows no quote for edits, so max_credits cannot protect you: a 4 s clip cost 20 credits when measured. The real cost is reported on the finished job."),
     download_quality: z.enum(["original", "upscaled"]).optional(),
   },
+  continue_shot: {
+    project: z.string().min(1).describe("Local folder for the new clip."),
+    from_asset: z.string().min(1).describe("Title (or title prefix) of the video to continue from; see flow_assets."),
+    prompt: z.string().min(1).describe("What happens in the new clip, written as one continuous shot with one camera move."),
+    attach: z
+      .array(z.string().min(1))
+      .max(3)
+      .optional()
+      .describe("Characters or avatars to keep attached, by name, e.g. ['Me'] for your own Flow avatar or ['Pip']. This is the whole point of this tool: the normal composer cannot hold a character and a start frame at the same time."),
+    aspect_ratio: z.enum(["16:9", "9:16"]).default("16:9"),
+    acknowledge_cost: z
+      .literal(true)
+      .describe("Must be true. Agent mode shows no credit quote before it runs, so max_credits cannot protect you; the real cost is reported on the finished job."),
+    download_quality: z.enum(["original", "upscaled"]).optional(),
+  },
   outputs: {},
   characters: {},
   character_edit: {
@@ -160,6 +175,7 @@ export interface Core {
   characters(): Promise<unknown>;
   character_edit(a: Args<"character_edit">): Promise<unknown>;
   edit(a: Args<"edit">): Promise<unknown>;
+  continue_shot(a: Args<"continue_shot">): Promise<unknown>;
   agent(a: Args<"agent">): Promise<unknown>;
   outputs(): Promise<unknown>;
 }
@@ -198,6 +214,7 @@ export class LocalCore implements Core {
       if (!clip) throw new Error(`chain_previous: the previous scene (${chain_from}) produced no video, so this scene was skipped.`);
       job.params.first_frame = await extractLastFrame(clip);
     }
+    if (job.params.continue_from) return runContinue(job);
     if (job.params.agent_scenes) return runAgentBatch(job);
     if (job.params.edit_asset) return runEdit(job);
     return runGeneration(job);
@@ -348,6 +365,23 @@ export class LocalCore implements Core {
   async edit({ project, asset, prompt, download_quality }: Args<"edit">) {
     const output_dir = projectDir(project);
     const job = this.queue.add({ prompt, type: "video", max_credits: 0, edit_asset: asset, download_quality, output_dir, file_stem: this.nextStem(output_dir, "edit") });
+    return { output_dir, jobs: [jobView(job)] };
+  }
+
+  // Flow's composer takes a start frame OR a character, never both; agent mode takes both, so this goes that way.
+  async continue_shot({ project, from_asset, prompt, attach, aspect_ratio, download_quality }: Args<"continue_shot">) {
+    const output_dir = projectDir(project);
+    const job = this.queue.add({
+      prompt,
+      type: "video",
+      max_credits: 0,
+      continue_from: from_asset,
+      attach,
+      aspect_ratio,
+      download_quality,
+      output_dir,
+      file_stem: this.nextStem(output_dir, "shot"),
+    });
     return { output_dir, jobs: [jobView(job)] };
   }
 

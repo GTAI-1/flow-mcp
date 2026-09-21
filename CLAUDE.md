@@ -186,5 +186,13 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
      the avatar. Then type the prompt and generate.
   Never tell the user Flow "cannot" do something because the composer refuses it - check the agent route first.
   Agent mode routinely offers combinations the composer gates, and the user has been right about this before.
+  BUILT IN as `flow_continue` (runContinue in flow.ts), verified selector by selector on 2026-09-20:
+  tile click -> /edit/<uuid> -> `Skip to next clip` parks the playhead (clock reads 00:10:00 / 00:10:00; there is NO
+  <video> element in that view, so scrub through the control, not the DOM) -> `Save frame` writes an image titled
+  "Saved frame from <video title>" -> `Back button to go to previous page` -> the saved frame is the newest tile at
+  the top (titles repeat if you save twice, so take .first()) -> its menu has `Animate` (image-only; a video's menu
+  has `Add to scene`/`Add to prompt` instead) -> Animate drops it in the composer AND turns Agent on by itself ->
+  `Add ingredients to the prompt box` -> `Avatars` tab -> `Me` attaches on click, giving TWO chips.
+  Agent mode shows no credit quote, so flow_continue takes acknowledge_cost like flow_edit.
 - Tile menus carry Material icon ligatures in their labels now ("downloadDownload"), but the accessible name still
   computes as "Download", so getByRole(..., { exact: true }) keeps working. Verified, not assumed.

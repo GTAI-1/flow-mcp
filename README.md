@@ -137,6 +137,7 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | `flow_download` | Download existing project media without regenerating — free, including the 1080p / 2K upscale |
 | `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (20 images in ~204 s), 0 credits. Each image is matched back to its scene by its stored prompt, so file numbers are right in any finish order. Scenes the agent drops are re-asked of it (up to 2 rounds), then re-run one by one |
 | `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). Flow shows no quote first; about 20 credits for a 4 s clip |
+| `flow_continue` | Start a clip from the last frame of an existing one **with a character or your avatar still attached** — the composer allows a start frame or attached characters, never both, so this drives Flow's agent mode, which does both. No quote beforehand |
 | `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with a personality and a stock voice; use it as `asset:<name>` |
 | `flow_character_edit` | Restyle an existing character in place (free); name, personality and voice are kept, so every scene referencing it updates |
 | `flow_characters` | List the project's characters |
@@ -147,8 +148,9 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 
 **Continuity between shots:** `chain_previous` (this clip starts on the last frame of the previous
 one), `first_frame` + `last_frame` (animate between two stills you chose), `reference_images` (keep a
-character or product consistent). Note that Flow allows *either* first/last frames *or* reference
-images on a clip, never both.
+character or product consistent). Flow's *composer* takes either frames or references, never both — so
+when you need a start frame **and** a character locked together, use `flow_continue`, which goes through
+Flow's agent mode and does both.
 
 Output lands in `~/flow-mcp-out/<project>/scene-NN.ext`.
 

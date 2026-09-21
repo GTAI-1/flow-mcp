@@ -129,6 +129,18 @@ server.registerTool(
 );
 
 server.registerTool(
+  "flow_continue",
+  {
+    title: "Continue a clip, keeping a character attached",
+    description:
+      "Start a new clip from the last frame of one already in the project, WITH a character or your own Flow avatar still attached. Flow's normal composer offers a start frame OR attached characters, never both; this drives Flow's agent mode, which does both (it saves the clip's final frame, animates it, and adds the character alongside). Use it for a continuous take where a person must stay on-model. Agent mode shows no credit quote beforehand, so ask the user before calling. Queued like a generation; use flow_wait for the file.",
+    inputSchema: shapes.continue_shot,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  (args) => reply(core.continue_shot(args)),
+);
+
+server.registerTool(
   "flow_character",
   {
     title: "Create a reusable character",
