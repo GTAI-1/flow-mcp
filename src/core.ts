@@ -30,7 +30,9 @@ const sceneSchema = z.object({
     .array(z.string())
     .max(3)
     .optional()
-    .describe("Ingredient/reference media: absolute image paths, or 'asset:<title>' for media or characters already in the Flow project."),
+    .describe(
+      "Reference media: absolute image paths, or 'asset:<title>' for media or characters already in the Flow project. Flow allows references OR first/last frames on a video scene, never both - with frames set these are skipped, because the frames already fix the look.",
+    ),
   download_quality: z.enum(["original", "upscaled"]).optional().describe("'upscaled' fetches 1080p video / 2K image (free, slower). Default original."),
   retries: z.number().int().min(0).max(3).default(1).describe("Automatic retries when Flow itself reports the generation failed."),
   technique: z.string().optional().describe("Id from flow_techniques (e.g. 'orbit-360'); its exact phrase is appended to the prompt. One per scene."),

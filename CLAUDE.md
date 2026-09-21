@@ -57,7 +57,7 @@ Not built: "improve prompt (AI)" in Studio (bundled Claude Code CLI exists at
 ~/Library/Application Support/Claude/claude-code/<ver>/claude.app/Contents/MacOS/claude but is not logged in).
 The app's Browser pane shows `studio/index.html` as a static file after edits: that view is NOT connected (the page
 now says so). The real panel is http://127.0.0.1:8787 served by `npm run studio` / `Flow Studio.command`.
-The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome screenshots instead.
+The preview tool could not read the project while it lived in ~/Desktop; check the Studio UI with headless Chrome screenshots instead.
 
 ## More UI map (2026-09-19)
 
@@ -150,3 +150,21 @@ The preview tool cannot read ~/Desktop; check the Studio UI with headless Chrome
   paraphrase. flow_narrate is now gemini | mac only, both free and unlimited in length. Flow's own VOICES list stays in
   core.ts solely for giving a CHARACTER a voice. Verified in the panel: both engines record, the style note shows for
   Google only, and the Google take used the same Charon voice a Flow take had cost 7 credits for.
+- Downloads rewritten (2026-09-20, after three clips generated fine but never reached disk): Playwright's `download`
+  event + `saveAs` is not dependable here - the bytes sit in a per-connection artifact directory that a second
+  connection to the same Chrome sweeps. Chrome now writes into `~/.flow-mcp/downloads` itself
+  (CDP `Browser.setDownloadBehavior`, `allowAndName`) and `waitForDownloadedFile` polls for a new non-`.crdownload`
+  file whose size has stopped changing, then renames it onto the target. Two more traps in the same path:
+  (1) Playwright's `hover()` does NOT open a tile's toolbar - Flow only reveals it for a real pointer move, so
+  `hoverTile` drives `page.mouse.move` to the tile's box centre; (2) prefer the toolbar's `More options` button over a
+  right-click, which can land on the `<video>` and raise Chrome's own context menu instead of Flow's. `downloadMedia`
+  now settles (scrollToTop + 2.5 s) and re-resolves the tile by id before touching it, because a tile that has just
+  finished rendering is still being re-mounted by the virtual grid and the old handle's toolbar never opens.
+- Frames and Ingredients are mutually exclusive in the composer, so a video scene with `first_frame`/`last_frame`
+  cannot also carry `reference_images`. runGeneration drops the references (the frames already pin the look) and says
+  so in the job note rather than failing or silently ignoring them.
+- The server lives at `~/flow-mcp` (2026-09-20); `~/Desktop/flow-mcp` is a symlink to it. Claude Desktop's shared MCP
+  pool could not start it from `~/Desktop`: `EPERM` opening `dist/index.js`, repeatedly, even with Full Disk Access
+  granted to Claude - while a node spawned from that same path in another lane read the file fine. Cause not fully
+  explained; keeping the runtime out of `~/Desktop` is the remedy being tested. Both `claude_desktop_config.json` and
+  `~/.claude.json` point at the new path.

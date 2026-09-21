@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
@@ -124,8 +124,7 @@ export async function newErrorTiles(page: Page, known: Iterable<string>): Promis
 // Flow's Retry replaces the failed tile with a fresh render of the same prompt and settings, free of charge.
 // Tiles produced by Agent mode only offer Delete, so the button may not be there at all.
 async function retryErrorTile(page: Page, tile: Locator): Promise<boolean> {
-  await tile.scrollIntoViewIfNeeded();
-  await tile.hover();
+  await hoverTile(page, tile);
   const retry = tile.getByRole("button", { name: "Retry" });
   if (!(await retry.isVisible({ timeout: 2000 }).catch(() => false))) return false;
   await retry.click({ timeout: 10_000 });
@@ -339,36 +338,80 @@ async function typePrompt(page: Page, prompt: string): Promise<void> {
 export type DownloadQuality = "original" | "upscaled";
 
 export async function downloadMedia(page: Page, mediaId: string, targetStem: string, quality: DownloadQuality = "original"): Promise<string> {
+  // A tile that has just finished rendering is still settling and the grid re-renders around it, which leaves a stale
+  // handle whose toolbar never opens. Give it a moment and re-resolve before touching it.
+  await scrollToTop(page);
+  await pause(page, 2500);
+  await mediaTile(page, mediaId).waitFor({ state: "visible", timeout: 30_000 });
   return downloadTile(page, mediaTile(page, mediaId), targetStem, quality);
 }
 
+const DOWNLOAD_DIR = join(HOME_DIR, "downloads");
+let downloadsReady = false;
+
+// Playwright keeps a download in a per-connection temp file it can delete from under us; pointing Chrome itself at a
+// directory we own makes the bytes ours the moment they land.
+async function useOwnDownloadDir(page: Page): Promise<void> {
+  if (downloadsReady) return;
+  mkdirSync(DOWNLOAD_DIR, { recursive: true });
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: DOWNLOAD_DIR, eventsEnabled: true });
+  downloadsReady = true;
+}
+
+// Waits for a file to finish arriving in our download directory and returns it.
+async function waitForDownloadedFile(page: Page, before: Set<string>, timeoutMs: number): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let stable: { name: string; size: number } | undefined;
+  while (Date.now() < deadline) {
+    await pause(page, 1000);
+    const fresh = readdirSync(DOWNLOAD_DIR).filter((f) => !before.has(f) && !f.endsWith(".crdownload"));
+    for (const name of fresh) {
+      const size = statSync(join(DOWNLOAD_DIR, name)).size;
+      if (stable?.name === name && stable.size === size && size > 0) return join(DOWNLOAD_DIR, name);
+      stable = { name, size };
+    }
+  }
+  throw new Error("Flow started the download but no file arrived.");
+}
+
+// Flow reveals a tile's controls on a genuine pointer move, so the mouse is driven to the tile itself.
+async function hoverTile(page: Page, tile: Locator): Promise<void> {
+  await tile.scrollIntoViewIfNeeded();
+  const box = await tile.boundingBox();
+  if (box) {
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await pause(page, 900);
+  } else {
+    await tile.hover();
+    await pause(page, 900);
+  }
+}
+
 async function downloadTile(page: Page, tile: Locator, targetStem: string, quality: DownloadQuality): Promise<string> {
+  await useOwnDownloadDir(page);
   let lastError: unknown;
-  // Another Playwright connection to the same Chrome can delete the artifact mid-save, so one retry is worth it.
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      await tile.scrollIntoViewIfNeeded();
-      // Upscales are rendered on demand, so they can take minutes before the file arrives.
-      const download = page.waitForEvent("download", { timeout: quality === "upscaled" ? 600_000 : 120_000 });
-      await tile.click({ button: "right" });
-      await page.getByRole("menuitem", { name: "Download", exact: true }).click();
-      // Size submenu: "720p Original size" / "1K Original size", or the first upscale the plan allows (1080p / 2K).
+      const before = new Set(readdirSync(DOWNLOAD_DIR));
+      // Flow only shows a tile's toolbar for a real pointer move over it - Playwright's hover() does not trigger it.
+      // The toolbar's "More options" beats a right-click, which can land on the <video> and raise Chrome's own menu.
+      await hoverTile(page, tile);
+      const more = tile.getByRole("button", { name: "More options" });
+      if (await more.isVisible({ timeout: 3000 }).catch(() => false)) await more.click();
+      else await tile.click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Download", exact: true }).click({ timeout: 10_000 });
+      // Size submenu: "720p Original size" / "1K Original size", or the best upscale the plan allows.
       const original = page.getByRole("menuitem", { name: /original/i }).first();
-      if (await original.waitFor({ state: "visible", timeout: 2500 }).then(() => true, () => false)) {
+      if (await original.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false)) {
         const upscaled = page.locator('[role="menuitem"]:not([aria-disabled="true"]):not([disabled])').filter({ hasText: /upscaled/i }).first();
         const wanted = quality === "upscaled" && (await upscaled.isVisible().catch(() => false)) ? upscaled : original;
         await wanted.click();
       }
-      const file = await download;
-      const target = `${targetStem}${extname(file.suggestedFilename()) || ".bin"}`;
-      try {
-        await file.saveAs(target);
-      } catch (err) {
-        // Chrome keeps the bytes in a temp file owned by this connection; copy straight from it if saveAs lost it.
-        const temp = await file.path().catch(() => null);
-        if (!temp || !existsSync(temp)) throw err;
-        copyFileSync(temp, target);
-      }
+      // Upscales are rendered on demand, so they can take minutes to appear.
+      const file = await waitForDownloadedFile(page, before, quality === "upscaled" ? 600_000 : 180_000);
+      const target = `${targetStem}${extname(file) || ".mp4"}`;
+      renameSync(file, target);
       await page.keyboard.press("Escape");
       await scrollToTop(page);
       return target;
@@ -418,6 +461,15 @@ export async function runGeneration(job: Job): Promise<string[]> {
   }
   if (s.last_frame) {
     await attachAsset(page, page.getByRole("button", { name: "End", exact: true }), await uploadAsset(page, job, s.last_frame, "end"));
+  }
+  // Flow's composer offers Frames OR Ingredients, never both: a clip with first/last frames cannot also carry
+  // reference images. The frames already pin the look, so the references are dropped and the job says so.
+  const framesMode = s.type === "video" && Boolean(s.first_frame || s.last_frame);
+  if (framesMode && s.reference_images?.length) {
+    job.note = [job.note, `first/last frames were set, so ${s.reference_images.length} reference image(s) were skipped — Flow allows one or the other.`]
+      .filter(Boolean)
+      .join(" · ");
+    s.reference_images = [];
   }
   for (const [i, ref] of (s.reference_images ?? []).entries()) {
     const name = await uploadAsset(page, job, ref, `ref${i + 1}`);
