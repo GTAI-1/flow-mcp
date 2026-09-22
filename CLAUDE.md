@@ -234,5 +234,21 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   gives the model nothing to finish, so it loops aimless fidgeting for the whole clip. A shot needs ONE specific
   action with a beginning and an end - a switch clicked off, a single clap of chalk, one decisive pull - and the
   person's face in frame with their hands, not hands alone.
+- DOWNLOADS WERE GOING TO ~/Downloads ALL ALONG (root cause of hours lost, 2026-09-21). `Browser.setDownloadBehavior`
+  was sent ONCE per process behind a `downloadsReady` flag, but the override is browser-wide and gets reset whenever
+  another CDP client attaches - Claude Desktop starts several. Chrome then silently used its own Downloads folder
+  while waitForDownloadedFile watched an empty directory and reported "no file arrived", so clip after clip looked
+  like a failed download when the file was already on disk. Now: the behaviour is re-asserted before EVERY download,
+  and both `~/.flow-mcp/downloads` and `~/Downloads` are watched.
+- Flow reuses its auto-generated titles: two takes of one scene both came back "Woman climbing granite wall", so the
+  newer clip could not be found by name and flow_assets looked unchanged. runGeneration now renames each finished
+  tile to `<project>-<file_stem>` through the tile menu's `Rename` (renameTile, best effort - a failed rename must
+  never lose the clip). The user asked for this; it removes a whole class of confusion.
+- Gemini TTS: a LONG `style` note makes the model ramble - a 45-word line with a 25-word delivery note produced 674
+  SECONDS of audio. The same line with no style note is 20.5 s, with a short note 32 s. Keep style notes to a few
+  words, and sanity-check the returned duration against the expected one before using it.
+- Flow's "1080p Upscaled" download renders on demand and may simply never deliver (waited 7+ minutes twice on one
+  clip, nothing). Do not block a delivery on it: take the 720p original and upscale locally with
+  `scale=1920:1080:flags=lanczos` if a 1080p master is needed.
 - Tile menus carry Material icon ligatures in their labels now ("downloadDownload"), but the accessible name still
   computes as "Download", so getByRole(..., { exact: true }) keeps working. Verified, not assumed.

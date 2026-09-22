@@ -376,27 +376,40 @@ let downloadsReady = false;
 // Playwright keeps a download in a per-connection temp file it can delete from under us; pointing Chrome itself at a
 // directory we own makes the bytes ours the moment they land.
 async function useOwnDownloadDir(page: Page): Promise<void> {
-  if (downloadsReady) return;
+  // Setting this once per process was not enough: another CDP client attaching resets it browser-wide, and Chrome
+  // quietly goes back to ~/Downloads. Every file we "could not download" tonight was sitting there the whole time,
+  // so this is re-asserted before every single download rather than cached behind a flag.
   mkdirSync(DOWNLOAD_DIR, { recursive: true });
   const cdp = await page.context().newCDPSession(page);
-  await cdp.send("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: DOWNLOAD_DIR, eventsEnabled: true });
+  await cdp.send("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: DOWNLOAD_DIR, eventsEnabled: true }).catch(() => {});
   downloadsReady = true;
 }
+
+// Chrome's own Downloads folder, where files land whenever the override above has been reset out from under us.
+const SYSTEM_DOWNLOADS = join(homedir(), "Downloads");
 
 // Waits for a file to finish arriving in our download directory and returns it.
 async function waitForDownloadedFile(page: Page, before: Set<string>, timeoutMs: number): Promise<string> {
   const deadline = Date.now() + timeoutMs;
-  let stable: { name: string; size: number } | undefined;
+  let stable: { path: string; size: number } | undefined;
   while (Date.now() < deadline) {
     await pause(page, 1000);
-    const fresh = readdirSync(DOWNLOAD_DIR).filter((f) => !before.has(f) && !f.endsWith(".crdownload"));
-    for (const name of fresh) {
-      const size = statSync(join(DOWNLOAD_DIR, name)).size;
-      if (stable?.name === name && stable.size === size && size > 0) return join(DOWNLOAD_DIR, name);
-      stable = { name, size };
+    // Both places: ours, and Chrome's own folder for when the override has been reset behind our back.
+    const candidates: string[] = [];
+    for (const dir of [DOWNLOAD_DIR, SYSTEM_DOWNLOADS]) {
+      if (!existsSync(dir)) continue;
+      for (const f of readdirSync(dir)) {
+        if (before.has(`${dir}/${f}`) || f.endsWith(".crdownload") || f.startsWith(".")) continue;
+        candidates.push(join(dir, f));
+      }
+    }
+    for (const path of candidates) {
+      const size = statSync(path).size;
+      if (stable?.path === path && stable.size === size && size > 0) return path;
+      stable = { path, size };
     }
   }
-  throw new Error("Flow started the download but no file arrived.");
+  throw new Error("Flow started the download but no file arrived in either the tool's folder or ~/Downloads.");
 }
 
 // Flow reveals a tile's controls on a genuine pointer move, so the mouse is driven to the tile itself.
@@ -431,6 +444,33 @@ function extensionOf(file: string): string {
   return ".mp4";
 }
 
+// Flow titles clips itself and happily reuses a title: two takes of the same scene both came back as "Woman climbing
+// granite wall", which makes a clip impossible to identify by name and cost real time tonight. Renaming each finished
+// tile to our own scene name fixes it at the source - the user's suggestion, and the right one.
+async function renameTile(page: Page, tile: Locator, title: string): Promise<boolean> {
+  try {
+    await hoverTile(page, tile);
+    const more = tile.getByRole("button", { name: "More options" });
+    if (!(await more.isVisible({ timeout: 3000 }).catch(() => false))) return false;
+    await more.click();
+    const rename = page.getByRole("menuitem", { name: "Rename", exact: true });
+    if (!(await rename.isVisible({ timeout: 4000 }).catch(() => false))) {
+      await page.keyboard.press("Escape");
+      return false;
+    }
+    await rename.click();
+    await pause(page, 1200);
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.type(title, { delay: 8 });
+    await page.keyboard.press("Enter");
+    await pause(page, 1500);
+    return true;
+  } catch {
+    await page.keyboard.press("Escape").catch(() => {});
+    return false;
+  }
+}
+
 async function downloadTile(page: Page, target: Locator | TileResolver, targetStem: string, quality: DownloadQuality): Promise<string> {
   await useOwnDownloadDir(page);
   const resolve: TileResolver = typeof target === "function" ? target : async () => target;
@@ -438,7 +478,10 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const tile = await resolve();
-      const before = new Set(readdirSync(DOWNLOAD_DIR));
+      const before = new Set<string>();
+      for (const dir of [DOWNLOAD_DIR, SYSTEM_DOWNLOADS]) {
+        if (existsSync(dir)) for (const f of readdirSync(dir)) before.add(`${dir}/${f}`);
+      }
       // Flow only shows a tile's toolbar for a real pointer move over it - Playwright's hover() does not trigger it.
       // The toolbar's "More options" beats a right-click, which can land on the <video> and raise Chrome's own menu.
       await hoverTile(page, tile);
@@ -546,7 +589,14 @@ export async function runGeneration(job: Job): Promise<string[]> {
   mkdirSync(s.output_dir, { recursive: true });
   const files: string[] = [];
   for (const [i, id] of fresh.entries()) {
-    const stem = join(s.output_dir, fresh.length > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem);
+    const label = fresh.length > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem;
+    // Flow names clips itself and reuses those names, so two takes of one scene come back identically titled and
+    // neither can be found by name afterwards. Renaming each finished tile to the scene's own file stem makes every
+    // later lookup - download, continue, assemble - unambiguous. Best effort: a failed rename must not lose the clip.
+    const renamed = await renameTile(page, mediaTile(page, id), `${basename(s.output_dir)}-${label}`).catch(() => false);
+    if (renamed) job.note = [job.note, `renamed in Flow to ${basename(s.output_dir)}-${label}`].filter(Boolean).join(" · ");
+    await pause(page, 800);
+    const stem = join(s.output_dir, label);
     files.push(await downloadMedia(page, id, stem, s.download_quality));
     await pause(page, 1500);
   }
