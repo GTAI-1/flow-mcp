@@ -223,5 +223,16 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   treats a VALID answer from something that is not flow-mcp as "the port belongs to another program, local is safe",
   and on a never-confirmed holder defers as a client rather than overriding it - a client whose calls fail loudly
   beats a second process silently spending credits. Checked with 5 processes racing one port: 1 owner, 4 clients.
+- Chrome's `Browser.setDownloadBehavior` with "allowAndName" writes every download under a bare uuid with NO extension,
+  so `extname()` on it is always empty and everything was being saved as .mp4 - a still came down as clip-01.mp4.
+  extensionOf() now sniffs the first 12 bytes (JPEG/PNG/WEBP/GIF/ftyp) and names the file after what it really is.
+- Agent mode left ON breaks the NEXT job, which looks for the plain composer: `flow_character` died with
+  "waiting for getByRole('button', { name: 'Agent' })" because runContinue's cleanup had toggled it while Flow's agent
+  session panel still covered the composer, so the click hit nothing and the failure was swallowed by .catch(). The
+  cleanup now closes the panel and returns to the grid FIRST, and setAgentMode verifies the toggle actually flipped.
+- Prompting lesson (cost 15 credits): an extreme close-up of hands doing a continuous activity ("working a knot")
+  gives the model nothing to finish, so it loops aimless fidgeting for the whole clip. A shot needs ONE specific
+  action with a beginning and an end - a switch clicked off, a single clap of chalk, one decisive pull - and the
+  person's face in frame with their hands, not hands alone.
 - Tile menus carry Material icon ligatures in their labels now ("downloadDownload"), but the accessible name still
   computes as "Download", so getByRole(..., { exact: true }) keeps working. Verified, not assumed.

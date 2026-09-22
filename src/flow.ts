@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
@@ -412,6 +412,25 @@ async function hoverTile(page: Page, tile: Locator): Promise<void> {
   }
 }
 
+// Chrome's "allowAndName" writes each download under a bare id with NO extension, so there is nothing to copy from
+// the filename and everything was landing as .mp4 - including stills, which arrived as clip-01.mp4. Read the first
+// bytes instead and name the file after what it actually is.
+function extensionOf(file: string): string {
+  const head = Buffer.alloc(12);
+  const fd = openSync(file, "r");
+  try {
+    readSync(fd, head, 0, 12, 0);
+  } finally {
+    closeSync(fd);
+  }
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return ".jpeg";
+  if (head[0] === 0x89 && head.subarray(1, 4).toString("latin1") === "PNG") return ".png";
+  if (head.subarray(0, 4).toString("latin1") === "RIFF" && head.subarray(8, 12).toString("latin1") === "WEBP") return ".webp";
+  if (head.subarray(4, 8).toString("latin1") === "ftyp") return ".mp4";
+  if (head.subarray(0, 4).toString("latin1") === "GIF8") return ".gif";
+  return ".mp4";
+}
+
 async function downloadTile(page: Page, target: Locator | TileResolver, targetStem: string, quality: DownloadQuality): Promise<string> {
   await useOwnDownloadDir(page);
   const resolve: TileResolver = typeof target === "function" ? target : async () => target;
@@ -442,7 +461,7 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
       }
       // Upscales are rendered on demand, so they can take minutes to appear.
       const file = await waitForDownloadedFile(page, before, quality === "upscaled" ? 600_000 : 180_000);
-      const target = `${targetStem}${extname(file) || ".mp4"}`;
+      const target = `${targetStem}${extensionOf(file)}`;
       renameSync(file, target);
       await page.keyboard.press("Escape");
       await scrollToTop(page);
