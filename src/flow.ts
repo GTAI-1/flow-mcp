@@ -870,11 +870,18 @@ export async function runEdit(job: Job): Promise<string[]> {
   return [file];
 }
 
+// The agent session panel hides the composer, so a toggle attempted underneath it does nothing at all. Leaving agent
+// mode on then breaks the NEXT job, which expects the plain composer - a free character build failed that way. So this
+// confirms the toggle actually landed rather than assuming the click worked.
 async function setAgentMode(page: Page, on: boolean): Promise<void> {
   const agent = page.getByRole("button", { name: "Agent", exact: true });
-  if (((await agent.getAttribute("aria-pressed")) === "true") !== on) {
-    await agent.click();
-    await pause(page, 1200);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (((await agent.getAttribute("aria-pressed").catch(() => null)) === "true") === on) return;
+    await agent.click({ timeout: 8000 }).catch(() => {});
+    await pause(page, 1500);
+  }
+  if (((await agent.getAttribute("aria-pressed").catch(() => null)) === "true") !== on) {
+    throw new Error(`Could not switch Agent mode ${on ? "on" : "off"}; the composer may be covered by the agent session panel.`);
   }
 }
 
@@ -1150,8 +1157,11 @@ export async function runContinue(job: Job): Promise<string[]> {
     if (balance !== undefined && after !== undefined) job.credits = balance - after;
     return [file];
   } finally {
-    // Leave the composer the way the rest of the driver expects to find it.
+    // Leave the composer the way the rest of the driver expects to find it. Order matters: the session panel has to go
+    // first and the grid has to be back, otherwise the toggles below are clicking at something that is not there.
     await closeAgentSession(page).catch(() => {});
+    await pause(page, 1500);
+    await ensureProjectGrid(page).catch(() => {});
     await setAgentSettings(page, "Always").catch(() => {});
     await setAgentMode(page, false).catch(() => {});
     const clear = page.getByRole("button", { name: "Clear prompt" });
