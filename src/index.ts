@@ -204,7 +204,7 @@ server.registerTool(
   {
     title: "Record narration in a Flow voice",
     description:
-      "Record narration as an .m4a, free and instantly. `engine: \"gemini\"` uses Google AI Studio's text-to-speech (the same voices Flow has, needs a free key in ~/.flow-mcp/gemini-key, and takes a `style` note like 'warmly, like a documentary narrator'); `engine: \"mac\"` uses a voice installed on this Mac. Neither costs credits or caps the length. flow_assemble can lay the result over a film.",
+      "Record narration as an .m4a, free and instantly. `engine: \"gemini\"` uses Google AI Studio's text-to-speech (the same voices Flow has, needs a free key in ~/.flow-mcp/gemini-key, and takes a `style` note like 'warmly, like a documentary narrator'); `engine: \"mac\"` uses a voice installed on this computer (macOS, or Windows' built-in speech voices). Neither costs credits or caps the length. flow_assemble can lay the result over a film.",
     inputSchema: shapes.narrate,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
@@ -215,7 +215,7 @@ server.registerTool(
   "flow_voices",
   {
     title: "List Flow voices",
-    description: "Narrator voices available for flow_narrate: Google AI Studio's (with whether a key is set up) and the English voices installed on this Mac.",
+    description: "Narrator voices available for flow_narrate: Google AI Studio's (with whether a key is set up) and the English voices installed on this computer.",
     inputSchema: shapes.voices,
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   },

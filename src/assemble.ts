@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
+
+import { FFMPEG_HINT, IS_WIN, powershell, psQuote } from "./platform.js";
 
 const run = promisify(execFile);
 const FFMPEG = process.env.FLOW_MCP_FFMPEG ?? "ffmpeg";
@@ -70,8 +72,24 @@ export async function extractAudio(video: string, target: string): Promise<{ out
 
 const SAY = process.env.FLOW_MCP_SAY ?? "say";
 
-// The voices macOS has installed. Premium ones appear here as soon as the user downloads them in System Settings.
+// The voices this computer has installed. On a Mac that is `say` (Premium voices appear as soon as the user downloads
+// them in System Settings); on Windows it is the built-in speech engine, the voices under Settings > Time & language >
+// Speech. The Windows branch is written to the documented System.Speech API but has not been run on a real PC yet.
 export async function localVoices(): Promise<{ name: string; description: string }[]> {
+  if (IS_WIN) {
+    try {
+      const out = powershell(
+        "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).GetInstalledVoices() | Where-Object { $_.Enabled } | ForEach-Object { $_.VoiceInfo.Name + '|' + $_.VoiceInfo.Culture.Name }",
+      );
+      return out
+        .split(/\r?\n/)
+        .map((l) => l.trim().split("|"))
+        .filter(([name, culture]) => name && /^en-/i.test(culture ?? ""))
+        .map(([name, culture]) => ({ name, description: `${culture} · Windows, free` }));
+    } catch {
+      return [];
+    }
+  }
   const { stdout } = await run(SAY, ["-v", "?"], { maxBuffer: 4 * 1024 * 1024 }).catch(() => ({ stdout: "" }));
   return stdout
     .split("\n")
@@ -81,10 +99,25 @@ export async function localVoices(): Promise<{ name: string; description: string
     .filter((v) => !/^(Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Albert|Fred|Grandma|Grandpa|Junior|Kathy|Princess|Ralph|Rocko|Shelley|Sandy|Eddy|Flo|Reed|Rishi)/.test(v.name));
 }
 
-// Speaks a line with a macOS voice. Free and instant, but only as good as the installed voice.
+// Speaks a line with this computer's own voice. Free and instant, but only as good as the installed voice.
 export async function speakLocally(text: string, voice: string, target: string): Promise<{ output: string; duration: number }> {
-  const raw = target.replace(/\.\w+$/, "") + ".aiff";
-  await run(SAY, ["-v", voice, "-r", "168", "-o", raw, text]);
+  const stem = target.replace(/\.\w+$/, "");
+  const raw = stem + (IS_WIN ? ".wav" : ".aiff");
+  if (IS_WIN) {
+    // The line goes through a file, never the command line, so quotes or symbols in it cannot break the script.
+    const lineFile = stem + ".line.txt";
+    writeFileSync(lineFile, text, "utf8");
+    try {
+      powershell(
+        `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.SelectVoice(${psQuote(voice)}); $s.SetOutputToWaveFile(${psQuote(raw)}); $s.Speak([System.IO.File]::ReadAllText(${psQuote(lineFile)}, [System.Text.Encoding]::UTF8)); $s.Dispose()`,
+        300_000,
+      );
+    } finally {
+      rmSync(lineFile, { force: true });
+    }
+  } else {
+    await run(SAY, ["-v", voice, "-r", "168", "-o", raw, text]);
+  }
   await run(FFMPEG, ["-y", "-i", raw, "-af", "highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=5:release=120,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target]);
   rmSync(raw, { force: true });
   const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
@@ -155,7 +188,7 @@ export async function assemble(o: AssembleOptions): Promise<{ output: string; cl
     await run(FFMPEG, args, { maxBuffer: 32 * 1024 * 1024 });
   } catch (err) {
     const e = err as NodeJS.ErrnoException & { stderr?: string };
-    throw new Error(e.code === "ENOENT" ? "ffmpeg is not installed (brew install ffmpeg)." : `ffmpeg failed: ${(e.stderr ?? String(e)).slice(-600)}`);
+    throw new Error(e.code === "ENOENT" ? `ffmpeg is not installed (${FFMPEG_HINT}).` : `ffmpeg failed: ${(e.stderr ?? String(e)).slice(-600)}`);
   }
   return { output, clips, duration: infos.reduce((sum, i) => sum + i.duration, 0) + hold, held_last_frame: Number(hold.toFixed(2)) };
 }

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { FFMPEG_HINT } from "./platform.js";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -10,7 +11,7 @@ export async function extractLastFrame(video: string): Promise<string> {
   try {
     await run(FFMPEG, ["-y", "-sseof", "-0.2", "-i", video, "-update", "1", "-q:v", "2", out]);
   } catch (err) {
-    const reason = (err as NodeJS.ErrnoException).code === "ENOENT" ? "ffmpeg is not installed (brew install ffmpeg)" : String(err);
+    const reason = (err as NodeJS.ErrnoException).code === "ENOENT" ? `ffmpeg is not installed (${FFMPEG_HINT})` : String(err);
     throw new Error(`chain_previous needs ffmpeg to grab the previous clip's last frame: ${reason}`);
   }
   return out;

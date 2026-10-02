@@ -283,6 +283,16 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   key passes a format check AND Google accepts it (models list, key in a header, no TTS quota), so a bad paste can
   never replace a working key. set_key is deliberately NOT an MCP tool - a key typed into the panel never reaches
   Claude. Tested only on the rejection path, so the user's real key was never overwritten.
+- CROSS-PLATFORM (2026-10-02): every OS difference lives in src/platform.ts - COMPUTER/BIN wording, moveToBin (Mac:
+  rename into ~/.Trash; Windows: PowerShell Microsoft.VisualBasic ...SendToRecycleBin; Linux: `gio trash`, else
+  ~/.local/share/Trash/files), extractZip (`tar` is bsdtar on macOS and Windows 10+ and reads ZIPs; `unzip` fallback),
+  openUrl (open / cmd start / xdg-open), FFMPEG_HINT (brew / winget Gyan.FFmpeg / apt). Computer voices: `say` on a
+  Mac; on Windows System.Speech through PowerShell, with the line passed via a file, never the command line. Chrome
+  is looked for in Program Files, Program Files (x86) and %LOCALAPPDATA% too. discard's containment check uses
+  path.relative, not "/" string tests (those refused everything on Windows). The panel words itself from
+  voices().place (data-place spans + PLACE; Mac wording is the default, so a Mac is unchanged). Windows launcher:
+  Flow Studio.cmd (CRLF kept by .gitattributes). Mac re-verified after the change: unzip of a real Flow ZIP, bin move
+  plus three refusals, Mac wording, 9 voices listed, speech produced. The Windows branches have NOT run on a real PC.
 - NEVER kill Claude Desktop's own flow-mcp process to load new code (did it 2026-10-01): Claude logs "Server
   disconnected" and does NOT restart it, so the app's flow connector stays dead until the user restarts Claude, and
   reconnect_session_connector cannot help (user-config servers are the user's to reconnect). Code sessions and the

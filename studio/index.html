@@ -259,7 +259,7 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
       <section class="panel" data-panel="narrate">
         <div class="step">Step 4</div>
         <h2>Voice</h2>
-        <p class="lede">Record narration for free, at any length. <b>Google AI Studio</b> gives you the same voices Flow uses and takes a delivery note; <b>macOS</b> speaks with a voice installed on this Mac and needs no key. Neither spends credits.</p>
+        <p class="lede">Record narration for free, at any length. <b>Google AI Studio</b> gives you the same voices Flow uses and takes a delivery note; <b data-place="local_engine">macOS voice</b> speaks with a voice installed on <span data-place="computer">this Mac</span> and needs no key. Neither spends credits.</p>
         <div class="card">
           <label class="f">Project folder</label><input type="text" id="n_project" placeholder="MyFilm">
           <label class="f">Line to speak</label><textarea id="n_text" style="min-height:120px" placeholder="Sometimes the obstacles in your life aren't there to block you…"></textarea>
@@ -278,7 +278,7 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
           <div class="rowbtns"><button class="btn" id="n_go">Record take</button></div>
           <div id="n_out" style="margin-top:16px"></div>
         </div>
-        <h2 style="margin-top:28px">Your narrations <small>saved on this Mac</small></h2>
+        <h2 style="margin-top:28px">Your narrations <small>saved on <span data-place="computer">this Mac</span></small></h2>
         <div class="card"><div id="n_takes"><p class="empty">No narrations saved yet.</p></div></div>
       </section>
 
@@ -333,7 +333,7 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
         <div class="card">
           <label class="f">Save into project folder</label><input type="text" id="l_project" placeholder="MyFilm">
           <div class="rowbtns"><button class="btn small" id="l_load">Load library</button><button class="btn small" id="l_dl" disabled>Download selected</button><button class="btn small ghost" id="l_dlhd" disabled>…in 1080p / 2K</button><button class="btn small ghost" id="l_trash" disabled style="border-color:var(--bad);color:var(--bad)">Move to Flow's Trash</button></div>
-          <p class="empty" style="margin-top:6px">This removes things from your Flow project, not from this Mac — your downloaded files stay put. Flow keeps them in its Trash, where you can restore them.</p>
+          <p class="empty" style="margin-top:6px">This removes things from your Flow project, not from <span data-place="computer">this Mac</span> — your downloaded files stay put. Flow keeps them in its Trash, where you can restore them.</p>
           <div class="lib" id="l_list"></div>
         </div>
       </section>
@@ -345,10 +345,10 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
         <div class="card"><div id="pacing"></div><div id="jobs"><p class="empty">Nothing queued yet.</p></div></div>
       </section>
       <section id="galCard">
-        <h2>Gallery <small>saved on this Mac</small></h2>
+        <h2>Gallery <small>saved on <span data-place="computer">this Mac</span></small></h2>
         <div class="card">
           <select id="galProject"></select>
-          <div class="rowbtns" style="margin-top:8px"><button type="button" class="btn small ghost" id="galTrashDir" style="border-color:var(--bad);color:var(--bad)">Move this folder to the Mac's Trash</button></div>
+          <div class="rowbtns" style="margin-top:8px"><button type="button" class="btn small ghost" id="galTrashDir" style="border-color:var(--bad);color:var(--bad)">Move this folder to <span data-place="bin">the Mac's Trash</span></button></div>
           <p class="empty" id="galInfo" style="margin-top:10px"></p>
           <div class="gal" id="gal"></div>
         </div>
@@ -363,7 +363,7 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
 </div></div>
 
 <dialog id="picker"><h2 style="font-size:34px">Pick from Flow</h2><p class="empty">Media already in the open Flow project.</p><div class="lib" id="pickList"></div><div style="margin-top:16px"><button class="btn small ghost" onclick="picker.close()">Close</button></div></dialog>
-<dialog id="viewer"><div id="viewerBody"></div><p class="empty" id="viewerPath" style="margin:12px 0;word-break:break-all"></p><div class="rowbtns"><button class="btn small ghost" onclick="viewer.close()">Close</button><button type="button" class="btn small ghost" id="viewerTrash" style="border-color:var(--bad);color:var(--bad)">Move to the Mac's Trash</button></div></dialog>
+<dialog id="viewer"><div id="viewerBody"></div><p class="empty" id="viewerPath" style="margin:12px 0;word-break:break-all"></p><div class="rowbtns"><button class="btn small ghost" onclick="viewer.close()">Close</button><button type="button" class="btn small ghost" id="viewerTrash" style="border-color:var(--bad);color:var(--bad)">Move to <span data-place="bin">the Mac's Trash</span></button></div></dialog>
 <input type="file" id="file" hidden>
 <script>
 const TOKEN = "__FLOW_TOKEN__";
@@ -419,7 +419,7 @@ const SEGS = {
   s_resolution: { get: () => S.shots.resolution, set: (v) => (S.shots.resolution = v), opts: ["360p", "720p"] },
   s_quality: { get: () => S.shots.quality, set: (v) => (S.shots.quality = v), opts: ["original", "upscaled"], labels: { original: "720p", upscaled: "1080p" } },
   s_variants: { get: () => S.shots.variants, set: (v) => (S.shots.variants = +v), opts: [1, 2, 3, 4] },
-  n_engine: { get: () => S.narrate.engine, set: (v) => (S.narrate.engine = v), opts: ["gemini", "mac"], labels: { gemini: "Google AI Studio", mac: "macOS voice" } },
+  n_engine: { get: () => S.narrate.engine, set: (v) => (S.narrate.engine = v), opts: ["gemini", "mac"], labels: { gemini: "Google AI Studio", get mac() { return PLACE.local_engine; } } },
 };
 function renderSegs() {
   for (const [key, cfg] of Object.entries(SEGS)) {
@@ -474,7 +474,7 @@ async function openPicker(audioOnly) {
   $("#picker h2").textContent = "Pick from Flow"; $("#picker p.empty").textContent = "Media already in the open Flow project.";
   $("#pickList").innerHTML = `<p class="empty">Reading your Flow project…</p>`; picker.showModal();
   if (audioOnly) {
-    $("#picker h2").textContent = "Pick a narration"; $("#picker p.empty").textContent = "Narrations saved on this Mac. To use music, upload it instead.";
+    $("#picker h2").textContent = "Pick a narration"; $("#picker p.empty").textContent = `Narrations saved on ${PLACE.computer}. To use music, upload it instead.`;
     try {
       const { projects } = await api("outputs");
       const takes = projects.flatMap((p) => p.files.filter((f) => f.kind === "audio").map((f) => ({ path: f.path, name: `${p.name} / ${f.name}`, mtime: f.mtime }))).sort((a, b) => b.mtime - a.mtime);
@@ -620,11 +620,11 @@ function renderNarrate() {
     ? (VOICES.gemini_ready
         ? "Google's own text-to-speech — the same voices Flow uses, free on the AI Studio tier, any length, and no Flow credits."
         : `<b>Needs a free key.</b> Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and paste it below. Same voices as Flow, free, no length limit.`)
-    : `Spoken on this Mac — free, instant, any length. Quality depends on the installed voice: download a <b>Premium</b> English voice in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices and it appears here automatically. ${(VOICES.mac ?? []).length} voice(s) available.`;
+    : `Spoken on ${PLACE.computer} — free, instant, any length. Quality depends on the installed voice: ${PLACE.platform === "win32" ? "add more English voices in <b>Settings → Time &amp; language → Speech</b> and they appear here" : "download a <b>Premium</b> English voice in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices and it appears here automatically"}. ${(VOICES.mac ?? []).length} voice(s) available.`;
   $("#n_keyWrap").hidden = mac;
   $("#n_keyStatus").innerHTML = VOICES.gemini_ready
-    ? "A key is saved on this Mac. Paste a new one only to replace it."
-    : "Paste it here, not into a chat — it's saved only on this Mac and checked with Google first.";
+    ? `A key is saved on ${PLACE.computer}. Paste a new one only to replace it.`
+    : `Paste it here, not into a chat — it's saved only on ${PLACE.computer} and checked with Google first.`;
   const words = $("#n_text").value.trim().split(/\s+/).filter(Boolean).length;
   const secs = Math.ceil(words / 2.5);
   $("#n_fit").textContent = words ? `${words} words ≈ ${secs}s of speech. No length limit, no credits.` : "";
@@ -651,7 +651,7 @@ $("#n_go").onclick = async () => {
 
 $("#n_out").addEventListener("click", (e) => {
   const u = e.target.closest("[data-usevo]"); if (!u) return;
-  S.cut.voiceover = { path: u.dataset.usevo, name: u.dataset.usevo.split("/").pop() };
+  S.cut.voiceover = { path: u.dataset.usevo, name: u.dataset.usevo.split(/[\\/]/).pop() };
   save(); renderAll(); showTab("cut"); toast("Narration loaded into Cut");
 });
 
@@ -728,7 +728,7 @@ $("#c_clips").addEventListener("click", (e) => { const b = e.target.closest("[da
 $("#c_addup").onclick = () => { pickTarget = { kind: "clip", i: 0 }; $("#file").accept = "video/*"; $("#file").click(); };
 $("#c_addfilm").onclick = async () => {
   if (!guard()) return;
-  $("#picker h2").textContent = "Pick from my films"; $("#picker p.empty").textContent = "Videos already saved on this Mac.";
+  $("#picker h2").textContent = "Pick from my films"; $("#picker p.empty").textContent = `Videos already saved on ${PLACE.computer}.`;
   $("#pickList").innerHTML = `<p class="empty">Reading your films…</p>`; picker.showModal();
   try {
     const { projects } = await api("outputs");
@@ -807,7 +807,7 @@ function estimate() {
   } else {
     const narrateCost = "Free";
     $("#estNum").textContent = { cast: "Free", narrate: narrateCost, restyle: "≈ 20 credits", cut: "Free", library: "Free" }[tab] ?? "";
-    $("#estSub").textContent = { cast: "characters cost nothing", narrate: S.narrate.engine === "mac" ? "spoken on this Mac" : "Google AI Studio, free", restyle: "use Restyle clip", cut: "use Assemble film", library: "downloads cost nothing" }[tab] ?? "";
+    $("#estSub").textContent = { cast: "characters cost nothing", narrate: S.narrate.engine === "mac" ? `spoken on ${PLACE.computer}` : "Google AI Studio, free", restyle: "use Restyle clip", cut: "use Assemble film", library: "downloads cost nothing" }[tab] ?? "";
     btn.disabled = true;
   }
 }
@@ -849,19 +849,27 @@ async function loadGallery(prefer) {
 }
 // Which saved files each tab's gallery shows. Shots uses stills as first and last frames as well as clips.
 const GALLERY_KINDS = { cast: ["image"], frames: ["image"], shots: ["video", "image"], restyle: ["video"], cut: ["video"] };
+// How to name this computer and its bin. Starts with the Mac wording and is replaced by what the server reports, so a
+// PC says "this PC" and "the Recycle Bin".
+let PLACE = { computer: "this Mac", bin: "the Mac's Trash", binShort: "Mac Trash", local_engine: "macOS voice", platform: "darwin" };
+function applyPlace(p) {
+  if (!p) return;
+  PLACE = { ...PLACE, ...p, binShort: p.platform === "win32" ? "Recycle Bin" : p.platform === "darwin" ? "Mac Trash" : "Trash" };
+  $$("[data-place]").forEach((el) => { const v = PLACE[el.dataset.place]; if (v) el.textContent = v; });
+}
 function renderTakes() {
   const takes = GAL.flatMap((p) => p.files.filter((f) => f.kind === "audio").map((f) => ({ ...f, project: p.name }))).sort((a, b) => b.mtime - a.mtime);
   $("#n_takes").innerHTML = takes.length
-    ? takes.map((t) => `<div class="take"><div style="min-width:0"><b>${esc(t.name)}</b><small>${esc(t.project)}</small></div><button type="button" class="btn small ghost" data-taketrash="${esc(t.path)}" style="border-color:var(--bad);color:var(--bad)">Move to Mac Trash</button><audio controls preload="none" src="${media(t.path)}"></audio></div>`).join("")
+    ? takes.map((t) => `<div class="take"><div style="min-width:0"><b>${esc(t.name)}</b><small>${esc(t.project)}</small></div><button type="button" class="btn small ghost" data-taketrash="${esc(t.path)}" style="border-color:var(--bad);color:var(--bad)">Move to ${PLACE.binShort}</button><audio controls preload="none" src="${media(t.path)}"></audio></div>`).join("")
     : `<p class="empty">No narrations saved yet.</p>`;
 }
 $("#n_takes").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-taketrash]"); if (!b) return;
-  if (await discardLocal(b.dataset.taketrash, `"${b.dataset.taketrash.split("/").pop()}"`)) loadGallery();
+  if (await discardLocal(b.dataset.taketrash, `"${b.dataset.taketrash.split(/[\\/]/).pop()}"`)) loadGallery();
 });
 function renderGallery() {
   const p = GAL.find((x) => x.name === $("#galProject").value);
-  $("#galInfo").textContent = p ? p.dir : "Finished work is saved on this Mac and listed here.";
+  $("#galInfo").textContent = p ? p.dir : `Finished work is saved on ${PLACE.computer} and listed here.`;
   const want = GALLERY_KINDS[S.tab] ?? ["image", "video"];
   $("#gal").innerHTML = (p?.files ?? []).map((f, n) => !want.includes(f.kind) ? "" : `<figure data-n="${n}">${f.kind === "video" ? `<video muted playsinline preload="metadata" src="${media(f.path)}#t=0.1"></video>` : `<img loading="lazy" src="${media(f.path)}">`}<figcaption>${esc(f.name)}</figcaption></figure>`).join("");
 }
@@ -873,15 +881,15 @@ $("#gal").addEventListener("click", (e) => {
   $("#viewerPath").textContent = f.path; viewer.showModal();
 });
 $("#viewer").addEventListener("close", () => ($("#viewerBody").innerHTML = ""));
-// Files on this Mac: moved to the Mac's Trash, so anything removed by mistake can be put back from there.
+// Files on this computer: moved to its own bin (Mac Trash, Windows Recycle Bin), so anything removed by mistake can be put back.
 async function discardLocal(path, label) {
-  if (!confirm(`Move ${label} to the Trash on this Mac?\n\n${path}\n\nYou can put it back from the Trash.`)) return false;
-  try { await api("discard", { path }); toast(`${label} moved to the Trash`); return true; }
+  if (!confirm(`Move ${label} to ${PLACE.bin}?\n\n${path}\n\nYou can put it back from there.`)) return false;
+  try { await api("discard", { path }); toast(`${label} moved to ${PLACE.bin}`); return true; }
   catch (err) { toast(err.message, true); return false; }
 }
 $("#viewerTrash").onclick = async () => {
   const path = $("#viewerPath").textContent; if (!path) return;
-  if (await discardLocal(path, `"${path.split("/").pop()}"`)) { viewer.close(); loadGallery(); }
+  if (await discardLocal(path, `"${path.split(/[\\/]/).pop()}"`)) { viewer.close(); loadGallery(); }
 };
 $("#galTrashDir").onclick = async () => {
   const p = GAL.find((x) => x.name === $("#galProject").value); if (!p) return;
@@ -907,7 +915,7 @@ function renderStatus(st) {
   if (sig !== renderStatus.sig) {
     if (renderStatus.sig && LIVE) loadGallery(slateFolder());
     renderStatus.sig = sig;
-    $("#jobs").innerHTML = jobs.map((j) => `<div class="job"><div class="top"><span class="name">${esc((j.project || "").split("/").pop())} · ${esc(j.scene)}</span>
+    $("#jobs").innerHTML = jobs.map((j) => `<div class="job"><div class="top"><span class="name">${esc((j.project || "").split(/[\\/]/).pop())} · ${esc(j.scene)}</span>
       <span class="badge ${j.status}">${j.status}${j.progress ? " " + esc(j.progress) : ""}</span>${j.credits !== undefined ? `<span class="badge">${j.credits} cr</span>` : ""}${j.attempts > 1 ? `<span class="badge">try ${j.attempts}</span>` : ""}
       ${j.status === "queued" ? `<button class="btn small ghost" data-cancel="${j.id}">Cancel</button>` : ""}${/failed|cancelled/.test(j.status) ? `<button class="btn small" data-retry="${j.id}">Retry</button>` : ""}</div>
       ${j.status === "running" ? `<div class="meter"><i style="width:${parseInt(j.progress) || 4}%"></i></div>` : ""}
@@ -950,6 +958,7 @@ for (const [id, path] of [["f_project", "frames"], ["s_project", "shots"], ["n_p
     renderAll(); showTab(S.tab); return;
   }
   try { [TECH, VOICES] = await Promise.all([api("techniques"), api("voices")]); } catch { VOICES = { gemini: [], mac: [] }; }
+  applyPlace(VOICES.place);
   loadCast().then((c) => { CAST = c; renderCast(); }).catch(() => {});
   renderAll(); showTab(S.tab); poll(true); loadGallery();
 })();

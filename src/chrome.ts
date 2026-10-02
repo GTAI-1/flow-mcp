@@ -16,6 +16,9 @@ const CHROME_PATHS = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   "/usr/bin/google-chrome",
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  // Windows also installs Chrome here: 32-bit builds, and per-user installs made without admin rights.
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe` : undefined,
 ].filter((p): p is string => Boolean(p));
 
 let browser: Browser | null = null;

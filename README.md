@@ -20,11 +20,11 @@ New here? [OVERVIEW.md](OVERVIEW.md) explains what it does in plain English, wit
 
 | | |
 |---|---|
-| **macOS** | Developed and tested here. The Mac-voice narration engine uses macOS `say`; everything else should port, but nothing else is tested |
+| **macOS or Windows 10/11** | Developed and tested on macOS. Windows is supported — Chrome, the computer's own voices, the Recycle Bin and the panel launcher all have Windows versions — but it hasn't been run on a real PC yet, so please report anything that breaks |
 | **Node.js 22 or newer** | `node --version` |
 | **Google Chrome** | Any recent version |
 | **A Google AI subscription with Flow** | Pro or Ultra. This is where the credits come from |
-| **FFmpeg** *(optional)* | `brew install ffmpeg` — needed only to join clips, mix music or record narration |
+| **FFmpeg** *(optional)* | Mac: `brew install ffmpeg` · Windows: `winget install Gyan.FFmpeg` — needed only to join clips, mix music or record narration |
 | **A Google AI Studio key** *(optional, free)* | Only for the Google narration voices. See below |
 
 A display must stay awake: the Chrome window is really being driven, so the machine cannot be
@@ -41,9 +41,12 @@ npm install
 npm run build
 ```
 
-> **Do not put this folder in `~/Desktop`, `~/Documents` or `~/Downloads`.** macOS protects those
+> **Mac: do not put this folder in `~/Desktop`, `~/Documents` or `~/Downloads`.** macOS protects those
 > folders, and apps that launch the server from there can be refused permission to read its own
 > files (`EPERM: operation not permitted`). `~/flow-mcp` or anywhere in your home folder is fine.
+>
+> **Windows: keep it out of folders OneDrive syncs** (often Desktop and Documents), where files can be held
+> online-only. `C:\Users\<you>\flow-mcp` is fine.
 
 Then sign in, once:
 
@@ -66,7 +69,9 @@ everyday browser.
 claude mcp add flow -- node /absolute/path/to/flow-mcp/dist/index.js
 ```
 
-**Claude Desktop** — add to `claude_desktop_config.json`:
+**Claude Desktop** — add to `claude_desktop_config.json` (Mac: `~/Library/Application Support/Claude/`, Windows:
+`%APPDATA%\Claude\`). On Windows, write the path with doubled backslashes, like
+`"C:\\Users\\you\\flow-mcp\\dist\\index.js"`:
 
 ```json
 { "mcpServers": { "flow": { "command": "node", "args": ["/absolute/path/to/flow-mcp/dist/index.js"] } } }
@@ -104,7 +109,7 @@ The same features, without Claude in the loop:
 npm run studio     # then open http://127.0.0.1:8787
 ```
 
-or double-click **Flow Studio.command**.
+or double-click **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows).
 
 Seven tabs, in the order you would use them: **Cast** (reusable characters) → **Frames** (free
 stills, with *match previous frame* to keep a set on-model) → **Shots** (paid clips, with first/last
@@ -156,15 +161,11 @@ Output lands in `~/flow-mcp-out/<project>/scene-NN.ext`.
 
 ### Narration with Google's voices (optional)
 
-`flow_narrate` with `engine: "mac"` works out of the box. For Google's voices — the same ones Flow
-offers — get a free key from [Google AI Studio](https://aistudio.google.com/apikey) and save it
-yourself:
-
-```bash
-echo "YOUR_KEY" > ~/.flow-mcp/gemini-key
-```
-
-or set `GEMINI_API_KEY`. The key never passes through Claude.
+`flow_narrate` with `engine: "mac"` uses your computer's own voices and works out of the box — macOS voices on a
+Mac, the built-in speech voices on Windows. For Google's voices — the same ones Flow offers — get a free key from
+[Google AI Studio](https://aistudio.google.com/apikey) and paste it into **Flow Studio → Voice → Google AI Studio
+key → Save key**. It's checked with Google before it's saved, and stored only on your computer. Or set
+`GEMINI_API_KEY`. Either way, never paste the key into a chat — it would end up in the conversation history.
 
 ---
 
@@ -182,7 +183,7 @@ or set `GEMINI_API_KEY`. The key never passes through Claude.
 
 | Symptom | Cause |
 |---|---|
-| The server will not start, `EPERM: operation not permitted` | The folder is in a macOS-protected location. Move it out of `~/Desktop`, `~/Documents` or `~/Downloads` and update the path in your Claude config |
+| Mac: the server will not start, `EPERM: operation not permitted` | The folder is in a macOS-protected location. Move it out of `~/Desktop`, `~/Documents` or `~/Downloads` and update the path in your Claude config |
 | *"Not signed in"* or *"no project open"* | Run `npm run login`, sign in, open a Flow project, leave the window open |
 | A clip generated but no file arrived | The media is still in Flow. `flow_download` pulls it back for nothing — never re-generate and pay twice |
 | Everything times out | The Chrome window was closed, or the machine slept. Reopen it with `npm run login` |

@@ -1,10 +1,10 @@
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
 import { HOME_DIR, getFlowPage } from "./chrome.js";
 import type { Job } from "./queue.js";
+import { extractZip } from "./platform.js";
 
 export interface FlowState {
   url: string;
@@ -452,13 +452,9 @@ function extensionOf(file: string): string {
 // every take is usable instead of one unplayable archive. The ZIP is kept beside them, renamed, in case it is wanted.
 function unpackTakes(zip: string, targetStem: string): string[] {
   const work = mkdtempSync(join(tmpdir(), "flow-takes-"));
-  execFileSync("unzip", ["-o", "-j", "-q", zip, "-d", work]);
-  const takes = readdirSync(work)
-    .filter((f) => !f.startsWith(".") && statSync(join(work, f)).isFile())
-    .sort();
+  const takes = extractZip(zip, work).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const out: string[] = [];
-  for (const [i, f] of takes.entries()) {
-    const path = join(work, f);
+  for (const [i, path] of takes.entries()) {
     const dest = `${targetStem}${i ? `-v${i + 1}` : ""}${extensionOf(path)}`;
     renameSync(path, dest);
     out.push(dest);

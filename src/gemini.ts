@@ -66,10 +66,10 @@ export async function speakWithGemini(text: string, voice: string, target: strin
       (placeholder
         ? `The key file still holds placeholder text, not a key.\n\n`
         : `No Gemini key yet.\n\n`) +
-        `1. Open aistudio.google.com and click "Get API key", then "Create API key".\n` +
+        `1. Open aistudio.google.com/apikey and click "Create API key".\n` +
         `2. Copy it — it starts with AIza and is about 39 characters.\n` +
-        `3. In your terminal, with your own key in place of the quoted text:\n` +
-        `   printf '%s' 'AIza…your real key…' > ${KEY_FILE} && chmod 600 ${KEY_FILE}`,
+        `3. Paste it into Flow Studio: Voice tab -> Google AI Studio key -> Save key. It is checked with Google and saved\n` +
+        `   only on this computer - never paste it into a chat.`,
     );
   }
   const prompt = style ? `Say ${style}: ${text}` : text;

@@ -1,12 +1,13 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { assemble, localVoices, speakLocally } from "./assemble.js";
 import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemini.js";
 import { extractLastFrame } from "./chain.js";
 import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
+import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
 export const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out");
@@ -95,7 +96,7 @@ export const shapes = {
       .enum(["gemini", "mac"])
       .default("gemini")
       .describe(
-        "'gemini' uses Google AI Studio's text-to-speech - the same voices Flow has, free on the AI Studio tier, no length limit, needs a key in ~/.flow-mcp/gemini-key. 'mac' uses a voice installed on this Mac: free, instant, no key.",
+        "'gemini' uses Google AI Studio's text-to-speech - the same voices Flow has, free on the AI Studio tier, no length limit, needs a key in ~/.flow-mcp/gemini-key. 'mac' uses a voice installed on this computer (macOS voices on a Mac, the built-in speech voices on Windows): free, instant, no key.",
       ),
     text: z.string().min(1).max(400).describe("The line to speak. About 20 words fits 8 s, 30 words fits 12 s; anything longer needs a longer take."),
     voice: z.string().min(1).default("Charon").describe("Voice name from flow_voices, e.g. Charon (informative), Aoede (breezy), Gacrux (mature) for Google; Zoe or Samantha for macOS."),
@@ -137,7 +138,7 @@ export const shapes = {
   },
   trash: { name: z.string().min(1).describe("Exact title of the item to move to Flow's Trash, as listed by flow_assets.") },
   set_key: { key: z.string().min(1).max(200) },
-  discard: { path: z.string().min(1).describe("A saved film, still, narration or whole project folder inside the films folder, to move to this Mac's Trash.") },
+  discard: { path: z.string().min(1).describe("A saved film, still, narration or whole project folder inside the films folder, to move to this computer's bin (Mac Trash, Windows Recycle Bin).") },
   outputs: {},
   characters: {},
   character_edit: {
@@ -430,16 +431,15 @@ export class LocalCore implements Core {
     return { output_dir, jobs: [jobView(job)] };
   }
 
-  // Moves a file or a project folder from the films folder to this Mac's Trash - recoverable from the Trash, never
+  // Moves a file or a project folder from the films folder to the system's bin - recoverable from there, never
   // erased. Anything outside the films folder is refused, so a bad path can never reach the rest of the Mac.
   async discard({ path }: Args<"discard">) {
     const target = resolve(path);
-    if (!target.startsWith(OUTPUT_ROOT + "/") || target === OUTPUT_ROOT) throw new Error("Only things inside your films folder can be moved to the Trash from here.");
+    // relative() works with either separator; a path that climbs out ("..") or lands on another drive is refused.
+    const rel = relative(OUTPUT_ROOT, target);
+    if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new Error("Only things inside your films folder can be moved to the bin from here.");
     if (!existsSync(target)) throw new Error("That file is already gone.");
-    const name = target.split("/").pop()!;
-    const dest = join(homedir(), ".Trash", existsSync(join(homedir(), ".Trash", name)) ? `${name.replace(/(\.[^.]+)?$/, `-${Date.now()}$1`)}` : name);
-    renameSync(target, dest);
-    return { trashed: target, to: dest };
+    return { trashed: target, to: moveToBin(target), bin: BIN };
   }
 
   async trash({ name }: Args<"trash">) {
@@ -473,7 +473,9 @@ export class LocalCore implements Core {
   }
 
   async voices() {
-    return { gemini: GEMINI_VOICES, gemini_ready: Boolean(geminiKey()), mac: await localVoices() };
+    // The panel words itself from these, so a PC never reads "this Mac".
+    const place = { computer: COMPUTER, bin: BIN, local_engine: IS_MAC ? "macOS voice" : IS_WIN ? "Windows voice" : "System voice", platform: process.platform };
+    return { gemini: GEMINI_VOICES, gemini_ready: Boolean(geminiKey()), mac: await localVoices(), place };
   }
 
   async narrate({ project, text, voice, engine, style }: Args<"narrate">) {
