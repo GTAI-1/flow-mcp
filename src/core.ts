@@ -61,7 +61,7 @@ export const shapes = {
   },
   cancel: { job_id: z.string() },
   retry: { job_ids: z.array(z.string()).optional().describe("Jobs to re-queue. Default: every failed job.") },
-  assets: { kind: z.enum(["image", "video"]).optional() },
+  assets: { kind: z.enum(["image", "video", "scene"]).optional() },
   download: {
     project: z.string().min(1).describe("Local folder name under the output root."),
     assets: z.array(z.string().min(1)).min(1).max(30).describe("Titles (or title prefixes) from flow_assets, in the order they should be numbered."),
@@ -72,6 +72,12 @@ export const shapes = {
     clips: z.array(z.string()).optional().describe("Absolute clip paths in play order. Default: every scene-NN.mp4 in the project folder (first variant of each)."),
     music: z.string().optional().describe("Absolute path to a music file; looped and trimmed to the film length."),
     music_volume: z.number().min(0).max(1).default(0.25),
+    clip_volume: z
+      .number()
+      .min(0)
+      .max(1)
+      .default(1)
+      .describe("Volume of the clips' own sound, 0-1. Lower it (around 0.2-0.3) so a narration sits clearly on top; 1 keeps it as recorded."),
     voiceover: z.string().optional().describe("Absolute path to a voiceover audio file, starts at 0:00."),
     output_name: z.string().default("final"),
     hold_last_frame: z.boolean().default(true).describe("Freeze the final frame so a longer voiceover is not cut off."),
@@ -325,7 +331,7 @@ export class LocalCore implements Core {
     let next = Math.max(0, ...readdirSync(dir).map((f) => Number(f.match(/^clip-(\d+)/)?.[1] ?? 0))) + 1;
     for (const name of assets) {
       try {
-        files.push(await downloadAsset(name, join(dir, `clip-${String(next++).padStart(2, "0")}`), quality));
+        files.push(...(await downloadAsset(name, join(dir, `clip-${String(next++).padStart(2, "0")}`), quality)));
       } catch (err) {
         throw new Error(`${err instanceof Error ? err.message : err} (downloaded so far: ${files.length})`);
       }

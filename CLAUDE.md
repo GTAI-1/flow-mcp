@@ -250,5 +250,21 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
 - Flow's "1080p Upscaled" download renders on demand and may simply never deliver (waited 7+ minutes twice on one
   clip, nothing). Do not block a delivery on it: take the 720p original and upscale locally with
   `scale=1920:1080:flags=lanczos` if a 1080p master is needed.
+- SCENES (mapped 2026-10-01, user-demonstrated): a scene is its own tile, `<flow-scene-tile>` with
+  `flow-multi-clip-video-player` + `flow-clip-filmstrip`. scanGrid used to call anything without `flow-video-tile` an
+  "image", so scenes showed as stills in the Library. Kind is now image | video | scene. A scene's TILE MENU
+  (Favorite, Rename, Copy, Download, Move to trash) has a Download with no submenu that hands back a ZIP of the loose
+  clips - not what anyone wants. The whole scene comes out of the SCENE VIEW: click the tile -> /project/<id>/scene/<uuid>
+  -> button `Download scene` -> page shows "Exporting your scene..." -> ONE stitched mp4 (29 s scene: a few seconds,
+  25.6 MB). Pressing Escape during the export cancelled it once, so downloadScene touches nothing until the file lands.
+- ZIP downloads: a tile holding several takes (x2-x4) also downloads as a ZIP. extensionOf() fell back to ".mp4" for
+  anything it did not recognise, so ZIPs were saved as clip-NN.mp4 and the Cut failed with "moov atom not found".
+  ZIPs are now detected (PK\x03\x04) and unpacked into <stem>.mp4, <stem>-v2.mp4 ... (the ZIP kept as -takes.zip);
+  unknown types get ".bin" instead of a misleading ".mp4". The download functions now return string[].
+- Cut tab (2026-10-01): it could only take clips from a project folder, with no way to choose a video, so a user with
+  one MP4 and a narration could not combine them. It now has "Video clips, in play order" (Upload a video, From my
+  films -> api outputs), passed as `clips` to assemble; empty = the old folder behaviour. Added `clip_volume` (0-1):
+  the clips' own sound played at full volume over the narration, only music had a level. Measured: 0.25 = -12.0 dB.
+  assemble now explains an unreadable clip by name and a missing project folder in words, instead of ffprobe output.
 - Tile menus carry Material icon ligatures in their labels now ("downloadDownload"), but the accessible name still
   computes as "Download", so getByRole(..., { exact: true }) keeps working. Verified, not assumed.

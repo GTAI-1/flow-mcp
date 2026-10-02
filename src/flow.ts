@@ -1,4 +1,5 @@
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
@@ -337,7 +338,7 @@ async function typePrompt(page: Page, prompt: string): Promise<void> {
 
 export type DownloadQuality = "original" | "upscaled";
 
-export async function downloadMedia(page: Page, mediaId: string, targetStem: string, quality: DownloadQuality = "original"): Promise<string> {
+export async function downloadMedia(page: Page, mediaId: string, targetStem: string, quality: DownloadQuality = "original"): Promise<string[]> {
   // A tile that has just finished rendering is still settling and the grid re-renders around it, so give it a moment.
   await scrollToTop(page);
   await pause(page, 2500);
@@ -441,7 +442,30 @@ function extensionOf(file: string): string {
   if (head.subarray(0, 4).toString("latin1") === "RIFF" && head.subarray(8, 12).toString("latin1") === "WEBP") return ".webp";
   if (head.subarray(4, 8).toString("latin1") === "ftyp") return ".mp4";
   if (head.subarray(0, 4).toString("latin1") === "GIF8") return ".gif";
-  return ".mp4";
+  // Flow hands back a ZIP when one tile holds several takes (a generation made at x2-x4): the takes come bundled.
+  if (head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04) return ".zip";
+  // Anything else is unknown. Naming it .mp4 (the old fallback) made two ZIPs look like broken videos and broke a cut.
+  return ".bin";
+}
+
+// Unpacks a multi-take ZIP into <stem>.mp4, <stem>-v2.mp4, ... - the same names a multi-variant generation gets - so
+// every take is usable instead of one unplayable archive. The ZIP is kept beside them, renamed, in case it is wanted.
+function unpackTakes(zip: string, targetStem: string): string[] {
+  const work = mkdtempSync(join(tmpdir(), "flow-takes-"));
+  execFileSync("unzip", ["-o", "-j", "-q", zip, "-d", work]);
+  const takes = readdirSync(work)
+    .filter((f) => !f.startsWith(".") && statSync(join(work, f)).isFile())
+    .sort();
+  const out: string[] = [];
+  for (const [i, f] of takes.entries()) {
+    const path = join(work, f);
+    const dest = `${targetStem}${i ? `-v${i + 1}` : ""}${extensionOf(path)}`;
+    renameSync(path, dest);
+    out.push(dest);
+  }
+  renameSync(zip, `${targetStem}-takes.zip`);
+  if (!out.length) throw new Error("Flow sent a ZIP with nothing usable inside it.");
+  return out;
 }
 
 // Flow titles clips itself and happily reuses a title: two takes of the same scene both came back as "Woman climbing
@@ -471,7 +495,7 @@ async function renameTile(page: Page, tile: Locator, title: string): Promise<boo
   }
 }
 
-async function downloadTile(page: Page, target: Locator | TileResolver, targetStem: string, quality: DownloadQuality): Promise<string> {
+async function downloadTile(page: Page, target: Locator | TileResolver, targetStem: string, quality: DownloadQuality): Promise<string[]> {
   await useOwnDownloadDir(page);
   const resolve: TileResolver = typeof target === "function" ? target : async () => target;
   let lastError: unknown;
@@ -504,11 +528,17 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
       }
       // Upscales are rendered on demand, so they can take minutes to appear.
       const file = await waitForDownloadedFile(page, before, quality === "upscaled" ? 600_000 : 180_000);
-      const target = `${targetStem}${extensionOf(file)}`;
-      renameSync(file, target);
+      const kind = extensionOf(file);
+      let saved: string[];
+      if (kind === ".zip") saved = unpackTakes(file, targetStem);
+      else {
+        const target = `${targetStem}${kind}`;
+        renameSync(file, target);
+        saved = [target];
+      }
       await page.keyboard.press("Escape");
       await scrollToTop(page);
-      return target;
+      return saved;
     } catch (err) {
       lastError = err;
       await page.keyboard.press("Escape").catch(() => {});
@@ -597,7 +627,7 @@ export async function runGeneration(job: Job): Promise<string[]> {
     if (renamed) job.note = [job.note, `renamed in Flow to ${basename(s.output_dir)}-${label}`].filter(Boolean).join(" · ");
     await pause(page, 800);
     const stem = join(s.output_dir, label);
-    files.push(await downloadMedia(page, id, stem, s.download_quality));
+    files.push(...(await downloadMedia(page, id, stem, s.download_quality)));
     await pause(page, 1500);
   }
   return files;
@@ -605,7 +635,7 @@ export async function runGeneration(job: Job): Promise<string[]> {
 
 export interface FlowAsset {
   name: string;
-  kind: "image" | "video";
+  kind: "image" | "video" | "scene";
   id?: string;
 }
 
@@ -622,7 +652,9 @@ async function scanGrid(page: Page, stopAt?: (assets: FlowAsset[]) => boolean): 
       (js) =>
         [...document.querySelectorAll("flow-grid-tile-container")].map((t) => ({
           name: t.getAttribute("aria-label") ?? "",
-          kind: t.querySelector("flow-video-tile") ? ("video" as const) : ("image" as const),
+          // A scene (several clips on one timeline) is its own tile type; lumping it in with images made it look
+          // like a still in the Library and download as a ZIP of loose clips.
+          kind: t.querySelector("flow-scene-tile") ? ("scene" as const) : t.querySelector("flow-video-tile") ? ("video" as const) : ("image" as const),
           id: (eval(js) as (t: Element) => string | undefined)(t),
         })),
       TILE_ID_JS,
@@ -740,14 +772,40 @@ export async function listAssets(): Promise<FlowAsset[]> {
 }
 
 // Downloads media that already exists in the project, matched by (the start of) its title.
-export async function downloadAsset(name: string, targetStem: string, quality: DownloadQuality): Promise<string> {
+export async function downloadAsset(name: string, targetStem: string, quality: DownloadQuality): Promise<string[]> {
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
   const matches = (a: FlowAsset) => a.name.toLowerCase().startsWith(name.toLowerCase());
   const found = (await scanGrid(page, (assets) => assets.some(matches))).find(matches);
   if (!found) throw new Error(`No asset whose title starts with "${name}". Use flow_assets to list titles.`);
+  if (found.kind === "scene") return downloadScene(page, found, targetStem);
   return downloadTile(page, tileOf(page, found), targetStem, quality);
+}
+
+// A scene's tile menu downloads a ZIP of its loose clips, which is not what anyone wants. The whole scene comes out as
+// ONE stitched file from inside the scene view: open the scene, press "Download scene", and Flow shows "Exporting your
+// scene..." before the file arrives (a 29 s scene took a few seconds). The user showed this route; verified 2026-10-01.
+// Nothing may be pressed while it exports - an Escape here cancelled an earlier attempt.
+async function downloadScene(page: Page, scene: FlowAsset, targetStem: string): Promise<string[]> {
+  await useOwnDownloadDir(page);
+  const tile = tileOf(page, scene);
+  await hoverTile(page, tile);
+  const box = await tile.boundingBox();
+  if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  else await tile.click();
+  await page.waitForURL(/\/scene\//, { timeout: 30_000 });
+  await pause(page, 3000);
+  const before = new Set<string>();
+  for (const dir of [DOWNLOAD_DIR, SYSTEM_DOWNLOADS]) if (existsSync(dir)) for (const f of readdirSync(dir)) before.add(`${dir}/${f}`);
+  await page.getByRole("button", { name: "Download scene", exact: true }).click();
+  const file = await waitForDownloadedFile(page, before, 600_000);
+  const target = `${targetStem}${extensionOf(file)}`;
+  renameSync(file, target);
+  await page.getByRole("button", { name: "Back button to go to previous page" }).click().catch(() => {});
+  await pause(page, 2000);
+  await ensureProjectGrid(page).catch(() => {});
+  return [target];
 }
 
 export interface CharacterParams {
@@ -933,10 +991,10 @@ export async function runEdit(job: Job): Promise<string[]> {
   await ensureProjectGrid(page);
   const fresh = await waitForNewMedia(page, before, 1, 90_000);
   mkdirSync(s.output_dir, { recursive: true });
-  const file = await downloadMedia(page, fresh[0], join(s.output_dir, s.file_stem), s.download_quality);
+  const saved = await downloadMedia(page, fresh[0], join(s.output_dir, s.file_stem), s.download_quality);
   const after = await readCredits(page).catch(() => undefined);
   if (balance !== undefined && after !== undefined) job.credits = balance - after;
-  return [file];
+  return saved;
 }
 
 // The agent session panel hides the composer, so a toggle attempted underneath it does nothing at all. Leaving agent
@@ -1111,7 +1169,7 @@ async function agentRound(
       const id = fresh[tileIndex].id!;
       await scanGrid(page, (seen) => seen.some((x) => x.id === id));
       const stem = join(s.output_dir, `scene-${String(base + sceneIndex).padStart(2, "0")}${v ? `-v${v + 1}` : ""}`);
-      files.push(await downloadTile(page, mediaTile(page, id), stem, s.download_quality ?? "original"));
+      files.push(...(await downloadTile(page, mediaTile(page, id), stem, s.download_quality ?? "original")));
       await pause(page, 800);
     }
     done.add(sceneIndex);
@@ -1221,10 +1279,10 @@ export async function runContinue(job: Job): Promise<string[]> {
     const fresh = await waitForNewMedia(page, before, 1, VIDEO_TIMEOUT_MS, job);
     job.progress = undefined;
     mkdirSync(s.output_dir, { recursive: true });
-    const file = await downloadMedia(page, fresh[0], join(s.output_dir, s.file_stem), s.download_quality);
+    const saved = await downloadMedia(page, fresh[0], join(s.output_dir, s.file_stem), s.download_quality);
     const after = await readCredits(page).catch(() => undefined);
     if (balance !== undefined && after !== undefined) job.credits = balance - after;
-    return [file];
+    return saved;
   } finally {
     // Leave the composer the way the rest of the driver expects to find it. Order matters: the session panel has to go
     // first and the grid has to be back, otherwise the toggles below are clicking at something that is not there.

@@ -73,6 +73,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--tally)}
 .slot .two{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
 .slot .two button{min-height:44px;padding:0 12px;font:700 15px var(--mono);color:var(--bone);background:var(--ink3);border:2px solid var(--line);border-radius:10px;cursor:pointer}
 .slot .two button:hover{border-color:var(--tally)}
+.cliplist{display:flex;flex-direction:column;gap:8px}
+.cliprow{display:flex;align-items:center;gap:12px;min-height:52px;padding:6px 8px 6px 14px;border:2px solid var(--line);border-radius:12px;background:var(--ink)}
+.cliprow b{font:800 18px var(--mono);color:var(--tally);min-width:1.5em}
+.cliprow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 15px var(--mono);color:var(--bone)}
+.cliprow button{flex:none;width:40px;height:40px;border-radius:50%;border:0;background:var(--bad);color:#fff;font:800 20px var(--body);cursor:pointer}
 .slot .x{position:absolute;top:6px;right:6px;width:36px;height:36px;border-radius:50%;border:0;background:var(--bad);color:#fff;font:800 20px var(--body);cursor:pointer;z-index:2}
 .check{display:flex;align-items:center;gap:14px;margin-top:18px;font-size:20px;cursor:pointer}
 .check input{width:30px;height:30px;accent-color:var(--tally)}
@@ -287,11 +292,20 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
         <p class="lede">Join a project's clips in order, keep their own sound, and lay music and narration over the top. If the narration runs longer than the footage, the last frame is held so nothing is cut off.</p>
         <div class="card">
           <label class="f">Project folder</label><input type="text" id="c_project" placeholder="MyFilm">
+          <label class="f">Video clips, in play order</label>
+          <div id="c_clips" class="cliplist"></div>
+          <div class="rowbtns" style="margin-top:8px">
+            <button type="button" class="btn small ghost" id="c_addup">Upload a video</button>
+            <button type="button" class="btn small ghost" id="c_addfilm">From my films</button>
+          </div>
+          <p class="empty" id="c_clipshint" style="margin-top:6px">Leave this empty to use every clip in the project folder above.</p>
           <div class="pickrow">
             <div><label class="f">Music</label><div class="slots"><div class="slot" data-slot="music" data-i="0"></div></div></div>
             <div><label class="f">Narration</label><div class="slots"><div class="slot" data-slot="voiceover" data-i="0"></div></div></div>
           </div>
           <label class="f">Music volume <span id="c_volOut">25%</span></label><input type="range" id="c_vol" min="0" max="100" value="25">
+          <label class="f">Clip sound <span id="c_clipVolOut">100%</span></label><input type="range" id="c_clipvol" min="0" max="100" value="100">
+          <p class="empty" style="margin-top:4px">The clips' own audio. Turn it down to around 20–30% so the narration sits on top.</p>
           <label class="check"><input type="checkbox" id="c_hold" checked>Hold the last frame until the narration finishes</label>
           <div class="rowbtns"><button class="btn" id="c_go">Assemble film</button></div>
           <div id="c_out" style="margin-top:16px"></div>
@@ -360,7 +374,7 @@ const DEFAULTS = {
   frames: { project: "MyFilm", aspect: "16:9", variants: 1, engine: "exact", scenes: [blank()] },
   shots: { project: "MyFilm", model: "Omni 1.1 Flash", aspect: "16:9", duration: 8, resolution: "720p", variants: 1, quality: "original", max: 25, scenes: [blank()] },
   narrate: { project: "MyFilm", engine: "gemini", geminiVoice: "Charon", macVoice: "Zoe (Premium)", text: "", style: "" },
-  cut: { project: "MyFilm", music: null, voiceover: null, hold: true },
+  cut: { project: "MyFilm", music: null, voiceover: null, hold: true, clips: [] },
 };
 const S = Object.assign(structuredClone(DEFAULTS), JSON.parse(localStorage.getItem("flow-studio-v2") || "{}"));
 const save = () => localStorage.setItem("flow-studio-v2", JSON.stringify(S));
@@ -413,6 +427,7 @@ function slotHtml(kind, i, val, label) {
 function setSlot(kind, idx, val) {
   if (kind === "cast") castImage = val;
   else if (kind === "music" || kind === "voiceover") S.cut[kind] = val;
+  else if (kind === "clip") { (S.cut.clips ??= []); if (val) S.cut.clips.push(val); }
   else if (kind.startsWith("ref")) { const [, group, i, j] = kind.split(":"); const sc = S[group].scenes[+i]; val ? (sc.refs[+j] = val) : sc.refs.splice(+j, 1); }
   else { const [, group, i] = kind.split(":"); S[group].scenes[+i][kind.startsWith("first") ? "first" : "last"] = val; }
   save(); renderAll();
@@ -437,6 +452,7 @@ $("#file").addEventListener("change", async (e) => {
   } catch (err) { toast(err.message, true); }
 });
 async function openPicker(audioOnly) {
+  $("#picker h2").textContent = "Pick from Flow"; $("#picker p.empty").textContent = "Media already in the open Flow project.";
   $("#pickList").innerHTML = `<p class="empty">Reading your Flow project…</p>`; picker.showModal();
   if (audioOnly) { $("#pickList").innerHTML = `<p class="empty">Narration and music come from the Voice tab or an upload — Flow media is images and video only.</p>`; return; }
   try {
@@ -657,13 +673,32 @@ $("#k_go").onclick = async () => {
 };
 
 /* ---------- cut ---------- */
+function renderClips() {
+  const list = S.cut.clips ?? [];
+  $("#c_clips").innerHTML = list.map((c, i) => `<div class="cliprow"><b>${i + 1}</b><span title="${esc(c.path)}">${esc(c.name)}</span><button type="button" data-clipdel="${i}" aria-label="Remove ${esc(c.name)}">×</button></div>`).join("");
+  $("#c_clipshint").textContent = list.length ? "Only these clips are used, in this order." : "Leave this empty to use every clip in the project folder above.";
+}
+$("#c_clips").addEventListener("click", (e) => { const b = e.target.closest("[data-clipdel]"); if (!b) return; S.cut.clips.splice(+b.dataset.clipdel, 1); save(); renderClips(); });
+$("#c_addup").onclick = () => { pickTarget = { kind: "clip", i: 0 }; $("#file").accept = "video/*"; $("#file").click(); };
+$("#c_addfilm").onclick = async () => {
+  if (!guard()) return;
+  $("#picker h2").textContent = "Pick from my films"; $("#picker p.empty").textContent = "Videos already saved on this Mac.";
+  $("#pickList").innerHTML = `<p class="empty">Reading your films…</p>`; picker.showModal();
+  try {
+    const { projects } = await api("outputs");
+    const vids = projects.flatMap((p) => p.files.filter((f) => f.kind === "video").map((f) => ({ path: f.path, name: `${p.name} / ${f.name}` })));
+    $("#pickList").innerHTML = vids.map((v) => `<button data-film="${esc(v.path)}" data-name="${esc(v.name)}"><span>${esc(v.name)}</span><em>video</em></button>`).join("") || `<p class="empty">No saved videos yet.</p>`;
+  } catch (err) { $("#pickList").innerHTML = `<p class="empty" style="color:var(--bad)">${esc(err.message)}</p>`; }
+};
+$("#pickList").addEventListener("click", (e) => { const b = e.target.closest("button[data-film]"); if (!b) return; (S.cut.clips ??= []).push({ path: b.dataset.film, name: b.dataset.name }); save(); renderClips(); picker.close(); });
 $("#c_vol").oninput = (e) => ($("#c_volOut").textContent = e.target.value + "%");
+$("#c_clipvol").oninput = (e) => ($("#c_clipVolOut").textContent = e.target.value + "%");
 $("#c_hold").onchange = (e) => { S.cut.hold = e.target.checked; save(); };
 $("#c_go").onclick = async () => {
   if (!guard()) return;
   const b = $("#c_go"); b.disabled = true; b.textContent = "Cutting…";
   try {
-    const out = await api("assemble", { project: $("#c_project").value.trim() || "MyFilm", music: S.cut.music?.path, voiceover: S.cut.voiceover?.path, music_volume: +$("#c_vol").value / 100, hold_last_frame: $("#c_hold").checked, output_name: "final" });
+    const out = await api("assemble", { project: $("#c_project").value.trim() || "MyFilm", clips: S.cut.clips?.length ? S.cut.clips.map((c) => c.path) : undefined, music: S.cut.music?.path, voiceover: S.cut.voiceover?.path, music_volume: +$("#c_vol").value / 100, clip_volume: +$("#c_clipvol").value / 100, hold_last_frame: $("#c_hold").checked, output_name: "final" });
     $("#c_out").innerHTML = `<video controls playsinline src="${media(out.output)}&t=${Date.now()}" style="width:100%;border-radius:12px;background:#000"></video>
       <p class="empty" style="margin-top:8px">${out.clips.length} clip(s) · ${out.duration.toFixed(1)}s${out.held_last_frame ? ` · last frame held ${out.held_last_frame}s for the narration` : ""}<br>${esc(out.output)}</p>`;
     loadGallery();
@@ -815,6 +850,7 @@ function renderAll() {
   if (mus) mus.outerHTML = slotHtml("music", 0, S.cut.music, "Music track");
   if (vo) vo.outerHTML = slotHtml("voiceover", 0, S.cut.voiceover, "Narration");
   $("#c_hold").checked = S.cut.hold;
+  renderClips();
   if ($("#n_style")) $("#n_style").value = S.narrate.style ?? "";
   estimate(); save();
 }

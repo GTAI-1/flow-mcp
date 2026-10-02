@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -12,6 +12,7 @@ export interface AssembleOptions {
   clips?: string[];
   music?: string;
   music_volume: number;
+  clip_volume?: number;
   voiceover?: string;
   output_name: string;
   hold_last_frame?: boolean;
@@ -25,7 +26,10 @@ interface ClipInfo {
 }
 
 async function probe(file: string): Promise<ClipInfo> {
-  const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "stream=codec_type,width,height:format=duration", "-of", "json", file]);
+  // A raw ffprobe dump ("moov atom not found") told the user nothing. Say which file and what to do about it.
+  const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "stream=codec_type,width,height:format=duration", "-of", "json", file]).catch(() => {
+    throw new Error(`"${basename(file)}" isn't a playable video - it may be an unfinished download or a ZIP of several clips. Remove it, or pick other clips.`);
+  });
   const data = JSON.parse(stdout) as { streams: { codec_type: string; width?: number; height?: number }[]; format: { duration: string } };
   const video = data.streams.find((s) => s.codec_type === "video");
   if (!video?.width || !video.height) throw new Error(`${file} has no video stream.`);
@@ -40,6 +44,9 @@ async function probe(file: string): Promise<ClipInfo> {
 // Clips are normally scene-NN.mp4, but a film can also be cut from clips pulled out of Flow (clip-NN) or restyled
 // ones (edit-NN). Narration takes and previously assembled films are never treated as footage.
 function defaultClips(dir: string): string[] {
+  if (!existsSync(dir)) {
+    throw new Error(`There's no "${basename(dir)}" folder in your films yet. Add clips with "Upload a video" or "From my films", or type the name of a folder that already has clips in it.`);
+  }
   const files = readdirSync(dir).filter((f) => /\.mp4$/i.test(f) && !/^narration-/i.test(f));
   const numbered = new Map<string, string>();
   for (const f of files.sort()) {
@@ -86,6 +93,8 @@ export async function speakLocally(text: string, voice: string, target: string):
 
 // Joins the scene clips into one film, keeping their own sound and laying music / voiceover on top.
 export async function assemble(o: AssembleOptions): Promise<{ output: string; clips: string[]; duration: number; held_last_frame: number }> {
+  // Clips can now come from anywhere, so the project folder the film is saved into may not exist yet.
+  if (o.clips?.length) mkdirSync(o.dir, { recursive: true });
   const out = join(o.dir, o.output_name.replace(/[^\w.-]+/g, "_").replace(/(\.mp4)?$/, ".mp4"));
   const clips = (o.clips?.length ? o.clips : defaultClips(o.dir)).filter((c) => c !== out);
   if (!clips.length) throw new Error(`No clips found in ${o.dir}. Generate or download a clip first, or pass clips explicitly.`);
@@ -103,6 +112,9 @@ export async function assemble(o: AssembleOptions): Promise<{ output: string; cl
   const args: string[] = ["-y"];
   for (const clip of clips) args.push("-i", clip);
   const filters: string[] = [];
+  // The clips' own sound used to play at full volume no matter what, drowning a narration laid on top. Music already
+  // had its own level; the clips now do too.
+  const clipVolume = Math.min(1, Math.max(0, o.clip_volume ?? 1));
   infos.forEach((info, i) => {
     const freeze = hold > 0.05 && i === infos.length - 1 ? `,tpad=stop_mode=clone:stop_duration=${hold.toFixed(2)}` : "";
     filters.push(
@@ -110,7 +122,7 @@ export async function assemble(o: AssembleOptions): Promise<{ output: string; cl
     );
     filters.push(
       info.hasAudio
-        ? `[${i}:a]aresample=48000,aformat=channel_layouts=stereo${hold > 0.05 && i === infos.length - 1 ? `,apad=pad_dur=${hold.toFixed(2)}` : ""}[a${i}]`
+        ? `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,volume=${clipVolume}${hold > 0.05 && i === infos.length - 1 ? `,apad=pad_dur=${hold.toFixed(2)}` : ""}[a${i}]`
         : `anullsrc=r=48000:cl=stereo,atrim=duration=${(info.duration + (i === infos.length - 1 ? hold : 0)).toFixed(2)}[a${i}]`,
     );
   });
