@@ -8,7 +8,7 @@
 
 **There is no website, no cloud service, and no account to sign up for.**
 
-Everything here is a small program sitting on your own Mac, in the folder
+Everything here is a small program sitting on your own computer — a Mac or a Windows PC — in the folder
 `~/flow-mcp`. When it runs, it opens a private Chrome window, signs into Google
 Flow as you, and clicks Flow's real buttons — the same ones you'd click
 yourself. Nothing is hosted anywhere else. Nothing leaves your machine except
@@ -16,8 +16,9 @@ the ordinary traffic between that Chrome window and Google.
 
 Three abbreviations you'll see, spelled out once:
 
-- **MCP — Model Context Protocol.** The standard that lets Claude use outside
-  tools. The program on your Mac speaks it, which is how Claude can operate
+- **MCP — Model Context Protocol.** The standard that lets an AI assistant use
+  outside tools. Claude uses it, and so does Codex, OpenAI's coding assistant.
+  The program on your computer speaks it, which is how either one can operate
   Flow on your behalf.
 - **CDP — Chrome DevTools Protocol.** A remote-control channel that Chrome
   already ships with, normally used by developers to inspect pages. The program
@@ -28,8 +29,8 @@ Three abbreviations you'll see, spelled out once:
 
 ### How a request travels
 
-1. You ask Claude for something, or you click a button in the control panel.
-2. The program on your Mac receives it and works out the exact steps.
+1. You ask Claude or Codex for something, or you click a button in the control panel.
+2. The program on your computer receives it and works out the exact steps.
 3. It drives the private Chrome window — typing the prompt, choosing the
    settings, pressing generate, waiting, and saving the finished file to
    `~/flow-mcp-out`.
@@ -37,6 +38,20 @@ Three abbreviations you'll see, spelled out once:
 No browser extension is involved, and your everyday Chrome is never touched —
 the program uses its own separate Chrome profile so your normal browsing,
 logins and tabs stay untouched.
+
+### Which assistants it works with
+
+- **Claude** — in Claude Code or the Claude app. This is what it was built and tested with.
+- **Codex** — OpenAI's coding assistant. It works the same way, because it speaks the same standard. One
+  setting matters: Codex gives up on any single step after 60 seconds, and some steps here take longer
+  (making a character, a high-quality download, waiting on a video), so the setup guide gives it more
+  time. It hasn't been tried with Codex yet.
+- **Other apps that support MCP**, like Cursor and VS Code, use the same setup.
+- **Not ChatGPT in the browser or the ChatGPT app.** Those can only reach tools on the internet, and this
+  one has to run on your own computer, because it drives the Chrome window there.
+- **No assistant at all** — the control panel does everything on its own.
+
+Mac is the tested platform. Windows support is new and hasn't been tried on a real PC yet.
 
 ---
 
@@ -81,13 +96,13 @@ This is a limit in Flow itself, not something we can program around. The exact j
 | Name | What it does |
 |---|---|
 | **Library Browser** | Everything sitting in your Flow project |
-| **Free Re-download** | Pulls any of it back onto your Mac at no cost — including the free upgrade to 1080p for video or 2K for stills |
+| **Free Re-download** | Pulls any of it back onto your computer at no cost — including the free upgrade to 1080p for video or 2K for stills |
 
 ### Sound and final cut
 
 | Name | What it does |
 |---|---|
-| **Voiceover Recorder** | Narration for free, at any length. Either Google AI Studio's text-to-speech — the same voices Flow has, and you can tell it *how* to read the line — or a voice already installed on your Mac |
+| **Voiceover Recorder** | Narration for free, at any length. Either Google AI Studio's text-to-speech — the same voices Flow has, and you can tell it *how* to read the line — or a voice already on your computer (macOS voices on a Mac, Windows' own voices on a PC) |
 | **Voice List** | Every narrator available to you |
 | **Film Cutter** | Joins your clips into one film using FFmpeg, a free video toolkit. Adds a looping music bed, lays the narration on top, sizes everything to match your best clip, and can hold the last frame if the voice runs longer than the footage |
 
@@ -95,8 +110,8 @@ This is a limit in Flow itself, not something we can program around. The exact j
 
 ## The control panel
 
-A web page served by that same program, reachable only from your own Mac.
-Start it by double-clicking **Flow Studio.command** in the project folder.
+A web page served by that same program, reachable only from your own computer.
+Start it by double-clicking **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows) in the project folder.
 
 Seven tabs, in the order you'd use them:
 
@@ -159,9 +174,9 @@ only falls back to one-at-a-time as a last resort.
 - Cut it all together with music and voice
 - Restyle footage you already paid for
 - Re-download at higher quality for nothing
-- Run all of it from the panel, without Claude involved
+- Run all of it from the panel, without any AI assistant involved
 
-**Not covered:** Flow's own clip-stitching (the cut happens on your Mac
+**Not covered:** Flow's own clip-stitching (the cut happens on your computer
 instead), its "improve prompt" button, and 4K — your plan blocks that one.
 
 ---
@@ -181,7 +196,7 @@ The same goes for a job that seems to vanish while it is running. What Flow is h
 | The program | `~/flow-mcp` |
 | Finished films and stills | `~/flow-mcp-out/<project name>` |
 | The private Chrome profile | `~/.flow-mcp/chrome-profile` |
-| The control panel | Started by **Flow Studio.command**, opens on your Mac only |
+| The control panel | Started by **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows), opens on your computer only |
 | Sign in to Flow by hand | `npm run login` in the project folder |
 
 Your Google password is never typed by the program — you sign in yourself, once,
