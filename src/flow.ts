@@ -389,6 +389,13 @@ async function useOwnDownloadDir(page: Page): Promise<void> {
 // Chrome's own Downloads folder, where files land whenever the override above has been reset out from under us.
 const SYSTEM_DOWNLOADS = join(homedir(), "Downloads");
 
+// Everything already sitting in either folder, so a new arrival can be told apart from what was there before.
+function downloadsNow(): Set<string> {
+  const seen = new Set<string>();
+  for (const dir of [DOWNLOAD_DIR, SYSTEM_DOWNLOADS]) if (existsSync(dir)) for (const f of readdirSync(dir)) seen.add(`${dir}/${f}`);
+  return seen;
+}
+
 // Waits for a file to finish arriving in our download directory and returns it.
 async function waitForDownloadedFile(page: Page, before: Set<string>, timeoutMs: number): Promise<string> {
   const deadline = Date.now() + timeoutMs;
@@ -498,10 +505,7 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const tile = await resolve();
-      const before = new Set<string>();
-      for (const dir of [DOWNLOAD_DIR, SYSTEM_DOWNLOADS]) {
-        if (existsSync(dir)) for (const f of readdirSync(dir)) before.add(`${dir}/${f}`);
-      }
+      const before = downloadsNow();
       // Flow only shows a tile's toolbar for a real pointer move over it - Playwright's hover() does not trigger it.
       // The toolbar's "More options" beats a right-click, which can land on the <video> and raise Chrome's own menu.
       await hoverTile(page, tile);
@@ -694,11 +698,50 @@ export async function listCharacters(): Promise<string[]> {
   );
 }
 
+// A run that stopped half-way leaves Flow inside a character's editor, where the project navigation is gone. Done keeps
+// whatever is on screen - leaving any other way could drop a finished edit - and then the grid is put back.
+async function leaveCharacterEditor(page: Page): Promise<void> {
+  if (/\/character(\/|$)/.test(new URL(page.url()).pathname)) {
+    await page.getByRole("button", { name: /^Done( editing)?$/ }).first().click({ timeout: 5000 }).catch(() => {});
+    await page.waitForURL((u) => !/\/character/.test(u.pathname), { timeout: 10_000 }).catch(() => {});
+  }
+  await ensureProjectGrid(page).catch(() => {});
+}
+
+// The portrait's own toolbar (Download image, Delete image) sits invisible with pointer events off until a real pointer
+// moves over the picture - the same rule as grid tiles - so a plain click lands on the image and times out. That, plus
+// Playwright's download event, is why an edit that worked never reached disk (2026-10-02). Point at the picture, then
+// download through the same watched folders as every other file.
+async function savePortrait(page: Page, name: string): Promise<string> {
+  await useOwnDownloadDir(page);
+  const dir = join(process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out"), "_cast");
+  mkdirSync(dir, { recursive: true });
+  const picture = page.getByRole("img", { name: "Generated character image" }).first();
+  const button = page.getByRole("button", { name: "Download image", exact: true });
+  const before = downloadsNow();
+  let pressed = false;
+  for (let attempt = 0; attempt < 3 && !pressed; attempt++) {
+    await hoverTile(page, picture);
+    pressed = await button.click({ timeout: 4000 }).then(
+      () => true,
+      () => false,
+    );
+  }
+  if (!pressed) throw new Error("Flow never showed the portrait's Download image button");
+  const file = await waitForDownloadedFile(page, before, 90_000);
+  const portrait = join(dir, `${name.replace(/[^\w.-]+/g, "_")}${extensionOf(file)}`);
+  renameSync(file, portrait);
+  return portrait;
+}
+
 // Opens an existing character and restyles its portrait in place (Nano Banana, free) instead of making a new one.
-export async function editCharacter(name: string, change: string, job?: Job): Promise<{ name: string; portrait?: string }> {
+// Without a change it only saves the character's current portrait: for a look changed by hand in Flow, or an edit whose
+// portrait never reached disk.
+export async function editCharacter(name: string, change?: string, job?: Job): Promise<{ name: string; portrait?: string; note?: string }> {
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
+  await leaveCharacterEditor(page);
   await dismissOverlays(page);
   await page.getByRole("navigation", { name: "Project navigation" }).getByText("Characters", { exact: true }).click();
   await pause(page, 2500);
@@ -710,52 +753,49 @@ export async function editCharacter(name: string, change: string, job?: Job): Pr
   await page.waitForURL(/\/character\/[0-9a-f-]{36}/, { timeout: 20_000 });
   await pause(page, 2000);
 
-  const portraitImg = page.getByRole("img", { name: "Generated character image" }).first();
-  const before = await portraitImg.getAttribute("src").catch(() => null);
+  if (change) {
+    const portraitImg = page.getByRole("img", { name: "Generated character image" }).first();
+    const before = await portraitImg.getAttribute("src").catch(() => null);
 
-  const box = page.locator(".ProseMirror").last();
-  await box.click();
-  await page.keyboard.press("ControlOrMeta+a");
-  await page.keyboard.press("Delete");
-  await page.keyboard.type(change.replace(/\s*\n+\s*/g, " ").trim(), { delay: 8 });
-  await pause(page, 600);
-  const start = page.getByRole("button", { name: "Start generation" });
-  if (!(await start.isEnabled())) throw new Error("Flow did not accept the change (Start generation stayed disabled).");
-  await start.click();
+    const box = page.locator(".ProseMirror").last();
+    await box.click();
+    await page.keyboard.press("ControlOrMeta+a");
+    // Delete leaves a full selection standing in this editor; Backspace clears it (mapped 2026-10-02).
+    await page.keyboard.press("Backspace");
+    // The character editor always draws a wide 16:9 picture (1376x768), whatever shape the portrait was. Told only "make
+    // his coat red", it filled the frame with three Pips side by side (2026-10-02), so every edit pins a single figure.
+    const told = `${change.replace(/\s*\n+\s*/g, " ").trim().replace(/[.\s]*$/, ".")} Exactly one ${name} in the picture: never add copies of ${name} or extra poses side by side.`;
+    await page.keyboard.type(told, { delay: 8 });
+    await pause(page, 600);
+    const start = page.getByRole("button", { name: "Start generation" });
+    if (!(await start.isEnabled())) throw new Error("Flow did not accept the change (Start generation stayed disabled).");
+    await start.click();
 
-  const deadline = Date.now() + 4 * 60_000;
-  for (;;) {
-    await pause(page, 3000);
-    const now = await portraitImg.getAttribute("src").catch(() => null);
-    const pct = (await page.locator("main").first().innerText()).match(/\d+%/)?.[0];
-    if (job) job.progress = pct;
-    if (now && now !== before && !pct) break;
-    if (Date.now() > deadline) throw new Error("Timed out waiting for Flow to redraw the character.");
+    const deadline = Date.now() + 4 * 60_000;
+    for (;;) {
+      await pause(page, 3000);
+      const now = await portraitImg.getAttribute("src").catch(() => null);
+      const pct = (await page.locator("main").first().innerText()).match(/\d+%/)?.[0];
+      if (job) job.progress = pct;
+      if (now && now !== before && !pct) break;
+      if (Date.now() > deadline) throw new Error("Timed out waiting for Flow to redraw the character.");
+    }
+    if (job) job.progress = undefined;
   }
-  if (job) job.progress = undefined;
 
+  // From here on the edit is done in Flow. A failed download must never throw that away, so it becomes a note instead.
   let portrait: string | undefined;
-  const dir = join(process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out"), "_cast");
-  mkdirSync(dir, { recursive: true });
-  const download = page.waitForEvent("download", { timeout: 60_000 });
-  download.catch(() => {});
-  await page.getByRole("button", { name: "Download image" }).click();
-  const file = await download.catch(() => null);
-  if (file) {
-    portrait = join(dir, `${name.replace(/[^\w.-]+/g, "_")}${extname(file.suggestedFilename()) || ".jpeg"}`);
-    await file.saveAs(portrait).catch(async () => {
-      const temp = await file.path().catch(() => null);
-      if (temp && existsSync(temp)) copyFileSync(temp, portrait!);
-      else portrait = undefined;
-    });
+  let note: string | undefined;
+  try {
+    portrait = await savePortrait(page, name);
+  } catch (err) {
+    note = `${change ? `${name} was changed in Flow, but the new` : "The"} portrait could not be saved (${err instanceof Error ? err.message : String(err)}). Call flow_character_edit with just the name to save it.`;
   }
 
-  await page.getByRole("button", { name: /^Done( editing)?$/ }).first().click().catch(() => {});
-  await pause(page, 2000);
-  await ensureProjectGrid(page).catch(() => {});
+  await leaveCharacterEditor(page);
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
-  return { name, portrait };
+  return { name, portrait, note };
 }
 
 export async function listAssets(): Promise<FlowAsset[]> {
@@ -816,8 +856,7 @@ async function downloadScene(page: Page, scene: FlowAsset, targetStem: string): 
   else await tile.click();
   await page.waitForURL(/\/scene\//, { timeout: 30_000 });
   await pause(page, 3000);
-  const before = new Set<string>();
-  for (const dir of [DOWNLOAD_DIR, SYSTEM_DOWNLOADS]) if (existsSync(dir)) for (const f of readdirSync(dir)) before.add(`${dir}/${f}`);
+  const before = downloadsNow();
   await page.getByRole("button", { name: "Download scene", exact: true }).click();
   const file = await waitForDownloadedFile(page, before, 600_000);
   const target = `${targetStem}${extensionOf(file)}`;

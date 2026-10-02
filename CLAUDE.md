@@ -300,3 +300,25 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   `node dist/studio.js`; if Claude's process owns it, the new code waits for the user's next Claude restart.
 - Tile menus carry Material icon ligatures in their labels now ("downloadDownload"), but the accessible name still
   computes as "Download", so getByRole(..., { exact: true }) keeps working. Verified, not assumed.
+- CHARACTER EDITOR (mapped 2026-10-02, editing Pip's coat to red): (1) the portrait's toolbar (`Download image`,
+  `Delete image`) is `div.top-actions.hidden` - opacity 0, pointer-events none - until a REAL pointer moves over the
+  picture, so a plain click times out on `img.preview-image`; savePortrait moves the mouse there first and downloads
+  through the watched folders (the old `waitForEvent("download")` path is gone). (2) The editor ALWAYS draws 16:9
+  (1376x768), whatever the portrait's shape: "make his coat red" turned a tall single Pip into THREE Pips side by side.
+  editCharacter now appends "Exactly one <name> in the picture: never add copies...". (3) In its prompt box Ctrl/Cmd+A
+  then Delete does nothing; Backspace clears. (4) `Format` is NOT an aspect setting: it replaces the prompt with a stock
+  "studio shot of a person" template. (5) `Show history` lists every version with the prompt that made it.
+  editCharacter presses Done on a leftover editor before starting (leaving any other way could drop a finished edit),
+  never throws away a finished edit over a failed download (it returns a note), and with no `change` only re-saves the
+  portrait. The stored look (characters.json) is quoted word for word in every scene's CHARACTER LOCK, so
+  flow_character_edit takes `look` (the full new description); without it the change is appended "and this wins".
+- ONE-MINUTE TOOL LIMIT: the desktop app's Code tab gives up on an MCP call after 60 s ("Request timed out", measured
+  60.6 s on a character edit that went on to finish), and Codex does by default - while flow_wait defaulted to 240 s.
+  That is every "Request timed out" in these sessions, and part of the 30-credit double spend. index.ts `patient()` now
+  answers within 45 s (FLOW_MCP_PATIENCE_MS): a slower call returns `still_working` + `task_id`, keeps running, and
+  flow_wait (job_ids may hold task ids) collects it; flow_wait itself returns within 40 s; flow_status lists
+  `slow_calls`. Verified: a 3 s limit on flow_characters -> task id at 3.0 s, collected by flow_wait 1 s later.
+- TESTING NEW CODE WITHOUT TOUCHING CLAUDE'S PROCESS: start `dist/index.js` from an MCP client script with
+  FLOW_MCP_PORT=8799 and FLOW_MCP_HOME=<scratch dir>. Never reuse the real home for that: a process that owns a port
+  writes a fresh token to HOME/token, which locks every client of the real owner out (401). Symlink characters.json into
+  the scratch home when looks must persist. Give the client a 60 s request timeout so the app's limit is reproduced.

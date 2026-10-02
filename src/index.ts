@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { LocalCore, shapes, type Core } from "./core.js";
@@ -24,6 +25,65 @@ const reply = async (work: Promise<unknown>, extra: object = {}): Promise<ToolRe
   }
 };
 
+// Most AI apps stop waiting on a tool after about a minute (the MCP default, and Codex's), but Flow is often slower: a
+// character edit takes one to two minutes. The work carried on while the app reported "Request timed out", so finished
+// work looked failed - and a shot was once paid for twice. No call holds on longer than this now; anything slower hands
+// back a task id and keeps going, and flow_wait collects the answer.
+// FLOW_MCP_PATIENCE_MS lowers it for an app with a shorter limit (and lets a test reach the slow path quickly).
+const PATIENCE_MS = Number(process.env.FLOW_MCP_PATIENCE_MS ?? 45_000);
+const WAIT_MS = Math.max(5_000, PATIENCE_MS - 5_000);
+type Task = { task_id: string; tool: string; started: string; status: "running" | "done" | "failed"; result?: unknown; error?: string };
+const tasks = new Map<string, Task>();
+
+const patient = async (tool: string, work: Promise<unknown>): Promise<unknown> => {
+  const task: Task = { task_id: `task-${randomUUID().slice(0, 8)}`, tool, started: new Date().toISOString(), status: "running" };
+  const settled = work.then(
+    (result) => {
+      task.status = "done";
+      task.result = result;
+    },
+    (err) => {
+      task.status = "failed";
+      task.error = err instanceof Error ? err.message : String(err);
+    },
+  );
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<"late">((r) => (timer = setTimeout(() => r("late"), PATIENCE_MS)));
+  const first = await Promise.race([settled.then(() => "settled" as const), late]);
+  clearTimeout(timer);
+  if (first === "settled") return work;
+  tasks.set(task.task_id, task);
+  return {
+    still_working: true,
+    task_id: task.task_id,
+    note: `Flow is still on it - this is not a failure. Call flow_wait with job_ids ["${task.task_id}"] for the result, and do not call ${tool} again: the work has not stopped.`,
+  };
+};
+
+// Task ids are answered from here, queued job ids by the queue; either way the call comes back inside the app's limit.
+async function waitFor({ job_ids, timeout_seconds }: { job_ids?: string[]; timeout_seconds: number }): Promise<unknown> {
+  const deadline = Date.now() + Math.min(timeout_seconds * 1000, WAIT_MS);
+  const isTask = (id: string) => tasks.has(id) || id.startsWith("task-");
+  const mine = (job_ids ?? []).filter(isTask);
+  const jobs = job_ids?.filter((id) => !isTask(id));
+  while (Date.now() < deadline && mine.some((id) => tasks.get(id)?.status === "running")) await new Promise((r) => setTimeout(r, 1000));
+  // A task id this process never issued belongs to a tool process that has since restarted: its answer is gone, but the
+  // work may well have happened, so say that instead of reporting it finished.
+  const done = mine.map(
+    (id) =>
+      tasks.get(id) ?? {
+        task_id: id,
+        status: "unknown",
+        note: "This tool restarted since that call, so its answer is lost. Check Flow (flow_assets, flow_characters) for what it did before running it again.",
+      },
+  );
+  const tasksFinished = done.every((t) => t.status !== "running");
+  if (mine.length && !jobs?.length) return { finished: tasksFinished, tasks: done };
+  const left = Math.max(5, Math.floor((deadline - Date.now()) / 1000));
+  const queued = (await core.wait({ job_ids: jobs, timeout_seconds: left })) as { finished: boolean };
+  return mine.length ? { ...queued, finished: queued.finished && tasksFinished, tasks: done } : queued;
+}
+
 server.registerTool(
   "flow_status",
   {
@@ -33,7 +93,7 @@ server.registerTool(
     inputSchema: shapes.status,
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
-  (args) => reply(core.status(args), { studio, playbook: PLAYBOOK }),
+  (args) => reply(core.status(args), { studio, playbook: PLAYBOOK, ...(tasks.size ? { slow_calls: [...tasks.values()].map(({ result, ...t }) => t) } : {}) }),
 );
 
 server.registerTool(
@@ -52,11 +112,12 @@ server.registerTool(
   "flow_wait",
   {
     title: "Wait for Flow jobs",
-    description: "Block until the given jobs (default: all) finish or the timeout passes, then return their status and file paths.",
+    description:
+      "Wait for queued jobs (default: all), or for the task_id of a call that answered still_working, then return their status, results and file paths. Comes back within about 40 s even when they are still running: call again until finished is true.",
     inputSchema: shapes.wait,
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
-  (args) => reply(core.wait(args)),
+  (args) => reply(waitFor(args)),
 );
 
 server.registerTool(
@@ -89,7 +150,7 @@ server.registerTool(
     inputSchema: shapes.assets,
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
-  (args) => reply(core.assets(args)),
+  (args) => reply(patient("flow_assets", core.assets(args))),
 );
 
 server.registerTool(
@@ -101,7 +162,7 @@ server.registerTool(
     inputSchema: shapes.download,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  (args) => reply(core.download(args)),
+  (args) => reply(patient("flow_download", core.download(args))),
 );
 
 server.registerTool(
@@ -137,7 +198,7 @@ server.registerTool(
     inputSchema: shapes.continue_shot,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  (args) => reply(core.continue_shot(args)),
+  (args) => reply(patient("flow_continue", core.continue_shot(args))),
 );
 
 server.registerTool(
@@ -149,7 +210,7 @@ server.registerTool(
     inputSchema: shapes.trash,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   },
-  (args) => reply(core.trash(args)),
+  (args) => reply(patient("flow_trash", core.trash(args))),
 );
 
 server.registerTool(
@@ -161,7 +222,7 @@ server.registerTool(
     inputSchema: shapes.character,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  (args) => reply(core.character(args)),
+  (args) => reply(patient("flow_character", core.character(args))),
 );
 
 server.registerTool(
@@ -169,11 +230,11 @@ server.registerTool(
   {
     title: "Restyle an existing character",
     description:
-      "Change how an existing character looks without creating a new one (Flow redraws the portrait in place, free). The character keeps its name, personality and voice, so every scene that references it picks up the new look.",
+      "Change how an existing character looks without creating a new one (Flow redraws the portrait in place, free), and save the new portrait to <films>/_cast. The character keeps its name, personality and voice, so every scene that references it picks up the new look. Pass `look` with the full updated description so scene prompts stop quoting the old one. With no `change` it only saves the current portrait.",
     inputSchema: shapes.character_edit,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  (args) => reply(core.character_edit(args)),
+  (args) => reply(patient("flow_character_edit", core.character_edit(args))),
 );
 
 server.registerTool(
@@ -184,7 +245,7 @@ server.registerTool(
     inputSchema: shapes.characters,
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
-  () => reply(core.characters()),
+  () => reply(patient("flow_characters", core.characters())),
 );
 
 server.registerTool(
@@ -208,7 +269,7 @@ server.registerTool(
     inputSchema: shapes.narrate,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  (args) => reply(core.narrate(args)),
+  (args) => reply(patient("flow_narrate", core.narrate(args))),
 );
 
 server.registerTool(
@@ -231,7 +292,7 @@ server.registerTool(
     inputSchema: shapes.assemble,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  (args) => reply(core.assemble(args)),
+  (args) => reply(patient("flow_assemble", core.assemble(args))),
 );
 
 await server.connect(new StdioServerTransport());

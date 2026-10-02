@@ -57,8 +57,8 @@ export const shapes = {
     scenes: z.array(sceneSchema).min(1).max(100),
   },
   wait: {
-    job_ids: z.array(z.string()).optional(),
-    timeout_seconds: z.number().int().min(5).max(900).default(240),
+    job_ids: z.array(z.string()).optional().describe("Job ids from a queued call, or the task_id of a call that answered still_working. Default: every queued job."),
+    timeout_seconds: z.number().int().min(5).max(900).default(40).describe("An MCP call returns after at most 40 s whatever this says, so call again until finished is true."),
   },
   cancel: { job_id: z.string() },
   retry: { job_ids: z.array(z.string()).optional().describe("Jobs to re-queue. Default: every failed job.") },
@@ -143,7 +143,22 @@ export const shapes = {
   characters: {},
   character_edit: {
     name: z.string().min(1).describe("Character to change, as listed by flow_characters."),
-    change: z.string().min(1).max(600).describe("What to change about the look, e.g. 'add white gloves on both hands, keep everything else identical'."),
+    change: z
+      .string()
+      .min(1)
+      .max(600)
+      .optional()
+      .describe(
+        "What to change about the look, e.g. 'make his coat red, keep everything else the same'. Leave it out to only save the character's current portrait (after a change made by hand in Flow, or one whose portrait never arrived).",
+      ),
+    look: z
+      .string()
+      .min(1)
+      .max(1500)
+      .optional()
+      .describe(
+        "The character's whole description AFTER the change, e.g. the old one with 'navy coat' swapped for 'red coat'. Scenes quote it word for word to hold the design, so a stale colour in it fights the new portrait. Without it, the change is added to the end of the old description.",
+      ),
   },
   character: {
     name: z.string().min(1).max(60).describe("Character name; scenes then reference it as 'asset:<name>' in reference_images."),
@@ -455,10 +470,13 @@ export class LocalCore implements Core {
     return { ...made, use_as: `asset:${a.name}` };
   }
 
-  async character_edit({ name, change }: Args<"character_edit">) {
+  async character_edit({ name, change, look }: Args<"character_edit">) {
     if (this.queue.busy) throw new Error(BUSY);
     const out = await editCharacter(name, change);
-    rememberCharacter(name, `${characterLook(name) ?? ""} ${change}`.trim());
+    // Every scene that references the character quotes this description in its character lock, so it has to describe
+    // the NEW look - "deep navy coat" left in it would argue with a portrait whose coat is now red.
+    if (look) rememberCharacter(name, look);
+    else if (change) rememberCharacter(name, `${characterLook(name) ?? ""} Changed since, and this wins over anything above: ${change.replace(/[.\s]+$/, "")}`.trim());
     return { ...out, use_as: `asset:${name}` };
   }
 

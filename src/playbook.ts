@@ -5,6 +5,7 @@ export const PLAYBOOK = {
     "Plan the whole piece as scenes of one shot each, then send them in ONE flow_generate call so file numbering and chaining work.",
     "Tell the user the expected credit total before queueing anything that costs credits.",
     "Call flow_wait repeatedly until finished is true; scenes run one at a time with 25-70 s pauses.",
+    "No call blocks for more than about 45 s. A reply with still_working and a task_id means Flow is still busy with it: pass the task_id to flow_wait, and never repeat the call.",
   ],
   models: {
     "Omni 1.1 Flash": "7 credits at 4s, 12 at 8s (720p). Supports duration 4/6/8/10 and 360p/720p. Best default for drafts and frame-to-frame transitions.",

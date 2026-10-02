@@ -42,10 +42,11 @@ logins and tabs stay untouched.
 ### Which assistants it works with
 
 - **Claude** — in Claude Code or the Claude app. This is what it was built and tested with.
-- **Codex** — OpenAI's coding assistant. It works the same way, because it speaks the same standard. One
-  setting matters: Codex gives up on any single step after 60 seconds, and some steps here take longer
-  (making a character, a high-quality download, waiting on a video), so the setup guide gives it more
-  time. It hasn't been tried with Codex yet.
+- **Codex** — OpenAI's coding assistant. It works the same way, because it speaks the same standard.
+  Codex, like most assistants, stops waiting on any single step after a minute, and some steps here take
+  longer (making a character, a high-quality download, waiting on a video). So a slow step answers within
+  about 45 seconds with a ticket number, carries on in the background, and the assistant collects the
+  result with that ticket. It hasn't been tried with Codex yet.
 - **Other apps that support MCP**, like Cursor and VS Code, use the same setup.
 - **Not ChatGPT in the browser or the ChatGPT app.** Those can only reach tools on the internet, and this
   one has to run on your own computer, because it drives the Chrome window there.
@@ -88,7 +89,7 @@ This is a limit in Flow itself, not something we can program around. The exact j
 | Name | What it does |
 |---|---|
 | **Character Maker** | Creates a reusable character from a description — Flow draws the portrait, free — or from a picture you already have. Can carry a personality and a voice |
-| **Character Editor** | Changes how an existing character looks without starting over. Keeps the name, voice and personality, so every future scene picks up the new look |
+| **Character Editor** | Changes how an existing character looks without starting over, and saves the new portrait. Keeps the name, voice and personality, so every future scene picks up the new look. Flow draws these pictures wide, so it is always told to keep just one figure — otherwise it fills the frame with copies |
 | **Cast List** | Shows who you've got |
 
 ### Your library
