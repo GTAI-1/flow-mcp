@@ -1,14 +1,14 @@
 # flow-mcp
 
-Drive **Google Flow** (flow.google.com) from Claude, or from a local control panel, using the
-credits already included in your Google AI subscription — not the pay-per-use video API.
+Drive **Google Flow** (flow.google.com) from Claude, Codex or any other MCP app — or from a local control
+panel — using the credits already included in your Google AI subscription, not the pay-per-use video API.
 
 It is a small program that runs on your own machine. It opens its own Chrome window, signs in
 as you, and clicks Flow's real buttons. There is no browser extension, no hosted service and no
 account to create.
 
 ```
-Claude ──stdio──> flow-mcp ──Chrome DevTools Protocol──> Chrome (its own profile) ──> Flow
+Claude / Codex ──stdio──> flow-mcp ──Chrome DevTools Protocol──> Chrome (its own profile) ──> Flow
 ```
 
 **MCP** = Model Context Protocol, the standard that lets Claude use outside tools.
@@ -61,7 +61,7 @@ everyday browser.
 
 ---
 
-## Connect it to Claude
+## Connect it to Claude or Codex
 
 **Claude Code**
 
@@ -77,14 +77,35 @@ claude mcp add flow -- node /absolute/path/to/flow-mcp/dist/index.js
 { "mcpServers": { "flow": { "command": "node", "args": ["/absolute/path/to/flow-mcp/dist/index.js"] } } }
 ```
 
-Restart Claude, then ask it: *"check my Flow session"*. You should get your plan and credit balance
+**Codex** — add to `~/.codex/config.toml` (on Windows, `%USERPROFILE%\.codex\config.toml`):
+
+```toml
+[mcp_servers.flow]
+command = "node"
+args = ["/absolute/path/to/flow-mcp/dist/index.js"]
+tool_timeout_sec = 600
+```
+
+Keep `tool_timeout_sec`. Codex allows each tool call 60 seconds by default, and some of these take
+longer — creating a character, a 1080p download, waiting on a generation — so without it Codex gives up
+while Flow is still working. You can also run `codex mcp add flow -- node /absolute/path/to/flow-mcp/dist/index.js`,
+then add that line to the config.
+
+**Other MCP apps** (Cursor, VS Code and others) take the same command and arguments in their own MCP
+settings. ChatGPT in the browser or the ChatGPT app can't use it: its connectors only reach servers on
+the internet, and this tool has to run on your own computer to drive your Chrome window.
+
+Developed and tested with Claude. Codex speaks the same protocol, so it should work the same way, but
+it hasn't been tried yet — please report how it goes.
+
+Restart the app, then ask it: *"check my Flow session"*. You should get your plan and credit balance
 back. Everything after that is plain English — you never type tool names.
 
 ---
 
 ## Your first film
 
-Nothing below costs a credit until step 4, and Claude asks before spending.
+Nothing below costs a credit until step 4, and the assistant asks before spending.
 
 1. **Check the session.** *"Check my Flow session."* — confirms sign-in, plan and credits.
 2. **Make a character.** *"Create a character called Pip, a small lamplighter in a flat cartoon style."*
