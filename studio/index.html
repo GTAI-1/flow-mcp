@@ -36,7 +36,7 @@ h1 span{color:var(--tally)}
 @keyframes blink{50%{opacity:.25}}
 .hint{margin-top:18px;padding:18px 20px;border-left:6px solid var(--warn);background:var(--ink2);border-radius:var(--r);font-size:20px}
 .cols{display:grid;gap:34px;margin-top:30px}
-@media(min-width:1040px){.cols{grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);align-items:start}.side{position:sticky;top:18px}}
+@media(min-width:1040px){.cols{grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);align-items:start}.side{position:sticky;top:18px;max-height:calc(100vh - 36px);overflow-y:auto;overscroll-behavior:contain;padding-right:4px}}
 h2{font:800 40px/1 var(--display);text-transform:uppercase;letter-spacing:.03em;margin:0 0 16px;display:flex;align-items:baseline;gap:12px}
 h2 small{font:700 16px var(--mono);color:var(--dim);letter-spacing:0}
 section{margin-bottom:38px}
@@ -332,8 +332,8 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
         <p class="lede">Everything already in the open Flow project. Download anything without regenerating it — the 1080p and 2K upscales are free.</p>
         <div class="card">
           <label class="f">Save into project folder</label><input type="text" id="l_project" placeholder="MyFilm">
-          <div class="rowbtns"><button class="btn small" id="l_load">Load library</button><button class="btn small" id="l_dl" disabled>Download selected</button><button class="btn small ghost" id="l_dlhd" disabled>…in 1080p / 2K</button><button class="btn small ghost" id="l_trash" disabled style="border-color:var(--bad);color:var(--bad)">Move to trash</button></div>
-          <p class="empty" style="margin-top:6px">Moving to trash is recoverable: Flow keeps the item in its Trash, where you can restore it.</p>
+          <div class="rowbtns"><button class="btn small" id="l_load">Load library</button><button class="btn small" id="l_dl" disabled>Download selected</button><button class="btn small ghost" id="l_dlhd" disabled>…in 1080p / 2K</button><button class="btn small ghost" id="l_trash" disabled style="border-color:var(--bad);color:var(--bad)">Move to Flow's Trash</button></div>
+          <p class="empty" style="margin-top:6px">This removes things from your Flow project, not from this Mac — your downloaded files stay put. Flow keeps them in its Trash, where you can restore them.</p>
           <div class="lib" id="l_list"></div>
         </div>
       </section>
@@ -348,7 +348,7 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
         <h2>Gallery <small>saved on this Mac</small></h2>
         <div class="card">
           <select id="galProject"></select>
-          <div class="rowbtns" style="margin-top:8px"><button type="button" class="btn small ghost" id="galTrashDir" style="border-color:var(--bad);color:var(--bad)">Move this whole folder to Trash</button></div>
+          <div class="rowbtns" style="margin-top:8px"><button type="button" class="btn small ghost" id="galTrashDir" style="border-color:var(--bad);color:var(--bad)">Move this folder to the Mac's Trash</button></div>
           <p class="empty" id="galInfo" style="margin-top:10px"></p>
           <div class="gal" id="gal"></div>
         </div>
@@ -363,7 +363,7 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
 </div></div>
 
 <dialog id="picker"><h2 style="font-size:34px">Pick from Flow</h2><p class="empty">Media already in the open Flow project.</p><div class="lib" id="pickList"></div><div style="margin-top:16px"><button class="btn small ghost" onclick="picker.close()">Close</button></div></dialog>
-<dialog id="viewer"><div id="viewerBody"></div><p class="empty" id="viewerPath" style="margin:12px 0;word-break:break-all"></p><div class="rowbtns"><button class="btn small ghost" onclick="viewer.close()">Close</button><button type="button" class="btn small ghost" id="viewerTrash" style="border-color:var(--bad);color:var(--bad)">Move to Trash</button></div></dialog>
+<dialog id="viewer"><div id="viewerBody"></div><p class="empty" id="viewerPath" style="margin:12px 0;word-break:break-all"></p><div class="rowbtns"><button class="btn small ghost" onclick="viewer.close()">Close</button><button type="button" class="btn small ghost" id="viewerTrash" style="border-color:var(--bad);color:var(--bad)">Move to the Mac's Trash</button></div></dialog>
 <input type="file" id="file" hidden>
 <script>
 const TOKEN = "__FLOW_TOKEN__";
@@ -400,9 +400,9 @@ function showTab(name) {
   S.tab = name; save();
   $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
   $$(".panel").forEach((p) => p.classList.toggle("on", p.dataset.panel === name));
-  // Stills on Frames, clips on Shots and Cut. Cast, Restyle and Library work on what is in Flow, and the Voice tab
-  // has its own list of narrations, so the gallery would only be in the way there.
-  $("#galCard").hidden = !["frames", "shots", "cut"].includes(name);
+  // Each tab shows the files it can use. Voice has its own narration list and Library its own Flow list, so the
+  // gallery would only be in the way there.
+  $("#galCard").hidden = !GALLERY_KINDS[name];
   if (GAL.length) renderGallery();
   estimate();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -778,7 +778,7 @@ $("#l_trash").onclick = async () => {
   const b = $("#l_trash"); b.disabled = true; b.textContent = "Moving…";
   const failed = [];
   for (const name of names) { try { await api("trash", { name }); } catch (err) { failed.push(`${name}: ${err.message}`); } }
-  b.textContent = "Move to trash";
+  b.textContent = "Move to Flow's Trash";
   toast(failed.length ? `${names.length - failed.length} moved to Trash. Not moved: ${failed.join("; ")}` : `${names.length} moved to Flow's Trash`, Boolean(failed.length));
   LIB = []; chosen.clear(); $("#l_load").click();
 };
@@ -847,10 +847,12 @@ async function loadGallery(prefer) {
   if (GAL.some((p) => p.name === want)) sel.value = want;
   renderGallery(); renderTakes();
 }
+// Which saved files each tab's gallery shows. Shots uses stills as first and last frames as well as clips.
+const GALLERY_KINDS = { cast: ["image"], frames: ["image"], shots: ["video", "image"], restyle: ["video"], cut: ["video"] };
 function renderTakes() {
   const takes = GAL.flatMap((p) => p.files.filter((f) => f.kind === "audio").map((f) => ({ ...f, project: p.name }))).sort((a, b) => b.mtime - a.mtime);
   $("#n_takes").innerHTML = takes.length
-    ? takes.map((t) => `<div class="take"><div style="min-width:0"><b>${esc(t.name)}</b><small>${esc(t.project)}</small></div><button type="button" class="btn small ghost" data-taketrash="${esc(t.path)}" style="border-color:var(--bad);color:var(--bad)">Move to Trash</button><audio controls preload="none" src="${media(t.path)}"></audio></div>`).join("")
+    ? takes.map((t) => `<div class="take"><div style="min-width:0"><b>${esc(t.name)}</b><small>${esc(t.project)}</small></div><button type="button" class="btn small ghost" data-taketrash="${esc(t.path)}" style="border-color:var(--bad);color:var(--bad)">Move to Mac Trash</button><audio controls preload="none" src="${media(t.path)}"></audio></div>`).join("")
     : `<p class="empty">No narrations saved yet.</p>`;
 }
 $("#n_takes").addEventListener("click", async (e) => {
@@ -860,7 +862,7 @@ $("#n_takes").addEventListener("click", async (e) => {
 function renderGallery() {
   const p = GAL.find((x) => x.name === $("#galProject").value);
   $("#galInfo").textContent = p ? p.dir : "Finished work is saved on this Mac and listed here.";
-  const want = S.tab === "frames" ? ["image"] : ["video"];
+  const want = GALLERY_KINDS[S.tab] ?? ["image", "video"];
   $("#gal").innerHTML = (p?.files ?? []).map((f, n) => !want.includes(f.kind) ? "" : `<figure data-n="${n}">${f.kind === "video" ? `<video muted playsinline preload="metadata" src="${media(f.path)}#t=0.1"></video>` : `<img loading="lazy" src="${media(f.path)}">`}<figcaption>${esc(f.name)}</figcaption></figure>`).join("");
 }
 $("#galProject").onchange = renderGallery;

@@ -273,8 +273,12 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
 - Panel housekeeping (2026-10-01): local files can be moved to the Mac's Trash (core.discard - refuses anything
   outside the films folder; Gallery viewer "Move to Trash" and "Move this whole folder to Trash"). outputs() now lists
   narrations as kind "audio": the Voice tab has its own "Your narrations" list (play + Move to Trash) and Cut's music
-  and narration slots pick from it ("My narrations"). The image/video gallery shows only on Frames (stills), Shots and
-  Cut (clips). The page had no [hidden] rule, so `el.hidden` silently did nothing where CSS set display - added one.
+  and narration slots pick from it ("My narrations"). GALLERY_KINDS decides the side gallery per tab: Cast and Frames
+  stills, Shots stills + clips (stills are its first/last frames), Restyle and Cut clips; hidden on Voice and Library,
+  which have their own lists. Delete labels name WHERE: "Mac's Trash" (local files) vs "Flow's Trash" (Library - removes
+  from the Flow project only; downloaded files stay). On wide screens the right column scrolls on its own
+  (max-height + overflow-y:auto + overscroll-behavior:contain); before, its gallery was unreachable until the whole
+  page reached the bottom. Verified with real wheel scrolls: each column scrolls only under the mouse. The page had no [hidden] rule, so `el.hidden` silently did nothing where CSS set display - added one.
 - AI Studio key field (Voice tab): core.set_key -> saveGeminiKey writes ~/.flow-mcp/gemini-key (0600) only after the
   key passes a format check AND Google accepts it (models list, key in a header, no TTS quota), so a bad paste can
   never replace a working key. set_key is deliberately NOT an MCP tool - a key typed into the panel never reaches
