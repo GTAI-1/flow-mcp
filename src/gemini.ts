@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { HOME_DIR } from "./chrome.js";
 
@@ -34,6 +34,24 @@ export const geminiKey = (): string | undefined => {
   if (!key || key.length < 20 || /^(YOUR|PASTE|<|\$)/i.test(key) || /_KEY|KEY_HERE|EXAMPLE/i.test(key)) return undefined;
   return key;
 };
+
+// Saves the user's key from the panel straight to a file only they can read. It never passes through Claude - that is
+// why there is no MCP tool for it. The key is checked with Google BEFORE anything is written, so a mistyped or
+// placeholder key can never replace one that works. The check lists models with the key in a header (never in the URL)
+// and spends no text-to-speech quota.
+export async function saveGeminiKey(raw: string): Promise<{ saved: true; ending: string }> {
+  const key = raw.trim();
+  if (!/^AIza[0-9A-Za-z_-]{30,}$/.test(key)) {
+    throw new Error("That doesn't look like a Google AI Studio key. Real keys start with AIza and are about 39 characters long.");
+  }
+  const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", { headers: { "x-goog-api-key": key } }).catch(() => null);
+  if (!res) throw new Error("Couldn't reach Google to check the key. Check your internet connection and try again.");
+  if (!res.ok) throw new Error("Google didn't accept that key. Copy it again from aistudio.google.com/apikey. Your previous key, if any, is unchanged.");
+  mkdirSync(dirname(KEY_FILE), { recursive: true });
+  writeFileSync(KEY_FILE, key, { mode: 0o600 });
+  chmodSync(KEY_FILE, 0o600);
+  return { saved: true, ending: key.slice(-4) };
+}
 
 interface TtsPart {
   inlineData?: { mimeType?: string; data?: string };

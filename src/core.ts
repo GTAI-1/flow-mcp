@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { assemble, localVoices, speakLocally } from "./assemble.js";
-import { GEMINI_VOICES, geminiKey, speakWithGemini } from "./gemini.js";
+import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemini.js";
 import { extractLastFrame } from "./chain.js";
 import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
@@ -136,6 +136,8 @@ export const shapes = {
       .describe("Skip the guard that refuses to run when Flow already holds a fresh-looking continuation of this clip. Only pass it when you have checked the grid and genuinely want another paid take."),
   },
   trash: { name: z.string().min(1).describe("Exact title of the item to move to Flow's Trash, as listed by flow_assets.") },
+  set_key: { key: z.string().min(1).max(200) },
+  discard: { path: z.string().min(1).describe("A saved film, still, narration or whole project folder inside the films folder, to move to this Mac's Trash.") },
   outputs: {},
   characters: {},
   character_edit: {
@@ -195,6 +197,8 @@ export interface Core {
   character_edit(a: Args<"character_edit">): Promise<unknown>;
   edit(a: Args<"edit">): Promise<unknown>;
   trash(a: Args<"trash">): Promise<unknown>;
+  discard(a: Args<"discard">): Promise<unknown>;
+  set_key(a: Args<"set_key">): Promise<unknown>;
   continue_shot(a: Args<"continue_shot">): Promise<unknown>;
   agent(a: Args<"agent">): Promise<unknown>;
   outputs(): Promise<unknown>;
@@ -348,14 +352,14 @@ export class LocalCore implements Core {
   // Everything already downloaded, newest project first, so the panel can show past work after a restart.
   async outputs() {
     if (!existsSync(OUTPUT_ROOT)) return { root: OUTPUT_ROOT, projects: [] };
-    const media = /\.(mp4|webm|mov|gif|jpe?g|png|webp)$/i;
+    const media = /\.(mp4|webm|mov|gif|jpe?g|png|webp|m4a|mp3|wav|aiff?)$/i;
     const projects = readdirSync(OUTPUT_ROOT, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => {
         const dir = join(OUTPUT_ROOT, d.name);
         const files = readdirSync(dir)
           .filter((f) => media.test(f) && !f.endsWith("-lastframe.jpg"))
-          .map((f) => ({ name: f, path: join(dir, f), kind: /\.(mp4|webm|mov)$/i.test(f) ? "video" : "image", mtime: statSync(join(dir, f)).mtimeMs }))
+          .map((f) => ({ name: f, path: join(dir, f), kind: /\.(mp4|webm|mov)$/i.test(f) ? "video" : /\.(m4a|mp3|wav|aiff?)$/i.test(f) ? "audio" : "image", mtime: statSync(join(dir, f)).mtimeMs }))
           .sort((a, b) => a.name.localeCompare(b.name));
         return { name: d.name, dir, files, mtime: Math.max(0, ...files.map((f) => f.mtime)) };
       })
@@ -426,6 +430,18 @@ export class LocalCore implements Core {
     return { output_dir, jobs: [jobView(job)] };
   }
 
+  // Moves a file or a project folder from the films folder to this Mac's Trash - recoverable from the Trash, never
+  // erased. Anything outside the films folder is refused, so a bad path can never reach the rest of the Mac.
+  async discard({ path }: Args<"discard">) {
+    const target = resolve(path);
+    if (!target.startsWith(OUTPUT_ROOT + "/") || target === OUTPUT_ROOT) throw new Error("Only things inside your films folder can be moved to the Trash from here.");
+    if (!existsSync(target)) throw new Error("That file is already gone.");
+    const name = target.split("/").pop()!;
+    const dest = join(homedir(), ".Trash", existsSync(join(homedir(), ".Trash", name)) ? `${name.replace(/(\.[^.]+)?$/, `-${Date.now()}$1`)}` : name);
+    renameSync(target, dest);
+    return { trashed: target, to: dest };
+  }
+
   async trash({ name }: Args<"trash">) {
     if (this.queue.busy) throw new Error(BUSY);
     return trashAsset(name);
@@ -449,6 +465,11 @@ export class LocalCore implements Core {
   async characters() {
     if (this.queue.busy) throw new Error(BUSY);
     return (await listCharacters()).map((name) => ({ name, use_as: `asset:${name}` }));
+  }
+
+  // Panel only: deliberately NOT registered as an MCP tool, so a key typed into Flow Studio never reaches Claude.
+  async set_key({ key }: Args<"set_key">) {
+    return saveGeminiKey(key);
   }
 
   async voices() {

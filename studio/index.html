@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=Hanken+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <style>
+[hidden]{display:none!important}
 :root{
   --ink:#14110e; --ink2:#1d1915; --ink3:#2a241e; --line:#3a322a;
   --bone:#f3eadb; --dim:#b3a793; --tally:#ff5a1f; --go:#9fe06a; --warn:#ffc53d; --bad:#ff4d4d;
@@ -74,6 +75,11 @@ input:focus,select:focus,textarea:focus{border-color:var(--tally)}
 .slot .two button{min-height:44px;padding:0 12px;font:700 15px var(--mono);color:var(--bone);background:var(--ink3);border:2px solid var(--line);border-radius:10px;cursor:pointer}
 .slot .two button:hover{border-color:var(--tally)}
 .cliplist{display:flex;flex-direction:column;gap:8px}
+.take{display:grid;grid-template-columns:1fr auto;gap:8px 12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
+.take:last-child{border-bottom:0}
+.take b{font:700 15px var(--mono);color:var(--bone);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.take small{display:block;font:600 13px var(--mono);color:var(--dim);margin-top:2px}
+.take audio{grid-column:1/-1;width:100%;max-width:100%}
 .cliprow{display:flex;align-items:center;gap:12px;min-height:52px;padding:6px 8px 6px 14px;border:2px solid var(--line);border-radius:12px;background:var(--ink)}
 .cliprow b{font:800 18px var(--mono);color:var(--tally);min-width:1.5em}
 .cliprow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 15px var(--mono);color:var(--bone)}
@@ -259,6 +265,11 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
           <label class="f">Line to speak</label><textarea id="n_text" style="min-height:120px" placeholder="Sometimes the obstacles in your life aren't there to block you…"></textarea>
           <label class="f">Voice engine</label><div class="seg" data-seg="n_engine"></div>
           <div class="phrase" id="n_engineNote"></div>
+          <div id="n_keyWrap">
+            <label class="f" for="n_key">Google AI Studio key</label>
+            <div class="rowbtns" style="margin-top:0;flex-wrap:nowrap"><input type="password" id="n_key" autocomplete="off" spellcheck="false" placeholder="AIza…" style="flex:1;min-width:0"><button type="button" class="btn small" id="n_keysave">Save key</button></div>
+            <p class="empty" id="n_keyStatus" style="margin-top:6px"></p>
+          </div>
           <div class="grid2">
             <div><label class="f">Voice</label><select id="n_voice"></select></div>
           </div>
@@ -267,6 +278,8 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
           <div class="rowbtns"><button class="btn" id="n_go">Record take</button></div>
           <div id="n_out" style="margin-top:16px"></div>
         </div>
+        <h2 style="margin-top:28px">Your narrations <small>saved on this Mac</small></h2>
+        <div class="card"><div id="n_takes"><p class="empty">No narrations saved yet.</p></div></div>
       </section>
 
       <!-- RESTYLE -->
@@ -331,10 +344,11 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
         <h2>Monitor</h2>
         <div class="card"><div id="pacing"></div><div id="jobs"><p class="empty">Nothing queued yet.</p></div></div>
       </section>
-      <section>
+      <section id="galCard">
         <h2>Gallery <small>saved on this Mac</small></h2>
         <div class="card">
           <select id="galProject"></select>
+          <div class="rowbtns" style="margin-top:8px"><button type="button" class="btn small ghost" id="galTrashDir" style="border-color:var(--bad);color:var(--bad)">Move this whole folder to Trash</button></div>
           <p class="empty" id="galInfo" style="margin-top:10px"></p>
           <div class="gal" id="gal"></div>
         </div>
@@ -349,7 +363,7 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
 </div></div>
 
 <dialog id="picker"><h2 style="font-size:34px">Pick from Flow</h2><p class="empty">Media already in the open Flow project.</p><div class="lib" id="pickList"></div><div style="margin-top:16px"><button class="btn small ghost" onclick="picker.close()">Close</button></div></dialog>
-<dialog id="viewer"><div id="viewerBody"></div><p class="empty" id="viewerPath" style="margin:12px 0;word-break:break-all"></p><button class="btn small ghost" onclick="viewer.close()">Close</button></dialog>
+<dialog id="viewer"><div id="viewerBody"></div><p class="empty" id="viewerPath" style="margin:12px 0;word-break:break-all"></p><div class="rowbtns"><button class="btn small ghost" onclick="viewer.close()">Close</button><button type="button" class="btn small ghost" id="viewerTrash" style="border-color:var(--bad);color:var(--bad)">Move to Trash</button></div></dialog>
 <input type="file" id="file" hidden>
 <script>
 const TOKEN = "__FLOW_TOKEN__";
@@ -386,6 +400,10 @@ function showTab(name) {
   S.tab = name; save();
   $$("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
   $$(".panel").forEach((p) => p.classList.toggle("on", p.dataset.panel === name));
+  // Stills on Frames, clips on Shots and Cut. Cast, Restyle and Library work on what is in Flow, and the Voice tab
+  // has its own list of narrations, so the gallery would only be in the way there.
+  $("#galCard").hidden = !["frames", "shots", "cut"].includes(name);
+  if (GAL.length) renderGallery();
   estimate();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -423,7 +441,7 @@ function slotHtml(kind, i, val, label) {
   const pic = val?.path && /\.(jpe?g|png|webp|gif)$/i.test(val.path);
   return `<div class="slot" data-slot="${kind}" data-i="${i}">${pic ? `<img src="${media(val.path)}">` : ""}
     ${val ? `<button class="x" data-clear="${kind}" data-i="${i}">×</button><span class="tag">${esc(name)}</span>`
-          : `<span>${label}</span><span class="two"><button type="button" data-src="upload">Upload</button><button type="button" data-src="flow">From Flow</button></span>`}</div>`;
+          : `<span>${label}</span><span class="two"><button type="button" data-src="upload">Upload</button><button type="button" data-src="flow">${/music|voiceover/.test(kind) ? "My narrations" : "From Flow"}</button></span>`}</div>`;
 }
 function setSlot(kind, idx, val) {
   if (kind === "cast") castImage = val;
@@ -455,7 +473,15 @@ $("#file").addEventListener("change", async (e) => {
 async function openPicker(audioOnly) {
   $("#picker h2").textContent = "Pick from Flow"; $("#picker p.empty").textContent = "Media already in the open Flow project.";
   $("#pickList").innerHTML = `<p class="empty">Reading your Flow project…</p>`; picker.showModal();
-  if (audioOnly) { $("#pickList").innerHTML = `<p class="empty">Narration and music come from the Voice tab or an upload — Flow media is images and video only.</p>`; return; }
+  if (audioOnly) {
+    $("#picker h2").textContent = "Pick a narration"; $("#picker p.empty").textContent = "Narrations saved on this Mac. To use music, upload it instead.";
+    try {
+      const { projects } = await api("outputs");
+      const takes = projects.flatMap((p) => p.files.filter((f) => f.kind === "audio").map((f) => ({ path: f.path, name: `${p.name} / ${f.name}`, mtime: f.mtime }))).sort((a, b) => b.mtime - a.mtime);
+      $("#pickList").innerHTML = takes.map((t) => `<button data-audio="${esc(t.path)}" data-name="${esc(t.name)}"><span>${esc(t.name)}</span><em>audio</em></button>`).join("") || `<p class="empty">No narrations saved yet — record one in the Voice tab.</p>`;
+    } catch (err) { $("#pickList").innerHTML = `<p class="empty" style="color:var(--bad)">${esc(err.message)}</p>`; }
+    return;
+  }
   try {
     if (!LIB.length) LIB = await api("assets");
     $("#pickList").innerHTML = LIB.map((a, n) => `<button data-n="${n}"><span>${esc(a.name)}</span><em>${a.kind}</em></button>`).join("") || `<p class="empty">Nothing in the project yet.</p>`;
@@ -593,8 +619,12 @@ function renderNarrate() {
   $("#n_engineNote").innerHTML = !mac
     ? (VOICES.gemini_ready
         ? "Google's own text-to-speech — the same voices Flow uses, free on the AI Studio tier, any length, and no Flow credits."
-        : `<b>Needs a free key.</b> Get one at <b>aistudio.google.com → Get API key</b>, then run in your terminal:<br><code>printf '%s' 'YOUR_KEY' > ~/.flow-mcp/gemini-key &amp;&amp; chmod 600 ~/.flow-mcp/gemini-key</code><br>Same voices as Flow, free, no length limit.`)
+        : `<b>Needs a free key.</b> Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and paste it below. Same voices as Flow, free, no length limit.`)
     : `Spoken on this Mac — free, instant, any length. Quality depends on the installed voice: download a <b>Premium</b> English voice in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices and it appears here automatically. ${(VOICES.mac ?? []).length} voice(s) available.`;
+  $("#n_keyWrap").hidden = mac;
+  $("#n_keyStatus").innerHTML = VOICES.gemini_ready
+    ? "A key is saved on this Mac. Paste a new one only to replace it."
+    : "Paste it here, not into a chat — it's saved only on this Mac and checked with Google first.";
   const words = $("#n_text").value.trim().split(/\s+/).filter(Boolean).length;
   const secs = Math.ceil(words / 2.5);
   $("#n_fit").textContent = words ? `${words} words ≈ ${secs}s of speech. No length limit, no credits.` : "";
@@ -673,6 +703,21 @@ $("#k_go").onclick = async () => {
   } catch (err) { $("#k_info").textContent = err.message; toast(err.message, true); }
 };
 
+$("#n_keysave").onclick = async () => {
+  const key = $("#n_key").value.trim(); if (!key) return toast("Paste your key first.", true);
+  if (!guard()) return;
+  const b = $("#n_keysave"); b.disabled = true; b.textContent = "Checking…";
+  try {
+    const out = await api("set_key", { key });
+    $("#n_key").value = "";
+    VOICES = await api("voices");
+    renderNarrate();
+    $("#n_keyStatus").textContent = `Saved — Google accepted it (ends in …${out.ending}). Google voices are ready.`;
+    toast("Key saved");
+  } catch (err) { $("#n_keyStatus").innerHTML = `<span style="color:var(--bad)">${esc(err.message)}</span>`; }
+  b.disabled = false; b.textContent = "Save key";
+};
+
 /* ---------- cut ---------- */
 function renderClips() {
   const list = S.cut.clips ?? [];
@@ -691,6 +736,7 @@ $("#c_addfilm").onclick = async () => {
     $("#pickList").innerHTML = vids.map((v) => `<button data-film="${esc(v.path)}" data-name="${esc(v.name)}"><span>${esc(v.name)}</span><em>video</em></button>`).join("") || `<p class="empty">No saved videos yet.</p>`;
   } catch (err) { $("#pickList").innerHTML = `<p class="empty" style="color:var(--bad)">${esc(err.message)}</p>`; }
 };
+$("#pickList").addEventListener("click", (e) => { const b = e.target.closest("button[data-audio]"); if (!b || !pickTarget) return; setSlot(pickTarget.kind, pickTarget.i, { path: b.dataset.audio, name: b.dataset.name }); picker.close(); });
 $("#pickList").addEventListener("click", (e) => { const b = e.target.closest("button[data-film]"); if (!b) return; (S.cut.clips ??= []).push({ path: b.dataset.film, name: b.dataset.name }); save(); renderClips(); picker.close(); });
 $("#c_vol").oninput = (e) => ($("#c_volOut").textContent = e.target.value + "%");
 $("#c_clipvol").oninput = (e) => ($("#c_clipVolOut").textContent = e.target.value + "%");
@@ -799,12 +845,23 @@ async function loadGallery(prefer) {
   const sel = $("#galProject"), want = prefer || sel.value || slateFolder();
   sel.innerHTML = GAL.map((p) => `<option value="${esc(p.name)}">${esc(p.name)} · ${p.files.length}</option>`).join("") || `<option value="">Nothing saved yet</option>`;
   if (GAL.some((p) => p.name === want)) sel.value = want;
-  renderGallery();
+  renderGallery(); renderTakes();
 }
+function renderTakes() {
+  const takes = GAL.flatMap((p) => p.files.filter((f) => f.kind === "audio").map((f) => ({ ...f, project: p.name }))).sort((a, b) => b.mtime - a.mtime);
+  $("#n_takes").innerHTML = takes.length
+    ? takes.map((t) => `<div class="take"><div style="min-width:0"><b>${esc(t.name)}</b><small>${esc(t.project)}</small></div><button type="button" class="btn small ghost" data-taketrash="${esc(t.path)}" style="border-color:var(--bad);color:var(--bad)">Move to Trash</button><audio controls preload="none" src="${media(t.path)}"></audio></div>`).join("")
+    : `<p class="empty">No narrations saved yet.</p>`;
+}
+$("#n_takes").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-taketrash]"); if (!b) return;
+  if (await discardLocal(b.dataset.taketrash, `"${b.dataset.taketrash.split("/").pop()}"`)) loadGallery();
+});
 function renderGallery() {
   const p = GAL.find((x) => x.name === $("#galProject").value);
   $("#galInfo").textContent = p ? p.dir : "Finished work is saved on this Mac and listed here.";
-  $("#gal").innerHTML = (p?.files ?? []).map((f, n) => `<figure data-n="${n}">${f.kind === "video" ? `<video muted playsinline preload="metadata" src="${media(f.path)}#t=0.1"></video>` : `<img loading="lazy" src="${media(f.path)}">`}<figcaption>${esc(f.name)}</figcaption></figure>`).join("");
+  const want = S.tab === "frames" ? ["image"] : ["video"];
+  $("#gal").innerHTML = (p?.files ?? []).map((f, n) => !want.includes(f.kind) ? "" : `<figure data-n="${n}">${f.kind === "video" ? `<video muted playsinline preload="metadata" src="${media(f.path)}#t=0.1"></video>` : `<img loading="lazy" src="${media(f.path)}">`}<figcaption>${esc(f.name)}</figcaption></figure>`).join("");
 }
 $("#galProject").onchange = renderGallery;
 $("#gal").addEventListener("click", (e) => {
@@ -814,6 +871,20 @@ $("#gal").addEventListener("click", (e) => {
   $("#viewerPath").textContent = f.path; viewer.showModal();
 });
 $("#viewer").addEventListener("close", () => ($("#viewerBody").innerHTML = ""));
+// Files on this Mac: moved to the Mac's Trash, so anything removed by mistake can be put back from there.
+async function discardLocal(path, label) {
+  if (!confirm(`Move ${label} to the Trash on this Mac?\n\n${path}\n\nYou can put it back from the Trash.`)) return false;
+  try { await api("discard", { path }); toast(`${label} moved to the Trash`); return true; }
+  catch (err) { toast(err.message, true); return false; }
+}
+$("#viewerTrash").onclick = async () => {
+  const path = $("#viewerPath").textContent; if (!path) return;
+  if (await discardLocal(path, `"${path.split("/").pop()}"`)) { viewer.close(); loadGallery(); }
+};
+$("#galTrashDir").onclick = async () => {
+  const p = GAL.find((x) => x.name === $("#galProject").value); if (!p) return;
+  if (await discardLocal(p.dir, `the "${p.name}" folder and its ${p.files.length} file(s)`)) loadGallery();
+};
 $("#jobs").addEventListener("click", async (e) => {
   const r = e.target.closest("[data-retry]"), c = e.target.closest("[data-cancel]");
   try { if (r) await api("retry", { job_ids: [r.dataset.retry] }); if (c) await api("cancel", { job_id: c.dataset.cancel }); if (r || c) poll(); }

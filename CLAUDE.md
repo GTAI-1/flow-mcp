@@ -270,6 +270,15 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   IMMEDIATELY - Flow asks no confirmation - and it lands in left-nav `Trash`, where the tile offers `Restore` and
   `Delete permanently`. trashAsset / flow_trash / the Library tab's "Move to trash" only ever MOVE to Trash (never
   Delete permanently), match the EXACT title, and refuse when two items share it. The panel confirms before calling.
+- Panel housekeeping (2026-10-01): local files can be moved to the Mac's Trash (core.discard - refuses anything
+  outside the films folder; Gallery viewer "Move to Trash" and "Move this whole folder to Trash"). outputs() now lists
+  narrations as kind "audio": the Voice tab has its own "Your narrations" list (play + Move to Trash) and Cut's music
+  and narration slots pick from it ("My narrations"). The image/video gallery shows only on Frames (stills), Shots and
+  Cut (clips). The page had no [hidden] rule, so `el.hidden` silently did nothing where CSS set display - added one.
+- AI Studio key field (Voice tab): core.set_key -> saveGeminiKey writes ~/.flow-mcp/gemini-key (0600) only after the
+  key passes a format check AND Google accepts it (models list, key in a header, no TTS quota), so a bad paste can
+  never replace a working key. set_key is deliberately NOT an MCP tool - a key typed into the panel never reaches
+  Claude. Tested only on the rejection path, so the user's real key was never overwritten.
 - NEVER kill Claude Desktop's own flow-mcp process to load new code (did it 2026-10-01): Claude logs "Server
   disconnected" and does NOT restart it, so the app's flow connector stays dead until the user restarts Claude, and
   reconnect_session_connector cannot help (user-config servers are the user's to reconnect). Code sessions and the
