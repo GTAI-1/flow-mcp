@@ -266,5 +266,14 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   films -> api outputs), passed as `clips` to assemble; empty = the old folder behaviour. Added `clip_volume` (0-1):
   the clips' own sound played at full volume over the narration, only music had a level. Measured: 0.25 = -12.0 dB.
   assemble now explains an unreadable clip by name and a missing project folder in words, instead of ffprobe output.
+- DELETE (mapped 2026-10-01 on throwaway images, never on user work): tile menu -> `Move to trash` removes the tile
+  IMMEDIATELY - Flow asks no confirmation - and it lands in left-nav `Trash`, where the tile offers `Restore` and
+  `Delete permanently`. trashAsset / flow_trash / the Library tab's "Move to trash" only ever MOVE to Trash (never
+  Delete permanently), match the EXACT title, and refuse when two items share it. The panel confirms before calling.
+- NEVER kill Claude Desktop's own flow-mcp process to load new code (did it 2026-10-01): Claude logs "Server
+  disconnected" and does NOT restart it, so the app's flow connector stays dead until the user restarts Claude, and
+  reconnect_session_connector cannot help (user-config servers are the user's to reconnect). Code sessions and the
+  panel survive. To reload the PANEL only, restart the process that owns 8787 only when it is a standalone
+  `node dist/studio.js`; if Claude's process owns it, the new code waits for the user's next Claude restart.
 - Tile menus carry Material icon ligatures in their labels now ("downloadDownload"), but the accessible name still
   computes as "Download", so getByRole(..., { exact: true }) keeps working. Verified, not assumed.

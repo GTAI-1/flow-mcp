@@ -783,6 +783,30 @@ export async function downloadAsset(name: string, targetStem: string, quality: D
   return downloadTile(page, tileOf(page, found), targetStem, quality);
 }
 
+// Moves one item in the open project to Flow's Trash. Flow keeps it there with Restore and Delete permanently, so this
+// is recoverable - and it never deletes permanently. Flow asks NO confirmation (mapped 2026-10-01: the tile menu's
+// "Move to trash" removes the tile at once), so whoever calls this must confirm with the user first. Matching is by
+// EXACT title, and an ambiguous title is refused: Flow reuses titles, and trashing the wrong one is the worst outcome.
+export async function trashAsset(name: string): Promise<{ trashed: string }> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  await ensureProjectGrid(page);
+  const same = (await scanGrid(page)).filter((a) => a.name === name);
+  if (!same.length) throw new Error(`Nothing in the open project is called "${name}".`);
+  if (same.length > 1) throw new Error(`${same.length} items are called "${name}", so it isn't clear which one to trash. Rename one in Flow first.`);
+  // Scan again, stopping on the tile so it stays mounted in the virtual grid (no scrollToTop before acting on it).
+  await scanGrid(page, (seen) => seen.some((a) => a.name === name));
+  const tile = tileOf(page, same[0]);
+  await hoverTile(page, tile);
+  await tile.getByRole("button", { name: "More options" }).click();
+  await page.getByRole("menuitem", { name: "Move to trash", exact: true }).click();
+  await pause(page, 2000);
+  if (await tile.count()) throw new Error(`"${name}" is still in the project - Flow did not move it to Trash.`);
+  await scrollToTop(page);
+  return { trashed: name };
+}
+
 // A scene's tile menu downloads a ZIP of its loose clips, which is not what anyone wants. The whole scene comes out as
 // ONE stitched file from inside the scene view: open the scene, press "Download scene", and Flow shows "Exporting your
 // scene..." before the file arrives (a 29 s scene took a few seconds). The user showed this route; verified 2026-10-01.

@@ -5,7 +5,7 @@ import { z } from "zod";
 import { assemble, localVoices, speakLocally } from "./assemble.js";
 import { GEMINI_VOICES, geminiKey, speakWithGemini } from "./gemini.js";
 import { extractLastFrame } from "./chain.js";
-import { characterLook, createCharacter, downloadAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
+import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
@@ -135,6 +135,7 @@ export const shapes = {
       .optional()
       .describe("Skip the guard that refuses to run when Flow already holds a fresh-looking continuation of this clip. Only pass it when you have checked the grid and genuinely want another paid take."),
   },
+  trash: { name: z.string().min(1).describe("Exact title of the item to move to Flow's Trash, as listed by flow_assets.") },
   outputs: {},
   characters: {},
   character_edit: {
@@ -193,6 +194,7 @@ export interface Core {
   characters(): Promise<unknown>;
   character_edit(a: Args<"character_edit">): Promise<unknown>;
   edit(a: Args<"edit">): Promise<unknown>;
+  trash(a: Args<"trash">): Promise<unknown>;
   continue_shot(a: Args<"continue_shot">): Promise<unknown>;
   agent(a: Args<"agent">): Promise<unknown>;
   outputs(): Promise<unknown>;
@@ -422,6 +424,11 @@ export class LocalCore implements Core {
       file_stem: this.nextStem(output_dir, "shot"),
     });
     return { output_dir, jobs: [jobView(job)] };
+  }
+
+  async trash({ name }: Args<"trash">) {
+    if (this.queue.busy) throw new Error(BUSY);
+    return trashAsset(name);
   }
 
   async character(a: Args<"character">) {

@@ -319,7 +319,8 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
         <p class="lede">Everything already in the open Flow project. Download anything without regenerating it — the 1080p and 2K upscales are free.</p>
         <div class="card">
           <label class="f">Save into project folder</label><input type="text" id="l_project" placeholder="MyFilm">
-          <div class="rowbtns"><button class="btn small" id="l_load">Load library</button><button class="btn small" id="l_dl" disabled>Download selected</button><button class="btn small ghost" id="l_dlhd" disabled>…in 1080p / 2K</button></div>
+          <div class="rowbtns"><button class="btn small" id="l_load">Load library</button><button class="btn small" id="l_dl" disabled>Download selected</button><button class="btn small ghost" id="l_dlhd" disabled>…in 1080p / 2K</button><button class="btn small ghost" id="l_trash" disabled style="border-color:var(--bad);color:var(--bad)">Move to trash</button></div>
+          <p class="empty" style="margin-top:6px">Moving to trash is recoverable: Flow keeps the item in its Trash, where you can restore it.</p>
           <div class="lib" id="l_list"></div>
         </div>
       </section>
@@ -718,11 +719,23 @@ $("#l_load").onclick = async () => {
 };
 function renderLib() {
   $("#l_list").innerHTML = LIB.map((a, n) => `<button data-n="${n}" class="${chosen.has(n) ? "on" : ""}"><span>${chosen.has(n) ? "✓ " : ""}${esc(a.name)}</span><em>${a.kind}</em></button>`).join("");
-  $("#l_dl").disabled = $("#l_dlhd").disabled = !chosen.size;
+  $("#l_dl").disabled = $("#l_dlhd").disabled = $("#l_trash").disabled = !chosen.size;
 }
 $("#l_list").addEventListener("click", (e) => { const b = e.target.closest("button[data-n]"); if (!b) return; const n = +b.dataset.n; chosen.has(n) ? chosen.delete(n) : chosen.add(n); renderLib(); });
 const dl = (quality) => async () => { if (!guard()) return; toast("Downloading…"); try { const out = await api("download", { project: $("#l_project").value.trim() || "MyFilm", assets: [...chosen].map((n) => LIB[n].name), quality }); toast(`Saved ${out.files.length} file(s)`); loadGallery(); } catch (err) { toast(err.message, true); } };
 $("#l_dl").onclick = dl("original"); $("#l_dlhd").onclick = dl("upscaled");
+$("#l_trash").onclick = async () => {
+  if (!guard()) return;
+  const names = [...chosen].map((n) => LIB[n].name);
+  // Flow trashes instantly with no question of its own, so the panel asks.
+  if (!confirm(`Move ${names.length === 1 ? "this" : `these ${names.length}`} to Flow's Trash?\n\n${names.join("\n")}\n\nYou can restore ${names.length === 1 ? "it" : "them"} from Trash in Flow.`)) return;
+  const b = $("#l_trash"); b.disabled = true; b.textContent = "Moving…";
+  const failed = [];
+  for (const name of names) { try { await api("trash", { name }); } catch (err) { failed.push(`${name}: ${err.message}`); } }
+  b.textContent = "Move to trash";
+  toast(failed.length ? `${names.length - failed.length} moved to Trash. Not moved: ${failed.join("; ")}` : `${names.length} moved to Flow's Trash`, Boolean(failed.length));
+  LIB = []; chosen.clear(); $("#l_load").click();
+};
 
 /* ---------- roll ---------- */
 const sceneCost = (sc) => {

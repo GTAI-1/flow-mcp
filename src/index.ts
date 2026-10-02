@@ -141,6 +141,18 @@ server.registerTool(
 );
 
 server.registerTool(
+  "flow_trash",
+  {
+    title: "Move an item to Flow's Trash",
+    description:
+      "Move one image, video or scene in the open Flow project to Flow's Trash, by its exact title from flow_assets. Recoverable: Flow keeps it in Trash with a Restore button. Never deletes permanently. Flow asks no confirmation of its own, so confirm with the user before calling. Refuses if two items share the title.",
+    inputSchema: shapes.trash,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  },
+  (args) => reply(core.trash(args)),
+);
+
+server.registerTool(
   "flow_character",
   {
     title: "Create a reusable character",
