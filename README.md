@@ -124,7 +124,7 @@ Nothing below costs a credit until step 4, and the assistant asks before spendin
 
 ## The control panel
 
-The same features, without Claude in the loop:
+The same features, without an AI assistant in the loop:
 
 ```bash
 npm run studio     # then open http://127.0.0.1:8787
@@ -132,12 +132,26 @@ npm run studio     # then open http://127.0.0.1:8787
 
 or double-click **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows).
 
-Seven tabs, in the order you would use them: **Cast** (reusable characters) → **Frames** (free
-stills, with *match previous frame* to keep a set on-model) → **Shots** (paid clips, with first/last
-frames, chaining, a live credit estimate, and a card that continues a finished clip from its own last frame) → **Voice** (free narration) → **Restyle** (change a
-clip you already have) → **Cut** (join everything, with music and narration) → **Library** (browse
-Flow and pull things back for free). A progress monitor and a gallery of finished work stay visible
-throughout.
+Seven tabs, in the order you would use them:
+
+- **Cast** — reusable characters: create, edit in place, or build one from a picture.
+- **Frames** — free stills, with *match previous frame* to keep a set on-model.
+- **Shots** — paid clips, with first/last frames, chaining, a live credit estimate, and a card that
+  continues a finished clip from its own last frame.
+- **Voice** — free narration in Google's voices or your computer's own. Your saved narrations are listed
+  here to play or delete, and there's a field for your Google AI Studio key (checked with Google, stored
+  only on your computer — never paste it into a chat).
+- **Restyle** — change a clip you already have.
+- **Cut** — join any videos into one film, in the order you pick: upload one, or choose from films you've
+  already made. Add a narration (from your saved ones or an upload) and music, and turn the clips' own
+  sound down so the narration sits on top.
+- **Library** — everything in your Flow project: download it again for free (a scene comes down as one
+  finished film, not loose clips), or move it to Flow's Trash.
+
+A progress monitor and a gallery of your saved work sit alongside — the gallery shows stills or clips
+on the tabs that use them. On a wide screen, each side scrolls on its own. Two kinds of delete, clearly
+labelled: **Move to the Mac's Trash / Recycle Bin** removes a file from your computer; **Move to
+Flow's Trash** removes it from your Flow project only. Both can be undone.
 
 The panel ships with the repo but is not started for you — run `npm run studio` when you want it.
 Opening `studio/index.html` as a plain file does nothing; the page needs the server behind it, and
@@ -160,7 +174,8 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | `flow_cancel` | Cancel a job that has not started |
 | `flow_retry` | Re-queue failed jobs with the same settings and file names (a failed tile is first retried inside Flow with its own free Retry button: `retries`, default 1) |
 | `flow_assets` | List images and videos already in the Flow project (usable as `asset:<title>`) |
-| `flow_download` | Download existing project media without regenerating — free, including the 1080p / 2K upscale |
+| `flow_download` | Download existing project media without regenerating — free, including the 1080p / 2K upscale. A scene comes down as one stitched film |
+| `flow_trash` | Move an image, video or scene in the Flow project to Flow's Trash, where it can be restored. Exact title only; refuses if two items share it; never deletes permanently |
 | `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (20 images in ~204 s), 0 credits. Each image is matched back to its scene by its stored prompt, so file numbers are right in any finish order. Scenes the agent drops are re-asked of it (up to 2 rounds), then re-run one by one |
 | `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). Flow shows no quote first; about 20 credits for a 4 s clip |
 | `flow_continue` | Start a clip from the last frame of an existing one **with a character or your avatar still attached** — the composer allows a start frame or attached characters, never both, so this drives Flow's agent mode, which does both. No quote beforehand |
@@ -168,9 +183,9 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | `flow_character_edit` | Restyle an existing character in place (free); name, personality and voice are kept, so every scene referencing it updates |
 | `flow_characters` | List the project's characters |
 | `flow_techniques` | 39 film-technique prompt presets (camera moves, product shots, transitions, image commands); pass an id as a scene's `technique` |
-| `flow_narrate` | Free narration audio, any length: `gemini` (Google AI Studio text-to-speech — the same voices Flow has, plus a `style` note) or `mac` (a voice installed on this Mac, no key needed) |
+| `flow_narrate` | Free narration audio, any length: `gemini` (Google AI Studio text-to-speech — the same voices Flow has, plus a `style` note) or `mac` (a voice installed on this computer, no key needed) |
 | `flow_voices` | Narrator voices available, and whether a Google key is set up |
-| `flow_assemble` | Join a project's clips into one MP4 with optional music and voiceover (local FFmpeg, no credits) |
+| `flow_assemble` | Join clips into one MP4 — a project's clips, or any you list, in order — with optional music and voiceover, and separate volume for the clips' own sound (local FFmpeg, no credits) |
 
 **Continuity between shots:** `chain_previous` (this clip starts on the last frame of the previous
 one), `first_frame` + `last_frame` (animate between two stills you chose), `reference_images` (keep a

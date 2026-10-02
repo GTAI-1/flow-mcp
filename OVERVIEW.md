@@ -55,7 +55,7 @@ Mac is the tested platform. Windows support is new and hasn't been tried on a re
 
 ---
 
-## The toolkit — 17 tools
+## The toolkit — 18 tools
 
 ### Getting set up
 
@@ -96,15 +96,16 @@ This is a limit in Flow itself, not something we can program around. The exact j
 | Name | What it does |
 |---|---|
 | **Library Browser** | Everything sitting in your Flow project |
-| **Free Re-download** | Pulls any of it back onto your computer at no cost — including the free upgrade to 1080p for video or 2K for stills |
+| **Free Re-download** | Pulls any of it back onto your computer at no cost — including the free upgrade to 1080p for video or 2K for stills. A scene comes down as one finished film, not a pile of loose clips |
+| **Move to Flow's Trash** | Clears things out of your Flow project. Flow keeps them in its Trash, where you can restore them — nothing is ever deleted for good, and nothing on your computer is touched |
 
 ### Sound and final cut
 
 | Name | What it does |
 |---|---|
-| **Voiceover Recorder** | Narration for free, at any length. Either Google AI Studio's text-to-speech — the same voices Flow has, and you can tell it *how* to read the line — or a voice already on your computer (macOS voices on a Mac, Windows' own voices on a PC) |
+| **Voiceover Recorder** | Narration for free, at any length. Either Google AI Studio's text-to-speech — the same voices Flow has, and you can tell it *how* to read the line (keep that note short) — or a voice already on your computer (macOS voices on a Mac, Windows' own voices on a PC) |
 | **Voice List** | Every narrator available to you |
-| **Film Cutter** | Joins your clips into one film using FFmpeg, a free video toolkit. Adds a looping music bed, lays the narration on top, sizes everything to match your best clip, and can hold the last frame if the voice runs longer than the footage |
+| **Film Cutter** | Joins clips into one film using FFmpeg, a free video toolkit — the clips you made, or any video you pick, in the order you choose. Lays the narration on top, adds a looping music bed, and lets you turn the clips' own sound down so it doesn't drown out the voice. Sizes everything to match your best clip, and can hold the last frame if the voice runs longer than the footage |
 
 ---
 
@@ -118,12 +119,17 @@ Seven tabs, in the order you'd use them:
 1. **Cast** — make characters and pick who's in the scene
 2. **Frames** — free key stills to lock the look before spending anything
 3. **Shots** — the paid clips, with a credit ceiling you set, and the card that carries on from a clip you already made
-4. **Voice** — record the narration, free
+4. **Voice** — record the narration, free. Your saved narrations are listed here, so you can play them back or delete the ones you don't want. This is also where you paste your free Google AI Studio key — it's checked with Google and saved only on your computer, so you never have to put it in a chat
 5. **Restyle** — change a clip you already have
-6. **Cut** — join everything into a finished film
-7. **Library** — browse what Flow is holding and pull it back for free
+6. **Cut** — join everything into a finished film. Pick the videos you want, in order — ones you made, or any video you upload — then add a narration and music, and turn the clips' own sound down so the voice sits on top
+7. **Library** — browse what Flow is holding, pull it back for free, or move things to Flow's Trash
 
-Progress and a gallery of finished work stay pinned to the side.
+Progress and a gallery of your saved work sit alongside. The gallery shows stills or clips on the tabs where you'd use them, and on a wide screen each side scrolls on its own.
+
+**Two kinds of delete, so you always know what you're removing:**
+
+- **Move to the Mac's Trash** (the **Recycle Bin** on Windows) — takes a file off your computer: a film, a still, or a narration. Put it back from the Trash if you change your mind.
+- **Move to Flow's Trash** — in the Library tab. Takes it out of your Flow project only; anything you've already downloaded stays on your computer. Restore it from Trash in Flow.
 
 ---
 
