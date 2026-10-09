@@ -108,7 +108,9 @@ const settingsTrigger = (page: Page) => page.getByRole("button", { name: "Settin
 // serves signed /asb/ links with no uuid, so the attribute comes first and the URL is only a fallback.
 // Video tiles at rest expose neither, and their signed thumbnail URL is re-signed over time - using it as a handle
 // made old tiles look new. Titles are stable, so an id-less tile is identified by its title instead.
+// A rendering tile already carries its final title (2026-10-09), so it must not count as media until it is done.
 const TILE_ID_JS = `(tile) => {
+  if (tile.querySelector("flow-pending-tile")) return undefined;
   const media = tile.querySelector("img[data-media-id], video[data-media-id], img[src], video[src]");
   const id = media && (media.getAttribute("data-media-id") || media.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0]);
   if (id) return id;
@@ -761,6 +763,11 @@ async function ensureProjectGrid(page: Page): Promise<void> {
   if (root && new URL(page.url()).pathname !== new URL(root).pathname) {
     await page.goto(inEnglish(root), { waitUntil: "domcontentloaded" });
     await pause(page, 2500);
+  }
+  // An agent chat left open (e.g. the user asked Flow's agent something) covers the composer and hides `Agent`.
+  if (await page.getByRole("button", { name: "Start new session" }).isVisible().catch(() => false)) {
+    await page.getByRole("button", { name: "Close", exact: true }).click().catch(() => {});
+    await pause(page, 1000);
   }
   await showAllMedia(page, true);
   await pause(page, 800);

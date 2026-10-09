@@ -510,3 +510,11 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
 - CAPTIONS WORKFLOW (the user's rule, 2026-10-18): transcribe first, show the words with likely mishearings fixed,
   get the user's OK, THEN make the video once. The playbook and the flow_captions description say so too.
 
+- WINDOWS / FREE ACCOUNT (2026-10-09, catabanciu08): three things broke a first run. (1) Flow follows the Google
+  account language, so a Romanian account got a Romanian UI and every English selector timed out ("waiting for
+  getByRole('button', { name: 'Agent' })"). `?hl=en` switches it - see FLOW IN ENGLISH above, which is how this is
+  handled now (inEnglish/ensureEnglish). (2) An agent chat the user opened by hand (session panel: `Start new session`, `Close`) hid the
+  `Agent` toggle; ensureProjectGrid closes it. (3) A rendering tile now carries its final aria-label title right away
+  (`flow-pending-tile` inside, "NN% <prompt>"), so TILE_ID_JS's title fallback counted it as finished media and the
+  download hit a menu with only Delete. TILE_ID_JS skips tiles that contain `flow-pending-tile`. Verified: 4 s Omni
+  1.1 Flash 720p, 7 credits, 50 -> 43, clip-01.mp4 4.01 s 1280x720 with audio. The free plan readout shows plan "".
