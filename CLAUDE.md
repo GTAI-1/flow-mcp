@@ -1,7 +1,7 @@
 # flow-mcp
 
 Local MCP server (stdio, TypeScript) that drives Google Flow in a dedicated Chrome profile over CDP
-(`playwright-core`, `connectOverCDP` on port 9333). No extension. Goal: feature parity with
+(`playwright-core`, `connectOverCDP`, port 9333 or the next free one). No extension. Goal: feature parity with
 OmniFlow (lingoflow.pro/omniflow), using subscription credits instead of the API.
 
 - `src/chrome.ts` launch/attach Chrome · `src/flow.ts` UI driver · `src/queue.ts` paced job queue
@@ -9,7 +9,9 @@ OmniFlow (lingoflow.pro/omniflow), using subscription credits instead of the API
   `src/remote.ts` RemoteCore (used when another process owns port 8787) · `src/index.ts` MCP tools · `src/studio.ts` standalone panel
 - `studio/index.html` Studio UI (single file, vanilla JS, mobile-first) · `src/chain.ts`, `src/assemble.ts` ffmpeg ·
   `src/techniques.ts` presets · `src/playbook.ts` guidance returned by `flow_status`
-- Test: `node scripts/e2e.mjs <project> '<scenes json>'` (spends credits unless scenes are images)
+- `src/config.ts` local folder, `config.json`, owner note · `src/cli.ts` `flow-studio start|stop|status` (background panel)
+- Test: `node scripts/lifecycle.mjs` (start/stop/status, ports, Chrome ownership; temp folder, no credits) ·
+  `node scripts/e2e.mjs <project> '<scenes json>'` (spends credits unless scenes are images)
 
 ## Rules
 

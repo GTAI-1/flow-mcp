@@ -143,6 +143,18 @@ npm run studio     # then open http://127.0.0.1:8787
 
 or double-click **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows).
 
+To keep it running in the background instead, with no terminal window to leave open:
+
+```bash
+node dist/cli.js start     # prints the address; add --open to open it in the browser
+node dist/cli.js status    # is it running, where, and which folders it uses
+node dist/cli.js stop      # stops it and closes Flow Studio's own Chrome window
+```
+
+(`npm link` once in this folder makes that plain `flow-studio start`, `status` and `stop`.) `stop` only ever ends a
+panel that `start` or `npm run studio` began. One that your AI assistant is running is left alone, and so is one that
+is in the middle of making something, unless you add `--force`.
+
 Seven tabs, in the order you would use them:
 
 - **Cast**: reusable characters. Create them, edit them in place, or build one from a picture.
@@ -222,8 +234,14 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
   invisible reCAPTCHA; this drives the real interface at human pace and does nothing to evade it.
 - Before each generation the server reads Flow's own credit quote and skips the scene if it exceeds
   `max_credits` (default 25).
-- Environment variables: `GEMINI_API_KEY`, `FLOW_MCP_PORT` (8787), `FLOW_MCP_OUTPUT`,
-  `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`, `FLOW_MCP_PAUSE_MIN_S`,
+- Everything it keeps lives in `~/.flow-mcp`: `config.json` (your settings), `chrome-profile`, `logs/studio.log`,
+  and small notes saying which process is serving the panel and which Chrome is its own.
+- `config.json` takes `port` (8787), `cdpPort` (9333), `output` (`~/flow-mcp-out`) and `chrome` (the path to Chrome).
+  If a port belongs to another program, the next free one is used and `status` shows which.
+- Only the Chrome that Flow Studio started itself is ever controlled or closed. Another Chrome that happens to have
+  remote debugging on the same port is never attached to.
+- Environment variables win over `config.json`: `GEMINI_API_KEY`, `FLOW_MCP_PORT`, `FLOW_MCP_OUTPUT`,
+  `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT`, `FLOW_MCP_CHROME`, `FLOW_MCP_PAUSE_MIN_S`,
   `FLOW_MCP_PAUSE_MAX_S`.
 
 ## If something goes wrong
