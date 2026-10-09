@@ -25,7 +25,7 @@ Three abbreviations you'll see, spelled out once:
   uses it to move the mouse and click inside that private Chrome window.
 - **API — application programming interface.** Google sells one for video
   generation, billed per use. **We deliberately do not touch it.** Everything
-  here spends the credits already included in your Google AI subscription.
+  here spends Flow's own credits: 50 free a day with any Google account, more with a paid Google AI plan.
 
 ### How a request travels
 

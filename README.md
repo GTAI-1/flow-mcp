@@ -1,7 +1,7 @@
 # flow-mcp
 
 Drive **Google Flow** (flow.google.com) from Claude, Codex or any other MCP app — or from a local control
-panel — using the credits already included in your Google AI subscription, not the pay-per-use video API.
+panel — using Flow's own credits (free with any Google account: 50 a day), not the pay-per-use video API.
 
 It is a small program that runs on your own machine. It opens its own Chrome window, signs in
 as you, and clicks Flow's real buttons. There is no browser extension, no hosted service and no
@@ -24,7 +24,7 @@ New here? [GETTING-STARTED.md](GETTING-STARTED.md) takes you from nothing to you
 | **macOS or Windows 10/11** | Developed and tested on macOS. Windows is supported — Chrome, the computer's own voices, the Recycle Bin and the panel launcher all have Windows versions — but it hasn't been run on a real PC yet, so please report anything that breaks |
 | **Node.js 22 or newer** | `node --version` |
 | **Google Chrome** | Any recent version |
-| **A Google AI subscription with Flow** | Pro or Ultra. This is where the credits come from |
+| **A Google account** | Free. Flow gives every account 50 credits a day; a paid Google AI plan adds more and unlocks 1080p downloads. Developed on a Pro plan |
 | **FFmpeg** *(optional)* | Mac: `brew install ffmpeg` · Windows: `winget install Gyan.FFmpeg` — needed only to join clips, mix music or record narration |
 | **A Google AI Studio key** *(optional, free)* | Only for the Google narration voices. See below |
 
