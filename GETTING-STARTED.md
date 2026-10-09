@@ -41,7 +41,7 @@ and connects the tool to itself, so there is no separate "connect" step.
 **1.** Open your assistant and paste this:
 
 > *Set up Flow MCP from https://github.com/GTAI-1/flow-mcp for me. Install anything it needs that I don't
-> have yet (Node.js 22 or newer, Google Chrome, FFmpeg and whisper.cpp), put it in my home folder, build
+> have yet (Node.js 22 or newer, Google Chrome and FFmpeg), put it in my home folder, build
 > it, connect it to yourself, then run `npm run login`.*
 
 It asks your permission before each step. Say yes.
@@ -75,7 +75,7 @@ a few commands into **Terminal** (Mac) or **PowerShell** (Windows).
 **Mac.** Install [Homebrew](https://brew.sh) first if you don't have it (it asks for your password), then:
 
 ```bash
-brew install node ffmpeg whisper-cpp git
+brew install node ffmpeg git
 ```
 
 **Windows.** One at a time, skipping any you already have:
@@ -96,9 +96,7 @@ winget install Git.Git
 winget install Google.Chrome
 ```
 
-Then close and reopen PowerShell. Captions on Windows also need `whisper-cli.exe` from the
-[whisper.cpp releases](https://github.com/ggml-org/whisper.cpp/releases), somewhere on your PATH. Skip it if
-you don't want captions.
+Then close and reopen PowerShell.
 
 ### B2. Get Flow MCP
 
@@ -186,12 +184,11 @@ asks before spending.
 4. *"Turn the first still into an 8-second clip at 720p."* (about 12 credits)
 5. *"Record a warm narration for it."* (free)
 6. *"Put the narration on the clip."* (free)
-7. *"Add bold captions."* (free)
 
 Everything you make is saved in the **flow-mcp-out** folder in your home folder.
 
 **No assistant?** Open Flow Studio and work through its tabs from left to right: Cast, Frames, Shots,
-Voice, Restyle, Cut, Captions.
+Voice, Restyle, Cut.
 
 ---
 

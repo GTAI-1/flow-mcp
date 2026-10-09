@@ -1,7 +1,7 @@
 # flow-mcp
 
-Drive **Google Flow** (flow.google.com) from Claude, Codex or any other MCP app — or from a local control
-panel — using Flow's own credits (free with any Google account: 50 a day), not the pay-per-use video API.
+Drive **Google Flow** (flow.google.com) from Claude, Codex or any other MCP app, or from a local control
+panel, using Flow's own credits (free with any Google account: 50 a day), not the pay-per-use video API.
 
 It is a small program that runs on your own machine. It opens its own Chrome window, signs in
 as you, and clicks Flow's real buttons. There is no browser extension, no hosted service and no
@@ -21,11 +21,11 @@ New here? [GETTING-STARTED.md](GETTING-STARTED.md) takes you from nothing to you
 
 | | |
 |---|---|
-| **macOS or Windows 10/11** | Developed and tested on macOS. Windows is supported — Chrome, the computer's own voices, the Recycle Bin and the panel launcher all have Windows versions — but it hasn't been run on a real PC yet, so please report anything that breaks |
+| **macOS or Windows 10/11** | Developed and tested on macOS. Windows is supported (Chrome, the computer's own voices, the Recycle Bin and the panel launcher all have Windows versions), but it hasn't been run on a real PC yet, so please report anything that breaks |
 | **Node.js 22 or newer** | `node --version` |
 | **Google Chrome** | Any recent version |
 | **A Google account** | Free. Flow gives every account 50 credits a day; a paid Google AI plan adds more and unlocks 1080p downloads. Developed on a Pro plan |
-| **FFmpeg** *(optional)* | Mac: `brew install ffmpeg` · Windows: `winget install Gyan.FFmpeg` — needed only to join clips, mix music or record narration |
+| **FFmpeg** *(optional)* | Mac: `brew install ffmpeg` · Windows: `winget install Gyan.FFmpeg`. Needed only to join clips, mix music or record narration |
 | **A Google AI Studio key** *(optional, free)* | Only for the Google narration voices. See below |
 
 A display must stay awake: the Chrome window is really being driven, so the machine cannot be
@@ -56,7 +56,7 @@ npm run login
 ```
 
 That opens the dedicated Chrome window. Sign into Google by hand, open (or create) a Flow project,
-and leave the window open. The program never types your password — it only uses the session you
+and leave the window open. The program never types your password; it only uses the session you
 created. That Chrome profile lives in `~/.flow-mcp/chrome-profile` and is separate from your
 everyday browser.
 
@@ -72,7 +72,7 @@ claude mcp add --scope user flow -- node /absolute/path/to/flow-mcp/dist/index.j
 
 `--scope user` makes it available in every folder; the default (`local`) only works in the folder you ran it from.
 
-**Claude Desktop** — add to `claude_desktop_config.json` (Mac: `~/Library/Application Support/Claude/`, Windows:
+**Claude Desktop**: add to `claude_desktop_config.json` (Mac: `~/Library/Application Support/Claude/`, Windows:
 `%APPDATA%\Claude\`). On Windows, write the path with doubled backslashes, like
 `"C:\\Users\\you\\flow-mcp\\dist\\index.js"`:
 
@@ -80,7 +80,7 @@ claude mcp add --scope user flow -- node /absolute/path/to/flow-mcp/dist/index.j
 { "mcpServers": { "flow": { "command": "node", "args": ["/absolute/path/to/flow-mcp/dist/index.js"] } } }
 ```
 
-**Codex** — add to `~/.codex/config.toml` (on Windows, `%USERPROFILE%\.codex\config.toml`):
+**Codex**: add to `~/.codex/config.toml` (on Windows, `%USERPROFILE%\.codex\config.toml`):
 
 ```toml
 [mcp_servers.flow]
@@ -93,7 +93,7 @@ Codex, like most MCP apps, gives up on a tool call after 60 seconds, so any call
 45 seconds (creating a character, a 1080p download) answers with a task id instead and keeps working, and
 `flow_wait` collects the result.
 
-**Antigravity** (Google's coding app) — add a `flow` entry to `mcp_config.json`. On a Mac it lives in
+**Antigravity** (Google's coding app): add a `flow` entry to `mcp_config.json`. On a Mac it lives in
 `~/.gemini/antigravity/`; you can also open it from the agent panel's **…** menu → **Manage MCP Servers** →
 **View raw config**. Keep any servers already listed and add this one beside them:
 
@@ -106,11 +106,11 @@ settings. ChatGPT in the browser or the ChatGPT app can't use it: its connectors
 the internet, and this tool has to run on your own computer to drive your Chrome window.
 
 Developed and tested with Claude. Codex and Antigravity speak the same protocol, so they should work the
-same way, but neither has been tried yet — please report how it goes. Running two of them at once is safe:
+same way, but neither has been tried yet, so please report how it goes. Running two of them at once is safe:
 the first one started drives Flow, and the others pass their requests to it.
 
 Restart the app, then ask it: *"check my Flow session"*. You should get your plan and credit balance
-back. Everything after that is plain English — you never type tool names.
+back. Everything after that is plain English; you never type tool names.
 
 ---
 
@@ -118,11 +118,11 @@ back. Everything after that is plain English — you never type tool names.
 
 Nothing below costs a credit until step 4, and the assistant asks before spending.
 
-1. **Check the session.** *"Check my Flow session."* — confirms sign-in, plan and credits.
+1. **Check the session.** *"Check my Flow session."* This confirms sign-in, plan and credits.
 2. **Make a character.** *"Create a character called Pip, a small lamplighter in a flat cartoon style."*
    Flow draws the portrait. Free.
 3. **Draw the key frames.** *"Draw three stills with Pip: a dark rooftop, him lighting a lamp, the
-   whole hillside glowing. Match each one to the last."* Free — stills cost nothing, so get the look
+   whole hillside glowing. Match each one to the last."* Free: stills cost nothing, so get the look
    right here before spending.
 4. **Shoot it.** *"Turn those into three 10-second shots, each starting where the last one ended,
    720p, no more than 15 credits each."* This spends credits. The price is read from Flow's own
@@ -145,26 +145,26 @@ or double-click **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows).
 
 Seven tabs, in the order you would use them:
 
-- **Cast** — reusable characters: create, edit in place, or build one from a picture.
-- **Frames** — free stills, with *match previous frame* to keep a set on-model.
-- **Shots** — paid clips, with first/last frames, chaining, a live credit estimate, and a card that
+- **Cast**: reusable characters. Create them, edit them in place, or build one from a picture.
+- **Frames**: free stills, with *match previous frame* to keep a set on-model.
+- **Shots**: paid clips, with first/last frames, chaining, a live credit estimate, and a card that
   continues a finished clip from its own last frame.
-- **Voice** — free narration in Google's voices or your computer's own. Your saved narrations are listed
+- **Voice**: free narration in Google's voices or your computer's own. Your saved narrations are listed
   here to play or delete, and there's a field for your Google AI Studio key (checked with Google, stored
-  only on your computer — never paste it into a chat).
-- **Restyle** — change a clip you already have.
-- **Cut** — join any videos into one film, in the order you pick: upload one, or choose from films you've
+  only on your computer; never paste it into a chat).
+- **Restyle**: change a clip you already have.
+- **Cut**: join any videos into one film, in the order you pick. Upload one, or choose from films you've
   already made. Add a narration (from your saved ones or an upload) and music, and turn the clips' own
   sound down so the narration sits on top.
-- **Library** — everything in your Flow project: download it again for free (a scene comes down as one
+- **Library**: everything in your Flow project. Download it again for free (a scene comes down as one
   finished film, not loose clips), or move it to Flow's Trash.
 
-A progress monitor and a gallery of your saved work sit alongside — the gallery shows stills or clips
+A progress monitor and a gallery of your saved work sit alongside. The gallery shows stills or clips
 on the tabs that use them. On a wide screen, each side scrolls on its own. Two kinds of delete, clearly
 labelled: **Move to the Mac's Trash / Recycle Bin** removes a file from your computer; **Move to
 Flow's Trash** removes it from your Flow project only. Both can be undone.
 
-The panel ships with the repo but is not started for you — run `npm run studio` when you want it.
+The panel ships with the repo but is not started for you: run `npm run studio` when you want it.
 Opening `studio/index.html` as a plain file does nothing; the page needs the server behind it, and
 says so in red if you try.
 
@@ -185,22 +185,22 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | `flow_cancel` | Cancel a job that has not started |
 | `flow_retry` | Re-queue failed jobs with the same settings and file names (a failed tile is first retried inside Flow with its own free Retry button: `retries`, default 1) |
 | `flow_assets` | List images and videos already in the Flow project (usable as `asset:<title>`) |
-| `flow_download` | Download existing project media without regenerating — free, including the 1080p / 2K upscale. A scene comes down as one stitched film |
+| `flow_download` | Download existing project media without regenerating. Free, including the 1080p / 2K upscale. A scene comes down as one stitched film |
 | `flow_trash` | Move an image, video or scene in the Flow project to Flow's Trash, where it can be restored. Exact title only; refuses if two items share it; never deletes permanently |
 | `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (20 images in ~204 s), 0 credits. Each image is matched back to its scene by its stored prompt, so file numbers are right in any finish order. Scenes the agent drops are re-asked of it (up to 2 rounds), then re-run one by one |
 | `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). Flow shows no quote first; about 20 credits for a 4 s clip |
-| `flow_continue` | Start a clip from the last frame of an existing one **with a character or your avatar still attached** — the composer allows a start frame or attached characters, never both, so this drives Flow's agent mode, which does both. No quote beforehand |
+| `flow_continue` | Start a clip from the last frame of an existing one **with a character or your avatar still attached**. The composer allows a start frame or attached characters, never both, so this drives Flow's agent mode, which does both. No quote beforehand |
 | `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with a personality and a stock voice; use it as `asset:<name>` |
 | `flow_character_edit` | Restyle an existing character in place (free) and save the new portrait; name, personality and voice are kept, so every scene referencing it updates. Pass `look` with the updated description; with only a name it re-saves the current portrait |
 | `flow_characters` | List the project's characters |
 | `flow_techniques` | 39 film-technique prompt presets (camera moves, product shots, transitions, image commands); pass an id as a scene's `technique` |
-| `flow_narrate` | Free narration audio, any length: `gemini` (Google AI Studio text-to-speech — the same voices Flow has, plus a `style` note) or `mac` (a voice installed on this computer, no key needed) |
+| `flow_narrate` | Free narration audio, any length: `gemini` (Google AI Studio text-to-speech, with the same voices Flow has, plus a `style` note) or `mac` (a voice installed on this computer, no key needed) |
 | `flow_voices` | Narrator voices available, and whether a Google key is set up |
-| `flow_assemble` | Join clips into one MP4 — a project's clips, or any you list, in order — with optional music and voiceover, and separate volume for the clips' own sound (local FFmpeg, no credits) |
+| `flow_assemble` | Join clips into one MP4 (a project's clips, or any you list, in order) with optional music and voiceover, and separate volume for the clips' own sound (local FFmpeg, no credits) |
 
 **Continuity between shots:** `chain_previous` (this clip starts on the last frame of the previous
 one), `first_frame` + `last_frame` (animate between two stills you chose), `reference_images` (keep a
-character or product consistent). Flow's *composer* takes either frames or references, never both — so
+character or product consistent). Flow's *composer* takes either frames or references, never both, so
 when you need a start frame **and** a character locked together, use `flow_continue`, which goes through
 Flow's agent mode and does both.
 
@@ -208,11 +208,11 @@ Output lands in `~/flow-mcp-out/<project>/scene-NN.ext`.
 
 ### Narration with Google's voices (optional)
 
-`flow_narrate` with `engine: "mac"` uses your computer's own voices and works out of the box — macOS voices on a
-Mac, the built-in speech voices on Windows. For Google's voices — the same ones Flow offers — get a free key from
+`flow_narrate` with `engine: "mac"` uses your computer's own voices and works out of the box: macOS voices on a
+Mac, the built-in speech voices on Windows. For Google's voices (the same ones Flow offers), get a free key from
 [Google AI Studio](https://aistudio.google.com/apikey) and paste it into **Flow Studio → Voice → Google AI Studio
 key → Save key**. It's checked with Google before it's saved, and stored only on your computer. Or set
-`GEMINI_API_KEY`. Either way, never paste the key into a chat — it would end up in the conversation history.
+`GEMINI_API_KEY`. Either way, never paste the key into a chat; it would end up in the conversation history.
 
 ---
 
@@ -232,7 +232,7 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
 |---|---|
 | Mac: the server will not start, `EPERM: operation not permitted` | The folder is in a macOS-protected location. Move it out of `~/Desktop`, `~/Documents` or `~/Downloads` and update the path in your Claude config |
 | *"Not signed in"* or *"no project open"* | Run `npm run login`, sign in, open a Flow project, leave the window open |
-| A clip generated but no file arrived | The media is still in Flow. `flow_download` pulls it back for nothing — never re-generate and pay twice |
+| A clip generated but no file arrived | The media is still in Flow. `flow_download` pulls it back for nothing. Never re-generate and pay twice |
 | Everything times out | The Chrome window was closed, or the machine slept. Reopen it with `npm run login` |
 
 ---
