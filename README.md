@@ -12,7 +12,8 @@ Claude / Codex ──stdio──> flow-mcp ──Chrome DevTools Protocol──>
 ```
 
 **MCP** = Model Context Protocol, the standard that lets Claude use outside tools.
-New here? [OVERVIEW.md](OVERVIEW.md) explains what it does in plain English, with no code names.
+New here? [GETTING-STARTED.md](GETTING-STARTED.md) takes you from nothing to your first video, step by step, and
+[OVERVIEW.md](OVERVIEW.md) explains what it does in plain English, with no code names.
 
 ---
 
@@ -66,8 +67,10 @@ everyday browser.
 **Claude Code**
 
 ```bash
-claude mcp add flow -- node /absolute/path/to/flow-mcp/dist/index.js
+claude mcp add --scope user flow -- node /absolute/path/to/flow-mcp/dist/index.js
 ```
+
+`--scope user` makes it available in every folder; the default (`local`) only works in the folder you ran it from.
 
 **Claude Desktop** — add to `claude_desktop_config.json` (Mac: `~/Library/Application Support/Claude/`, Windows:
 `%APPDATA%\Claude\`). On Windows, write the path with doubled backslashes, like
