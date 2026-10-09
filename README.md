@@ -61,7 +61,7 @@ everyday browser.
 
 ---
 
-## Connect it to Claude or Codex
+## Connect it to Claude, Codex or Antigravity
 
 **Claude Code**
 
@@ -90,12 +90,21 @@ Codex, like most MCP apps, gives up on a tool call after 60 seconds, so any call
 45 seconds (creating a character, a 1080p download) answers with a task id instead and keeps working, and
 `flow_wait` collects the result.
 
+**Antigravity** (Google's coding app) — add a `flow` entry to `mcp_config.json`. On a Mac it lives in
+`~/.gemini/antigravity/`; you can also open it from the agent panel's **…** menu → **Manage MCP Servers** →
+**View raw config**. Keep any servers already listed and add this one beside them:
+
+```json
+{ "mcpServers": { "flow": { "command": "node", "args": ["/absolute/path/to/flow-mcp/dist/index.js"] } } }
+```
+
 **Other MCP apps** (Cursor, VS Code and others) take the same command and arguments in their own MCP
 settings. ChatGPT in the browser or the ChatGPT app can't use it: its connectors only reach servers on
 the internet, and this tool has to run on your own computer to drive your Chrome window.
 
-Developed and tested with Claude. Codex speaks the same protocol, so it should work the same way, but
-it hasn't been tried yet — please report how it goes.
+Developed and tested with Claude. Codex and Antigravity speak the same protocol, so they should work the
+same way, but neither has been tried yet — please report how it goes. Running two of them at once is safe:
+the first one started drives Flow, and the others pass their requests to it.
 
 Restart the app, then ask it: *"check my Flow session"*. You should get your plan and credit balance
 back. Everything after that is plain English — you never type tool names.
