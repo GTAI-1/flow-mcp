@@ -518,3 +518,11 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   (`flow-pending-tile` inside, "NN% <prompt>"), so TILE_ID_JS's title fallback counted it as finished media and the
   download hit a menu with only Delete. TILE_ID_JS skips tiles that contain `flow-pending-tile`. Verified: 4 s Omni
   1.1 Flash 720p, 7 credits, 50 -> 43, clip-01.mp4 4.01 s 1280x720 with audio. The free plan readout shows plan "".
+- AUDIO FAILURE TILE (observed live 2026-10-11, Veo 3.1 Lite, first frame + "Sound: crackling fire, soft wind, gentle
+  water ripple"): the video rendered but Flow failed the AUDIO and showed `flow-error-tile` "Audio generation failed.
+  Please try a different prompt ... You can update your settings to return silent videos. You will be refunded" (refund
+  arrived within minutes). Unlike the 2026-09-20 image failure, this error tile already carries a real aria-label title,
+  so TILE_ID_JS's title fallback counted it as finished media: the wait loop returned it, the download menu had nothing to
+  download and the job died 12 min later with "no file arrived". TILE_ID_JS now skips tiles containing `flow-error-tile`
+  (as it does `flow-pending-tile`), so the Retry path runs. Buttons on it: `Retry`, `Reuse prompt`, `Delete` (aria-labels).
+  The same shot with a plain "Sound: quiet ambient wind." rendered fine on the next try.
