@@ -110,7 +110,7 @@ const settingsTrigger = (page: Page) => page.getByRole("button", { name: "Settin
 // made old tiles look new. Titles are stable, so an id-less tile is identified by its title instead.
 // A rendering tile already carries its final title (2026-10-09), so it must not count as media until it is done.
 const TILE_ID_JS = `(tile) => {
-  if (tile.querySelector("flow-pending-tile")) return undefined;
+  if (tile.querySelector("flow-pending-tile, flow-error-tile")) return undefined;
   const media = tile.querySelector("img[data-media-id], video[data-media-id], img[src], video[src]");
   const id = media && (media.getAttribute("data-media-id") || media.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0]);
   if (id) return id;
