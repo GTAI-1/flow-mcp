@@ -1,5 +1,4 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { assemble, localVoices, speakLocally } from "./assemble.js";
@@ -9,8 +8,9 @@ import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacte
 import { JobQueue, type Job } from "./queue.js";
 import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
+import { OUTPUT_ROOT } from "./config.js";
 
-export const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out");
+export { OUTPUT_ROOT };
 const words = (s: string) => s.split(/[^a-z0-9]+/i).filter((w) => w.length > 3).map((w) => w.toLowerCase());
 
 export const projectDir = (project: string) => resolve(OUTPUT_ROOT, project.replace(/[^\w.-]+/g, "_"));
@@ -242,6 +242,11 @@ export const VOICES = [
 const BUSY = "A generation is running in the Flow tab. Wait for it to finish (flow_wait), then retry.";
 
 export class LocalCore implements Core {
+  // True while a generation is running in the Flow tab; `flow-studio stop` will not interrupt one.
+  get busy(): boolean {
+    return this.queue.busy;
+  }
+
   private queue: JobQueue = new JobQueue(async (job) => {
     const { chain_from, reference_from } = job.params;
     if (reference_from) {
