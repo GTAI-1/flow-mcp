@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
 
@@ -14,6 +14,49 @@ export const COMPUTER = IS_MAC ? "this Mac" : IS_WIN ? "this PC" : "this compute
 export const BIN = IS_MAC ? "the Mac's Trash" : IS_WIN ? "the Recycle Bin" : "the Trash";
 
 export const FFMPEG_HINT = IS_MAC ? "brew install ffmpeg" : IS_WIN ? "winget install Gyan.FFmpeg" : "sudo apt install ffmpeg";
+
+// A process started before ffmpeg was installed keeps its old PATH (Claude Desktop's flow-mcp lives for days), so a bare
+// "ffmpeg" fails with ENOENT even though winget just installed it. Look on PATH first, then in the places the installers
+// put it, and only then give back the bare name so the error message still carries FFMPEG_HINT.
+export function findTool(name: string): string {
+  const exe = IS_WIN ? `${name}.exe` : name;
+  for (const dir of (process.env.PATH ?? "").split(IS_WIN ? ";" : ":")) {
+    if (dir && existsSync(join(dir, exe))) return join(dir, exe);
+  }
+  const roots: string[] = [];
+  if (IS_WIN) {
+    const local = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
+    for (const base of [join(local, "Microsoft", "WinGet", "Packages"), join(local, "Microsoft", "WinGet", "Links")]) {
+      if (!existsSync(base)) continue;
+      if (base.endsWith("Links")) roots.push(base);
+      else for (const pkg of readdirSync(base)) if (/ffmpeg/i.test(pkg)) roots.push(join(base, pkg));
+    }
+  } else {
+    roots.push("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin");
+  }
+  for (const root of roots) {
+    const direct = join(root, exe);
+    if (existsSync(direct)) return direct;
+    if (!IS_WIN) continue;
+    for (const sub of readdirSync(root)) {
+      const inBin = join(root, sub, "bin", exe);
+      if (existsSync(inBin)) return inBin;
+    }
+  }
+  return name;
+}
+
+// rename() cannot cross drives: with the output folder on D: and Chrome downloading under C:, every finished file died
+// with EXDEV. Fall back to copy + delete, which works across any two volumes.
+export function moveFile(from: string, to: string): void {
+  try {
+    renameSync(from, to);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+    copyFileSync(from, to);
+    unlinkSync(from);
+  }
+}
 
 // PowerShell single-quoted string: the only character that needs escaping is the quote itself.
 export const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`;
