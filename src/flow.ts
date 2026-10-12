@@ -2,7 +2,7 @@ import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, 
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
-import { HOME_DIR, getFlowPage } from "./chrome.js";
+import { HL, HOME_DIR, getFlowPage } from "./chrome.js";
 import type { Job } from "./queue.js";
 import { extractZip } from "./platform.js";
 
@@ -613,8 +613,10 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
 async function ensureProjectGrid(page: Page): Promise<void> {
   await dismissOverlays(page);
   const root = page.url().match(/^https:\/\/[^/]+\/project\/[0-9a-f-]{36}/)?.[0];
-  if (root && page.url() !== root) {
-    await page.goto(root, { waitUntil: "domcontentloaded" });
+  // Keep the ?hl= pin: without it this normalisation drops the language back to the account default.
+  const target = root ? root + HL : undefined;
+  if (target && page.url() !== target) {
+    await page.goto(target, { waitUntil: "domcontentloaded" });
     await pause(page, 2500);
   }
   await page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true }).click().catch(() => {});
