@@ -16,6 +16,11 @@ export interface FlowState {
   hint?: string;
 }
 
+// Flow renamed the agent-mode toggle from "Agent" to "Agent instructions". An exact-name locator stopped matching
+// anything, so getAttribute("aria-pressed") hung for its full timeout before every generation. Matching the prefix
+// survives both spellings; no other button on the page starts with "Agent".
+const AGENT_TOGGLE = /^Agent\b/;
+
 const IMAGE_TIMEOUT_MS = 3 * 60_000;
 const VIDEO_TIMEOUT_MS = 12 * 60_000;
 const FAILURE_TEXT = /failed|couldn.t|unable/i;
@@ -625,7 +630,7 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const s = job.params;
 
   await ensureProjectGrid(page);
-  const agent = page.getByRole("button", { name: "Agent", exact: true });
+  const agent = page.getByRole("button", { name: AGENT_TOGGLE });
   if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
@@ -1117,7 +1122,7 @@ export async function runEdit(job: Job): Promise<string[]> {
 // mode on then breaks the NEXT job, which expects the plain composer - a free character build failed that way. So this
 // confirms the toggle actually landed rather than assuming the click worked.
 async function setAgentMode(page: Page, on: boolean): Promise<void> {
-  const agent = page.getByRole("button", { name: "Agent", exact: true });
+  const agent = page.getByRole("button", { name: AGENT_TOGGLE });
   for (let attempt = 0; attempt < 3; attempt++) {
     if (((await agent.getAttribute("aria-pressed").catch(() => null)) === "true") === on) return;
     await agent.click({ timeout: 8000 }).catch(() => {});
