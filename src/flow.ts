@@ -2,7 +2,7 @@ import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, 
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
-import { HOME_DIR, getFlowPage } from "./chrome.js";
+import { HL, HOME_DIR, getFlowPage } from "./chrome.js";
 import type { Job } from "./queue.js";
 import { extractZip } from "./platform.js";
 
@@ -15,6 +15,11 @@ export interface FlowState {
   composer?: string;
   hint?: string;
 }
+
+// Flow renamed the agent-mode toggle from "Agent" to "Agent instructions". An exact-name locator stopped matching
+// anything, so getAttribute("aria-pressed") hung for its full timeout before every generation. Matching the prefix
+// survives both spellings; no other button on the page starts with "Agent".
+const AGENT_TOGGLE = /^Agent\b/;
 
 const IMAGE_TIMEOUT_MS = 3 * 60_000;
 const VIDEO_TIMEOUT_MS = 12 * 60_000;
@@ -608,8 +613,10 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
 async function ensureProjectGrid(page: Page): Promise<void> {
   await dismissOverlays(page);
   const root = page.url().match(/^https:\/\/[^/]+\/project\/[0-9a-f-]{36}/)?.[0];
-  if (root && page.url() !== root) {
-    await page.goto(root, { waitUntil: "domcontentloaded" });
+  // Keep the ?hl= pin: without it this normalisation drops the language back to the account default.
+  const target = root ? root + HL : undefined;
+  if (target && page.url() !== target) {
+    await page.goto(target, { waitUntil: "domcontentloaded" });
     await pause(page, 2500);
   }
   await page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true }).click().catch(() => {});
@@ -625,7 +632,7 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const s = job.params;
 
   await ensureProjectGrid(page);
-  const agent = page.getByRole("button", { name: "Agent", exact: true });
+  const agent = page.getByRole("button", { name: AGENT_TOGGLE });
   if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
@@ -1117,7 +1124,7 @@ export async function runEdit(job: Job): Promise<string[]> {
 // mode on then breaks the NEXT job, which expects the plain composer - a free character build failed that way. So this
 // confirms the toggle actually landed rather than assuming the click worked.
 async function setAgentMode(page: Page, on: boolean): Promise<void> {
-  const agent = page.getByRole("button", { name: "Agent", exact: true });
+  const agent = page.getByRole("button", { name: AGENT_TOGGLE });
   for (let attempt = 0; attempt < 3; attempt++) {
     if (((await agent.getAttribute("aria-pressed").catch(() => null)) === "true") === on) return;
     await agent.click({ timeout: 8000 }).catch(() => {});

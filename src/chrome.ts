@@ -4,7 +4,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 
-export const FLOW_URL = "https://flow.google.com/";
+// Flow serves its UI in the Google account language. Playwright matches buttons by their English
+// accessible names, so a non-English account breaks every selector. FLOW_MCP_HL=en pins the UI language.
+export const HL = process.env.FLOW_MCP_HL ? `?hl=${process.env.FLOW_MCP_HL}` : "";
+export const FLOW_URL = "https://flow.google.com/" + HL;
 const FLOW_HOSTS = /^https:\/\/(flow\.google\.com|labs\.google\/fx)/;
 export const HOME_DIR = process.env.FLOW_MCP_HOME ?? join(homedir(), ".flow-mcp");
 export const PROFILE_DIR = join(HOME_DIR, "chrome-profile");
