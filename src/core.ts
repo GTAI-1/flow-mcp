@@ -1,16 +1,16 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { assemble, localVoices, speakLocally } from "./assemble.js";
-import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemini.js";
+import { OUTPUT_ROOT } from "./chrome.js";
+import { GEMINI_VOICES, checkGeminiKey, geminiKey, saveGeminiKey, speakWithGemini } from "./gemini.js";
 import { extractLastFrame } from "./chain.js";
 import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
 import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
-export const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out");
+export { OUTPUT_ROOT };
 const words = (s: string) => s.split(/[^a-z0-9]+/i).filter((w) => w.length > 3).map((w) => w.toLowerCase());
 
 export const projectDir = (project: string) => resolve(OUTPUT_ROOT, project.replace(/[^\w.-]+/g, "_"));
@@ -138,6 +138,7 @@ export const shapes = {
   },
   trash: { name: z.string().min(1).describe("Exact title of the item to move to Flow's Trash, as listed by flow_assets.") },
   set_key: { key: z.string().min(1).max(200) },
+  check_key: {},
   discard: { path: z.string().min(1).describe("A saved film, still, narration or whole project folder inside the films folder, to move to this computer's bin (Mac Trash, Windows Recycle Bin).") },
   outputs: {},
   characters: {},
@@ -215,6 +216,7 @@ export interface Core {
   trash(a: Args<"trash">): Promise<unknown>;
   discard(a: Args<"discard">): Promise<unknown>;
   set_key(a: Args<"set_key">): Promise<unknown>;
+  check_key(): Promise<unknown>;
   continue_shot(a: Args<"continue_shot">): Promise<unknown>;
   agent(a: Args<"agent">): Promise<unknown>;
   outputs(): Promise<unknown>;
@@ -488,6 +490,11 @@ export class LocalCore implements Core {
   // Panel only: deliberately NOT registered as an MCP tool, so a key typed into Flow Studio never reaches Claude.
   async set_key({ key }: Args<"set_key">) {
     return saveGeminiKey(key);
+  }
+
+  // Panel only, like set_key.
+  async check_key() {
+    return checkGeminiKey();
   }
 
   async voices() {

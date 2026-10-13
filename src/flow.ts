@@ -1,10 +1,10 @@
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
-import { HOME_DIR, getFlowPage } from "./chrome.js";
+import { HOME_DIR, OUTPUT_ROOT, getFlowPage } from "./chrome.js";
 import type { Job } from "./queue.js";
-import { extractZip } from "./platform.js";
+import { extractZip, moveFile } from "./platform.js";
 
 export interface FlowState {
   url: string;
@@ -40,8 +40,28 @@ export async function getFlowState(detailed = false): Promise<FlowState> {
   return state;
 }
 
+// Flow's "Rights to use this image" agreement opens over everything after an upload and survives Escape, so every
+// later job timed out behind it looking for some other button (2026-10-13). Agreeing is the user's call, never ours:
+// stop with a message that says exactly what to click.
+async function failOnRightsDialog(page: Page): Promise<void> {
+  const dialog = page.getByRole("dialog").filter({ hasText: "Rights to use this image" });
+  if (await dialog.isVisible().catch(() => false)) {
+    throw new Error(
+      'Flow is asking you to confirm "Rights to use this image" (shown once, on the first upload). Read it in the Flow Chrome window and click I agree or Cancel there, then run this again. Nothing was generated.',
+    );
+  }
+}
+
+// On a narrow window (a 1366 px laptop at 125 % scaling) Flow slides the project navigation off-screen, and a real
+// click on "Characters" times out as "outside of the viewport" (2026-10-13). The links still work clicked from script.
+async function openNav(page: Page, label: "All media" | "Characters"): Promise<void> {
+  const link = page.getByRole("navigation", { name: "Project navigation" }).getByText(label, { exact: true });
+  await link.click({ timeout: 5000 }).catch(() => link.dispatchEvent("click", undefined, { timeout: 10_000 }));
+}
+
 // Menus close on Escape; the account panel does not and needs its own close button.
 async function dismissOverlays(page: Page): Promise<void> {
+  await failOnRightsDialog(page);
   await page.keyboard.press("Escape");
   const closePanel = page.getByRole("button", { name: "Close account panel" });
   if (await closePanel.isVisible().catch(() => false)) await closePanel.click({ timeout: 5000 }).catch(() => {});
@@ -305,13 +325,17 @@ const ASSET_PREFIX = "asset:";
 // a half-processed upload can never be taken for the next generation's result.
 async function waitForUpload(page: Page, name: string, timeoutMs: number): Promise<void> {
   const tile = page.locator(`flow-grid-tile-container[aria-label="${name.replace(/"/g, '\\"')}"]:has([data-media-id])`);
-  await tile
-    .first()
-    .waitFor({ state: "attached", timeout: timeoutMs })
-    .catch(() => {
-      throw new Error(`Flow did not finish processing the upload "${name}" within ${Math.round(timeoutMs / 1000)}s.`);
-    });
-  await pause(page, 1000);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await tile.count()) {
+      await pause(page, 1000);
+      return;
+    }
+    // The first upload ever can stop at Flow's rights agreement; say so now rather than after the full timeout.
+    await failOnRightsDialog(page);
+    await pause(page, 1000);
+  }
+  throw new Error(`Flow did not finish processing the upload "${name}" within ${Math.round(timeoutMs / 1000)}s.`);
 }
 
 // Uploads under a unique filename so the asset can be picked unambiguously afterwards.
@@ -378,8 +402,17 @@ export async function attachAsset(page: Page, opener: Locator, assetName: string
   await option.waitFor({ state: "visible", timeout: 10_000 });
   await option.click();
   const add = page.getByRole("button", { name: "Add to prompt", exact: true });
-  if (await add.waitFor({ state: "visible", timeout: 1500 }).then(() => true, () => false)) await add.click().catch(() => {});
-  await list.waitFor({ state: "hidden", timeout: 10_000 });
+  const viaAdd = await add.waitFor({ state: "visible", timeout: 1500 }).then(() => true, () => false);
+  if (viaAdd) await add.click().catch(() => {});
+  const closed = () => list.waitFor({ state: "hidden", timeout: 5000 }).then(() => true, () => false);
+  // A second reference once left the ingredients picker open after "Add to prompt" and the job died here
+  // (2026-10-13). Press Add again, then Escape - only in the ingredients picker, where runGeneration counts the
+  // attached chips afterwards and stops before spending anything. A frame picker is never escaped out of.
+  if (!(await closed()) && viaAdd) {
+    if (await add.isVisible().catch(() => false)) await add.click().catch(() => {});
+    if (!(await closed())) await page.keyboard.press("Escape");
+  }
+  await list.waitFor({ state: "hidden", timeout: 5000 });
   await pause(page, 500);
 }
 
@@ -520,10 +553,10 @@ function unpackTakes(zip: string, targetStem: string): string[] {
   const out: string[] = [];
   for (const [i, path] of takes.entries()) {
     const dest = `${targetStem}${i ? `-v${i + 1}` : ""}${extensionOf(path)}`;
-    renameSync(path, dest);
+    moveFile(path, dest);
     out.push(dest);
   }
-  renameSync(zip, `${targetStem}-takes.zip`);
+  moveFile(zip, `${targetStem}-takes.zip`);
   if (!out.length) throw new Error("Flow sent a ZIP with nothing usable inside it.");
   return out;
 }
@@ -590,7 +623,7 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
       if (kind === ".zip") saved = unpackTakes(file, targetStem);
       else {
         const target = `${targetStem}${kind}`;
-        renameSync(file, target);
+        moveFile(file, target);
         saved = [target];
       }
       await page.keyboard.press("Escape");
@@ -612,7 +645,7 @@ async function ensureProjectGrid(page: Page): Promise<void> {
     await page.goto(root, { waitUntil: "domcontentloaded" });
     await pause(page, 2500);
   }
-  await page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true }).click().catch(() => {});
+  await openNav(page, "All media").catch(() => {});
   await pause(page, 800);
   await scrollToTop(page);
 }
@@ -625,8 +658,11 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const s = job.params;
 
   await ensureProjectGrid(page);
+  // An agent session panel left open (Flow opens one by itself on a fresh project) covers the plain composer and its
+  // Agent toggle, and every job died waiting 30 s for that toggle (2026-10-13).
+  await closeAgentPanel(page);
   const agent = page.getByRole("button", { name: "Agent", exact: true });
-  if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
+  if ((await agent.getAttribute("aria-pressed", { timeout: 10_000 })) === "true") await agent.click();
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
 
@@ -700,7 +736,7 @@ export interface FlowAsset {
 // media id yet, so entries are keyed by title and the id is filled in from whichever pass saw it.
 async function scanGrid(page: Page, stopAt?: (assets: FlowAsset[]) => boolean): Promise<FlowAsset[]> {
   await dismissOverlays(page);
-  await page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true }).click().catch(() => {});
+  await openNav(page, "All media").catch(() => {});
   await pause(page, 600);
   await scrollToTop(page);
   const seen = new Map<string, FlowAsset>();
@@ -743,7 +779,7 @@ export async function listCharacters(): Promise<string[]> {
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
   await dismissOverlays(page);
-  await page.getByRole("navigation", { name: "Project navigation" }).getByText("Characters", { exact: true }).click();
+  await openNav(page, "Characters");
   await pause(page, 2500);
   const names = await page.evaluate(() =>
     [...document.querySelectorAll("flow-character-tile")].map((t) => (t as HTMLElement).innerText.replace(/\s+/g, " ").trim()).filter(Boolean),
@@ -771,7 +807,7 @@ async function leaveCharacterEditor(page: Page): Promise<void> {
 // download through the same watched folders as every other file.
 async function savePortrait(page: Page, name: string): Promise<string> {
   await useOwnDownloadDir(page);
-  const dir = join(process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out"), "_cast");
+  const dir = join(OUTPUT_ROOT, "_cast");
   mkdirSync(dir, { recursive: true });
   const picture = page.getByRole("img", { name: "Generated character image" }).first();
   const button = page.getByRole("button", { name: "Download image", exact: true });
@@ -787,7 +823,7 @@ async function savePortrait(page: Page, name: string): Promise<string> {
   if (!pressed) throw new Error("Flow never showed the portrait's Download image button");
   const file = await waitForDownloadedFile(page, before, 90_000);
   const portrait = join(dir, `${name.replace(/[^\w.-]+/g, "_")}${extensionOf(file)}`);
-  renameSync(file, portrait);
+  moveFile(file, portrait);
   return portrait;
 }
 
@@ -800,7 +836,7 @@ export async function editCharacter(name: string, change?: string, job?: Job): P
   const page = await getFlowPage();
   await leaveCharacterEditor(page);
   await dismissOverlays(page);
-  await page.getByRole("navigation", { name: "Project navigation" }).getByText("Characters", { exact: true }).click();
+  await openNav(page, "Characters");
   await pause(page, 2500);
 
   const card = page.locator("flow-character-tile").filter({ hasText: name }).first();
@@ -917,7 +953,7 @@ async function downloadScene(page: Page, scene: FlowAsset, targetStem: string): 
   await page.getByRole("button", { name: "Download scene", exact: true }).click();
   const file = await waitForDownloadedFile(page, before, 600_000);
   const target = `${targetStem}${extensionOf(file)}`;
-  renameSync(file, target);
+  moveFile(file, target);
   await page.getByRole("button", { name: "Back button to go to previous page" }).click().catch(() => {});
   await pause(page, 2000);
   await ensureProjectGrid(page).catch(() => {});
@@ -961,7 +997,7 @@ export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ 
   if (!c.image) {
     if (!c.describe) throw new Error("Pass either an image or a description for the character.");
     if (job) job.progress = "drawing the character";
-    const dir = join(process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out"), "_cast");
+    const dir = join(OUTPUT_ROOT, "_cast");
     const made = await runGeneration({
       ...(job ?? ({ id: "char", status: "running", files: [], attempts: 1, createdAt: "" } as unknown as Job)),
       files: [],
@@ -982,7 +1018,7 @@ export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ 
   await dismissOverlays(page);
   await scrollToTop(page);
 
-  await page.getByRole("navigation", { name: "Project navigation" }).getByText("Characters", { exact: true }).click();
+  await openNav(page, "Characters");
   await pause(page, 1500);
   // With no characters yet Flow jumps straight to the creation page.
   const create = page.getByRole("button", { name: "New character" });
@@ -1044,7 +1080,7 @@ export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ 
   // Flow drops the new character into the composer; leave the composer empty for the next job.
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
-  await page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true }).click().catch(() => {});
+  await openNav(page, "All media").catch(() => {});
   if (c.describe) rememberCharacter(c.name, c.describe);
   return { name: c.name, url, portrait };
 }
@@ -1143,12 +1179,16 @@ async function setAgentSettings(page: Page, confirm: "Always" | "Never", imageAs
 }
 
 // "Reuse prompt" on an agent-made tile opens the agent's session panel, which hides the normal composer.
-async function closeAgentSession(page: Page): Promise<void> {
+async function closeAgentPanel(page: Page): Promise<void> {
   const panel = page.getByRole("button", { name: "Start new session" });
   if (await panel.isVisible().catch(() => false)) {
     await page.getByRole("button", { name: "Close", exact: true }).click();
     await pause(page, 1000);
   }
+}
+
+async function closeAgentSession(page: Page): Promise<void> {
+  await closeAgentPanel(page);
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
   else {
