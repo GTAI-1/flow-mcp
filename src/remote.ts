@@ -32,6 +32,7 @@ export class RemoteCore implements Core {
   trash = (a: unknown) => call("trash", a);
   discard = (a: unknown) => call("discard", a);
   set_key = (a: unknown) => call("set_key", a);
+  check_key = () => call("check_key", {});
   continue_shot = (a: unknown) => call("continue_shot", a);
   agent = (a: unknown) => call("agent", a);
   outputs = () => call("outputs", {});

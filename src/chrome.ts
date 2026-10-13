@@ -8,6 +8,8 @@ export const FLOW_URL = "https://flow.google.com/";
 const FLOW_HOSTS = /^https:\/\/(flow\.google\.com|labs\.google\/fx)/;
 export const HOME_DIR = process.env.FLOW_MCP_HOME ?? join(homedir(), ".flow-mcp");
 export const PROFILE_DIR = join(HOME_DIR, "chrome-profile");
+// Where finished stills, clips and narrations go. FLOW_MCP_OUTPUT may point at another drive (D:\flow-mcp-out).
+export const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out");
 export const CDP_PORT = Number(process.env.FLOW_MCP_CDP_PORT ?? 9333);
 const CDP_URL = `http://127.0.0.1:${CDP_PORT}`;
 

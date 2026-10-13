@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { HOME_DIR } from "./chrome.js";
 
 const run = promisify(execFile);
 const FFMPEG = process.env.FLOW_MCP_FFMPEG ?? "ffmpeg";
+const FFPROBE = process.env.FLOW_MCP_FFPROBE ?? "ffprobe";
 const KEY_FILE = join(HOME_DIR, "gemini-key");
 const MODEL = process.env.FLOW_MCP_GEMINI_TTS ?? "gemini-2.5-flash-preview-tts";
 
@@ -28,7 +29,11 @@ export const GEMINI_VOICES = [
   { name: "Sadaltager", description: "knowledgeable" }, { name: "Sulafat", description: "warm" },
 ];
 
-// Real keys look like "AIza..." and are ~39 chars; anything shorter or still holding template text is not a key.
+// AI Studio hands out two shapes of key: the classic "AIza" + 35 characters, and since 2026 "AQ." + about 50 characters
+// (dots, dashes, underscores). Both work on the Gemini API; refusing the newer one locked users out (2026-10-13).
+const KEY_SHAPE = /^(AIza[0-9A-Za-z_-]{30,}|AQ\.[0-9A-Za-z._-]{30,})$/;
+
+// Anything shorter or still holding template text is not a key.
 export const geminiKey = (): string | undefined => {
   const key = (process.env.GEMINI_API_KEY ?? (existsSync(KEY_FILE) ? readFileSync(KEY_FILE, "utf8") : "")).trim();
   if (!key || key.length < 20 || /^(YOUR|PASTE|<|\$)/i.test(key) || /_KEY|KEY_HERE|EXAMPLE/i.test(key)) return undefined;
@@ -41,16 +46,36 @@ export const geminiKey = (): string | undefined => {
 // and spends no text-to-speech quota.
 export async function saveGeminiKey(raw: string): Promise<{ saved: true; ending: string }> {
   const key = raw.trim();
-  if (!/^AIza[0-9A-Za-z_-]{30,}$/.test(key)) {
-    throw new Error("That doesn't look like a Google AI Studio key. Real keys start with AIza and are about 39 characters long.");
+  if (!KEY_SHAPE.test(key)) {
+    throw new Error("That doesn't look like a Google AI Studio key. Keys start with AIza (about 39 characters) or AQ. (about 53 characters), with no spaces.");
   }
-  const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", { headers: { "x-goog-api-key": key } }).catch(() => null);
+  const res = await askGoogle(key);
   if (!res) throw new Error("Couldn't reach Google to check the key. Check your internet connection and try again.");
   if (!res.ok) throw new Error("Google didn't accept that key. Copy it again from aistudio.google.com/apikey. Your previous key, if any, is unchanged.");
   mkdirSync(dirname(KEY_FILE), { recursive: true });
   writeFileSync(KEY_FILE, key, { mode: 0o600 });
   chmodSync(KEY_FILE, 0o600);
   return { saved: true, ending: key.slice(-4) };
+}
+
+// Lists one model with the key in a header (never in the URL): proves the key works and spends no speech quota.
+const askGoogle = (key: string) =>
+  fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", { headers: { "x-goog-api-key": key }, signal: AbortSignal.timeout(15_000) }).catch(
+    () => null,
+  );
+
+// The panel used to say "a key is saved" whenever the file existed, so a deleted or restricted key only showed up as
+// a failed narration. This asks Google about the saved key; like saving, it is panel-only and returns just the ending.
+export async function checkGeminiKey(): Promise<{ ok: boolean; ending?: string; error?: string }> {
+  const key = geminiKey();
+  if (!key) return { ok: false, error: "No key is saved yet." };
+  const ending = key.slice(-4);
+  const res = await askGoogle(key);
+  if (!res) return { ok: false, ending, error: "Couldn't reach Google to check the key. Check your internet connection and try again." };
+  if (!res.ok) {
+    return { ok: false, ending, error: `Google refused the saved key (HTTP ${res.status}). It may have been deleted or restricted: paste a new one from aistudio.google.com/apikey.` };
+  }
+  return { ok: true, ending };
 }
 
 interface TtsPart {
@@ -67,7 +92,7 @@ export async function speakWithGemini(text: string, voice: string, target: strin
         ? `The key file still holds placeholder text, not a key.\n\n`
         : `No Gemini key yet.\n\n`) +
         `1. Open aistudio.google.com/apikey and click "Create API key".\n` +
-        `2. Copy it — it starts with AIza and is about 39 characters.\n` +
+        `2. Copy it — it starts with AIza or AQ.\n` +
         `3. Paste it into Flow Studio: Voice tab -> Google AI Studio key -> Save key. It is checked with Google and saved\n` +
         `   only on this computer - never paste it into a chat.`,
     );
@@ -94,9 +119,9 @@ export async function speakWithGemini(text: string, voice: string, target: strin
     "-y", "-f", "s16le", "-ar", String(rate), "-ac", "1", "-i", raw,
     "-af", "highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target,
   ]);
-  const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
+  const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
   const duration = Number(stdout.trim());
-  writeFileSync(raw, "");
-  await run("rm", ["-f", raw]).catch(() => {});
+  // There is no `rm` on Windows; that left an empty .pcm beside every narration.
+  rmSync(raw, { force: true });
   return { output: target, duration };
 }

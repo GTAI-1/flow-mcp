@@ -339,3 +339,26 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   FLOW_MCP_PORT=8799 and FLOW_MCP_HOME=<scratch dir>. Never reuse the real home for that: a process that owns a port
   writes a fresh token to HOME/token, which locks every client of the real owner out (401). Symlink characters.json into
   the scratch home when looks must persist. Give the client a 60 s request timeout so the app's limit is reproduced.
+- FIRST RUN ON WINDOWS (2026-10-13, 1366 px laptop at 125 %, page 1038 px wide). Four things stopped jobs, all fixed:
+  (1) Flow opens an agent SESSION PANEL by itself on a fresh project; it hides the plain composer and its `Agent`
+  toggle, so runGeneration waited 30 s for the toggle and died. runGeneration now calls closeAgentPanel() first
+  (the panel part of closeAgentSession); dismissOverlays deliberately does NOT, because agent flows call it mid-session.
+  (2) The one-time `Rights to use this image` dialog opens over everything after the first upload and survives Escape,
+  so the upload timed out and every later job failed behind it. failOnRightsDialog() (in dismissOverlays and the
+  waitForUpload loop) stops with a message telling the user to answer it; agreeing stays the user's decision.
+  (3) At that width the project navigation slides off-screen (x = -232) and a real click on `Characters` fails as
+  "outside of the viewport" - flow_character could not run. openNav() clicks, then falls back to dispatchEvent("click"),
+  which Flow's router accepts (verified: listCharacters + a free still, 87 s). (4) A second reference left the
+  ingredients picker open after `Add to prompt`; attachAsset presses Add again, then Escape - only in that picker, where
+  the chip count check follows. Frame pickers are never escaped.
+- AI Studio keys now also come as `AQ.` + ~50 chars (dots allowed). saveGeminiKey refused them, so the panel could not
+  save a working key. KEY_SHAPE accepts both; Google's model-list check still decides. Tested with a fake AQ key on a
+  scratch Studio (FLOW_MCP_HOME + port 8799): format passed, Google refused, real key untouched.
+- Output on another drive: FLOW_MCP_OUTPUT=D:\... made every download fail, since files arrive in ~/.flow-mcp/downloads
+  (C:) and renameSync cannot cross drives (EXDEV). platform.moveFile() renames, else copies and removes. OUTPUT_ROOT
+  lives in chrome.ts now (core re-exports it); flow.ts used to rebuild it twice. gemini.ts ran `rm` (absent on Windows)
+  and left an empty .pcm beside every narration; it uses rmSync now.
+- Panel "Check key" (core.check_key -> checkGeminiKey, panel-only like set_key, never an MCP tool): asks Google about the
+  SAVED key with the same free model-list call and returns only ok + last four characters. Before, the panel said "a key
+  is saved" whenever the file existed, so a deleted or restricted key only surfaced as a failed narration. Verified: no
+  key / fake key (401) / real key, and the button on a scratch Studio (FLOW_MCP_HOME + port 8799, key via GEMINI_API_KEY).

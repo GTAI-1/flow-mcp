@@ -267,7 +267,7 @@ audio{width:100%;margin-top:12px;filter:invert(1) hue-rotate(180deg)}
           <div class="phrase" id="n_engineNote"></div>
           <div id="n_keyWrap">
             <label class="f" for="n_key">Google AI Studio key</label>
-            <div class="rowbtns" style="margin-top:0;flex-wrap:nowrap"><input type="password" id="n_key" autocomplete="off" spellcheck="false" placeholder="AIza…" style="flex:1;min-width:0"><button type="button" class="btn small" id="n_keysave">Save key</button></div>
+            <div class="rowbtns" style="margin-top:0;flex-wrap:nowrap"><input type="password" id="n_key" autocomplete="off" spellcheck="false" placeholder="AIza… or AQ.…" style="flex:1;min-width:0"><button type="button" class="btn small" id="n_keysave">Save key</button><button type="button" class="btn small ghost" id="n_keycheck" hidden>Check key</button></div>
             <p class="empty" id="n_keyStatus" style="margin-top:6px"></p>
           </div>
           <div class="grid2">
@@ -622,8 +622,9 @@ function renderNarrate() {
         : `<b>Needs a free key.</b> Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and paste it below. Same voices as Flow, free, no length limit.`)
     : `Spoken on ${PLACE.computer} — free, instant, any length. Quality depends on the installed voice: ${PLACE.platform === "win32" ? "add more English voices in <b>Settings → Time &amp; language → Speech</b> and they appear here" : "download a <b>Premium</b> English voice in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices and it appears here automatically"}. ${(VOICES.mac ?? []).length} voice(s) available.`;
   $("#n_keyWrap").hidden = mac;
+  $("#n_keycheck").hidden = !VOICES.gemini_ready;
   $("#n_keyStatus").innerHTML = VOICES.gemini_ready
-    ? `A key is saved on ${PLACE.computer}. Paste a new one only to replace it.`
+    ? `A key is saved on ${PLACE.computer}. Check key asks Google whether it still works; paste a new one only to replace it.`
     : `Paste it here, not into a chat — it's saved only on ${PLACE.computer} and checked with Google first.`;
   const words = $("#n_text").value.trim().split(/\s+/).filter(Boolean).length;
   const secs = Math.ceil(words / 2.5);
@@ -716,6 +717,18 @@ $("#n_keysave").onclick = async () => {
     toast("Key saved");
   } catch (err) { $("#n_keyStatus").innerHTML = `<span style="color:var(--bad)">${esc(err.message)}</span>`; }
   b.disabled = false; b.textContent = "Save key";
+};
+
+$("#n_keycheck").onclick = async () => {
+  if (!guard()) return;
+  const b = $("#n_keycheck"); b.disabled = true; b.textContent = "Checking…";
+  try {
+    const out = await api("check_key");
+    $("#n_keyStatus").innerHTML = out.ok
+      ? `Google accepts the saved key (ends in …${esc(out.ending)}). Google voices are ready.`
+      : `<span style="color:var(--bad)">${esc(out.error)}</span>`;
+  } catch (err) { $("#n_keyStatus").innerHTML = `<span style="color:var(--bad)">${esc(err.message)}</span>`; }
+  b.disabled = false; b.textContent = "Check key";
 };
 
 /* ---------- cut ---------- */
