@@ -3,11 +3,11 @@ import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } f
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
-import { FFMPEG_HINT, IS_WIN, powershell, psQuote } from "./platform.js";
+import { FFMPEG_HINT, IS_WIN, findTool, powershell, psQuote } from "./platform.js";
 
 const run = promisify(execFile);
-const FFMPEG = process.env.FLOW_MCP_FFMPEG ?? "ffmpeg";
-const FFPROBE = process.env.FLOW_MCP_FFPROBE ?? "ffprobe";
+const ffmpeg = () => process.env.FLOW_MCP_FFMPEG ?? findTool("ffmpeg");
+const ffprobe = () => process.env.FLOW_MCP_FFPROBE ?? findTool("ffprobe");
 
 export interface AssembleOptions {
   dir: string;
@@ -29,7 +29,7 @@ interface ClipInfo {
 
 async function probe(file: string): Promise<ClipInfo> {
   // A raw ffprobe dump ("moov atom not found") told the user nothing. Say which file and what to do about it.
-  const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "stream=codec_type,width,height:format=duration", "-of", "json", file]).catch(() => {
+  const { stdout } = await run(ffprobe(), ["-v", "error", "-show_entries", "stream=codec_type,width,height:format=duration", "-of", "json", file]).catch(() => {
     throw new Error(`"${basename(file)}" isn't a playable video - it may be an unfinished download or a ZIP of several clips. Remove it, or pick other clips.`);
   });
   const data = JSON.parse(stdout) as { streams: { codec_type: string; width?: number; height?: number }[]; format: { duration: string } };
@@ -65,8 +65,8 @@ function defaultClips(dir: string): string[] {
 
 // Pulls the spoken track out of a generated clip so Flow's voices can be used as narration.
 export async function extractAudio(video: string, target: string): Promise<{ output: string; duration: number }> {
-  await run(FFMPEG, ["-y", "-i", video, "-vn", "-af", "highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=5:release=120,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target]);
-  const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
+  await run(ffmpeg(), ["-y", "-i", video, "-vn", "-af", "highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=5:release=120,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target]);
+  const { stdout } = await run(ffprobe(), ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
   return { output: target, duration: Number(stdout.trim()) };
 }
 
@@ -118,9 +118,9 @@ export async function speakLocally(text: string, voice: string, target: string):
   } else {
     await run(SAY, ["-v", voice, "-r", "168", "-o", raw, text]);
   }
-  await run(FFMPEG, ["-y", "-i", raw, "-af", "highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=5:release=120,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target]);
+  await run(ffmpeg(), ["-y", "-i", raw, "-af", "highpass=f=80,acompressor=threshold=-18dB:ratio=3:attack=5:release=120,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target]);
   rmSync(raw, { force: true });
-  const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
+  const { stdout } = await run(ffprobe(), ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
   return { output: target, duration: Number(stdout.trim()) };
 }
 
@@ -137,7 +137,7 @@ export async function assemble(o: AssembleOptions): Promise<{ output: string; cl
   // A narration longer than the footage would be cut off, so the last frame is held until the voice finishes.
   let hold = 0;
   if (o.hold_last_frame !== false && o.voiceover) {
-    const { stdout } = await run(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", o.voiceover]);
+    const { stdout } = await run(ffprobe(), ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", o.voiceover]);
     hold = Math.max(0, Number(stdout.trim()) + 0.6 - infos.reduce((sum, i) => sum + i.duration, 0));
   }
   // Size the film to the biggest clip so a 720p opener cannot pull a 1080p clip down with it.
@@ -185,7 +185,7 @@ export async function assemble(o: AssembleOptions): Promise<{ output: string; cl
     output,
   );
   try {
-    await run(FFMPEG, args, { maxBuffer: 32 * 1024 * 1024 });
+    await run(ffmpeg(), args, { maxBuffer: 32 * 1024 * 1024 });
   } catch (err) {
     const e = err as NodeJS.ErrnoException & { stderr?: string };
     throw new Error(e.code === "ENOENT" ? `ffmpeg is not installed (${FFMPEG_HINT}).` : `ffmpeg failed: ${(e.stderr ?? String(e)).slice(-600)}`);

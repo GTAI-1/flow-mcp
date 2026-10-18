@@ -21,7 +21,7 @@ New here? [GETTING-STARTED.md](GETTING-STARTED.md) takes you from nothing to you
 
 | | |
 |---|---|
-| **macOS or Windows 10/11** | Developed and tested on macOS. Windows is supported (Chrome, the computer's own voices, the Recycle Bin and the panel launcher all have Windows versions), but it hasn't been run on a real PC yet, so please report anything that breaks |
+| **macOS or Windows 10/11** | Tested on macOS and Windows 11. Windows includes cross-drive file move support, dynamic FFmpeg path resolution, built-in voices, and Recycle Bin handling |
 | **Node.js 22 or newer** | `node --version` |
 | **Google Chrome** | Any recent version |
 | **A Google account** | Free. Flow gives every account 50 credits a day; a paid Google AI plan adds more and unlocks 1080p downloads. Developed on a Pro plan |
@@ -93,19 +93,34 @@ Codex, like most MCP apps, gives up on a tool call after 60 seconds, so any call
 45 seconds (creating a character, a 1080p download) answers with a task id instead and keeps working, and
 `flow_wait` collects the result.
 
-**Antigravity** (Google's coding app): add a `flow` entry to `mcp_config.json`. On a Mac it lives in
-`~/.gemini/antigravity/`; you can also open it from the agent panel's **…** menu → **Manage MCP Servers** →
-**View raw config**. Keep any servers already listed and add this one beside them:
+**Antigravity** (Google's coding app): add a `flow` entry to `mcp_config.json`[cite: 1].
+- **macOS / Linux:** `~/.gemini/antigravity/mcp_config.json`[cite: 1]
+- **Windows:** `%USERPROFILE%\.gemini\antigravity\mcp_config.json`[cite: 1]
+- Or open it from the agent panel's **…** menu → **Manage MCP Servers** → **View raw config**[cite: 1].
+
+Keep any servers already listed and add this one beside them (use doubled backslashes `\\` on Windows, and optionally set `FLOW_MCP_OUTPUT` to store outputs on any drive)[cite: 1]:
 
 ```json
-{ "mcpServers": { "flow": { "command": "node", "args": ["/absolute/path/to/flow-mcp/dist/index.js"] } } }
+{
+  "mcpServers": {
+    "flow": {
+      "command": "node",
+      "args": [
+        "C:\\path\\to\\flow-mcp\\dist\\index.js"
+      ],
+      "env": {
+        "FLOW_MCP_OUTPUT": "D:\\path\\to\\output"
+      }
+    }
+  }
+}
 ```
 
 **Other MCP apps** (Cursor, VS Code and others) take the same command and arguments in their own MCP
 settings. ChatGPT in the browser or the ChatGPT app can't use it: its connectors only reach servers on
 the internet, and this tool has to run on your own computer to drive your Chrome window.
 
-Developed and tested with Claude. Codex and Antigravity speak the same protocol, so they should work the
+Developed and tested with Claude. Also tested with Antigravity. Codex speaks the same protocol, so they should work the
 same way, but neither has been tried yet, so please report how it goes. Running two of them at once is safe:
 the first one started drives Flow, and the others pass their requests to it.
 
