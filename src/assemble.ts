@@ -181,6 +181,7 @@ export async function assemble(o: AssembleOptions): Promise<{ output: string; cl
     "-filter_complex", filters.join(";"),
     "-map", "[v]", "-map", "[a]",
     "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+    "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
     "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
     output,
   );
