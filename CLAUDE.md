@@ -412,3 +412,66 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   the start.) freshMedia now counts a video tile without its thumbnail (or a <video>) as busy, and waitForNewMedia
   takes title-tracked tiles only once the same titles show on two polls running. Same clip with the fix: done in
   48 s, renamed SettleTest-scene-01, 4.0 s file downloaded.
+- CHARACTER VOICES (2026-10-19, built after a user asked for it; verified live on the VegetableVideo project): the voice
+  shows in the character editor as a button NAMED after it ("orus", "achird" ...) right before `Play preview` and `Remove`;
+  a character without one shows `Select a voice` instead. Both open the same dialog (listbox "Asset list" of stock voices,
+  `Search assets` box reaches voices below the first 15, `Add to character`, `Close`). New tools/params: `flow_characters`
+  now returns each character's voice read live (`with_voices`, default true, ~8 s per character: each editor is opened);
+  `flow_character_edit` takes `voice` or `voice_from` (a voice-only call skips the portrait redraw); `flow_character` takes
+  `voice_from` for copies/outfit variants, and reports the voice the character ended up with (Flow sometimes assigns one
+  itself) or a note when it has none. The choice is also kept in `<HOME>/voices.json` (name -> voice) beside characters.json.
+  Everything lives in flow.ts: voices.json helpers, openCharacter, readVoice, pickVoice, setCharacterVoice, characterVoices.
+  BUG FOUND AND FIXED the same day: `locator("flow-character-tile").filter({ hasText: name })` is a SUBSTRING match, so
+  "Ollie" opened "Ollie_Village" (tile textContent is "<name>accessibility_newfavoritemore_vert", no space). characterTile()
+  now matches the name followed by the icon text or the end; editCharacter uses it too. Both Ollie copies were given the
+  original's voice (achird) with it. A running Claude Desktop flow-mcp process keeps the OLD code until the user restarts Claude.
+- AGENT BATCHES WITH CHARACTERS (2026-10-19): the user ran Flow's Agent mode with a character attached (via `+` or `@`)
+  and a one-prompt 20-scene script: all 20 images came back with the character identical. `flow_agent_images` now takes
+  `characters` (up to 3 names, attached as chips through the same `+` picker as flow_continue: attachAsset on
+  `Add ingredients to the prompt box`, Characters appear as "<name> Character" options) and `style` (a global directive
+  sent once). agentRound attaches AFTER `Clear prompt` every round (Clear drops the chips) and adds a sentence telling
+  the agent the attached characters are the exact look; the one-by-one fallback passes them as `asset:<name>` references.
+  The attach is retried 3x with Escape in between. (The first live failure looked like a timing problem; it was really the
+  WRONG PROJECT being open - that project had other characters. flow_status now shows the open project's title.) Verified live: 3 scenes with Spuddy + Ollie_Village
+  -> all 3 from the agent, both characters on-model in every frame, 165 s end to end, 0 credits. Still not possible in the
+  agent route: reference PLATES (only characters/ingredients you attach; max 3). Describe the location in the scene text.
+- PROJECTS, SEARCH-TRASH, IMAGE REFERENCES (2026-10-19, all verified live, user-directed):
+  1. Everything is per PROJECT (characters, assets, trash), so a "character not found" usually means the wrong project is open.
+     `flow_status` shows `project` (the title from the h1). New `flow_projects` (lists the home page's projects, read in a
+     spare tab: each is `a[href*="/project/<uuid>"]` followed by the title; the card also holds `Delete project`, never touched)
+     and `flow_open_project` (title or link, requires `user_confirmed: true` = the user said which project in chat; never
+     creates or deletes). Verified: switched to "Batch image generation test" and back.
+  2. `trashAsset` no longer scans the virtual grid (it timed out whole batches). It opens the Images tab, types the title in the
+     top-bar `Search` box, waits until every visible tile matches, acts on the single exact match (a name cut off with "…"
+     matches by prefix; two matches are refused), then clears the search. THE TOP BAR GOES visibility:hidden WHEN THE GRID IS
+     SCROLLED, so searchProject scrolls to the top until the box is visible (the user's fix; before it, search "did not work").
+  3. The asset picker (`+` / ingredients) lists only the first (newest) options, so a location plate or older still further down
+     was not clickable: attaching plates failed in agent AND normal mode. attachAsset now clears the picker's `Search assets` box
+     and searches by name before falling back to the tabs.
+  4. `flow_agent_images` `references` (max 8 image titles; plates, start-frame stills) are attached next to the characters.
+     The agent has no Start-frame slot, so each scene's text must say "location: <title>" or "start frame: <title>"; a generic
+     sentence in the ask explains that. Verified: 2 characters + 2 plates + 1 start frame, 3 scenes, all from the agent in 172 s,
+     plates and the start frame's composition honoured, characters on-model (a character can still come out small in a wide shot).
+     Not done: Ctrl+click multi-select in the picker (the user offered it); one image at a time + `Add to prompt` is used.
+- DOWNLOAD FOLDERS (2026-10-19, user-directed): (1) Chrome's default download folder for this profile is the normal Downloads
+  (USER_DOWNLOAD_DIR in chrome.ts, env FLOW_MCP_USER_DOWNLOADS; the profile's Preferences are patched right before each
+  Chrome LAUNCH, since Chrome rewrites that file on exit). (2) The tools' own downloads go through the hidden
+  `<HOME>/downloads` folder (Browser.setDownloadBehavior allowAndName = random uuid names, no extension) and are renamed
+  into the project folders. That override is Chrome-wide and OUTLIVES the CDP session, so it used to stay on and a download
+  the user made by hand in that Chrome "happened" but landed there under a uuid name. Now every tool download ends with
+  `setDownloadBehavior default` (visibleDownloadsAgain). (3) All three folders (hidden, Chrome's Downloads, the user's) are
+  watched for the new file, and moveFile() copies + deletes when rename fails across drives (EXDEV: Downloads on C:, project
+  folders on another drive; first seen 2026-10-19). Leftover uuid files in `<HOME>/downloads` are safe to delete any time.
+  Test scripts: use forward slashes in target paths (backslashes got eaten by the shell).
+- The tool folder is not tied to any one project: flow-mcp is used from many working folders. Project knowledge lives here and in
+  the user's global notes, not in a single project's memory.
+- DOWNLOADS, SECOND PASS (2026-10-19, user-directed; supersedes the allowAndName routing above): the tool's own downloads used
+  `allowAndName`, so Chrome's download list showed random-ID entries nobody could open (and renaming the files afterwards
+  breaks the list's link anyway). Now: `useOwnDownloadDir(page, dir)` sets `Browser.setDownloadBehavior allow` into the PROJECT
+  folder, Chrome keeps Flow's real name ("<title>_<timestamp>.<ext>"), and the file is NOT renamed or moved (inFolder() only
+  moves a file that landed in the wrong folder, keeping its name). Consequence: outputs are named by Flow's title, no longer
+  scene-NN.ext / clip-NN.ext (flow_assemble's default clip pick falls back to every mp4 in the folder). The output root defaults to
+  `~/Downloads/flow-mcp-out` (OUTPUT_ROOT in chrome.ts, env FLOW_MCP_OUTPUT, set in ~/.claude.json). Verified: image + video
+  downloads landed there with real names, hidden `<HOME>/downloads` stayed empty. After every download the override is reset to
+  `default`, so manual downloads in that Chrome go to Downloads with real names. NOT understood: the user reported a manual
+  right-click download "cannot be opened from the browser" (only from the Downloads folder); needs their error message.

@@ -179,20 +179,22 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 
 | Tool | Purpose |
 |---|---|
-| `flow_status` | Session state (signed in, project open, plan, credits left), queue, pacing, prompt playbook |
+| `flow_status` | Session state (signed in, **which project is open**, plan, credits left), queue, pacing, prompt playbook |
+| `flow_projects` | List the projects on your Flow home page and say which one is open. Everything else acts on the OPEN project only (characters, assets and trash are per project) |
+| `flow_open_project` | Switch the Flow tab to another existing project, by title or link. Needs `user_confirmed: true`, meaning the person told the assistant which project; never creates or deletes a project |
 | `flow_generate` | Queue scenes: prompt, image or video, model, aspect, duration, resolution, variants, first/last frame, reference images, `max_credits` cap |
 | `flow_wait` | Wait for jobs, or for the task id of a slow call; returns file paths and results. Answers within about 40 s, so call again until `finished` is true |
 | `flow_cancel` | Cancel a job that has not started |
 | `flow_retry` | Re-queue failed jobs with the same settings and file names (a failed tile is first retried inside Flow with its own free Retry button: `retries`, default 1) |
 | `flow_assets` | List images and videos already in the Flow project (usable as `asset:<title>`) |
 | `flow_download` | Download existing project media without regenerating. Free, including the 1080p / 2K upscale. A scene comes down as one stitched film |
-| `flow_trash` | Move an image, video or scene in the Flow project to Flow's Trash, where it can be restored. Exact title only; refuses if two items share it; never deletes permanently |
-| `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (20 images in ~204 s), 0 credits. Each image is matched back to its scene by its stored prompt, so file numbers are right in any finish order. Scenes the agent drops are re-asked of it (up to 2 rounds), then re-run one by one |
+| `flow_trash` | Move an image, video or scene in the Flow project to Flow's Trash, where it can be restored. Finds the item through the Images tab and the search bar; exact title only (a title shown cut off with … matches by its start); refuses if two items share it; never deletes permanently |
+| `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (20 images in ~204 s), 0 credits. Each image is matched back to its scene by its stored prompt, so file numbers are right in any finish order. Scenes the agent drops are re-asked of it (up to 2 rounds), then re-run one by one. Pass `characters` (up to 3) to attach them so they stay identical across the whole batch, `references` (up to 8 images already in the project: location plates, earlier stills as start frames; each scene's text says `location: <title>` or `start frame: <title>`) and `style` (a global directive) |
 | `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). Flow shows no quote first; about 20 credits for a 4 s clip |
 | `flow_continue` | Start a clip from the last frame of an existing one **with a character or your avatar still attached**. The composer allows a start frame or attached characters, never both, so this drives Flow's agent mode, which does both. No quote beforehand |
-| `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with a personality and a stock voice; use it as `asset:<name>` |
-| `flow_character_edit` | Restyle an existing character in place (free) and save the new portrait; name, personality and voice are kept, so every scene referencing it updates. Pass `look` with the updated description; with only a name it re-saves the current portrait |
-| `flow_characters` | List the project's characters |
+| `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with a personality and a stock voice (give every character one; for a copy or outfit variation pass `voice_from` with the original's name so it sounds the same); use it as `asset:<name>` |
+| `flow_character_edit` | Restyle an existing character in place (free) and save the new portrait; name, personality and voice are kept, so every scene referencing it updates. Pass `look` with the updated description; with only a name it re-saves the current portrait. Also changes the **voice** (`voice`, or `voice_from` another character; a voice-only call skips the redraw) |
+| `flow_characters` | List the project's characters, each with the voice it has (read live from Flow; `with_voices: false` for a quick list) |
 | `flow_techniques` | 39 film-technique prompt presets (camera moves, product shots, transitions, image commands); pass an id as a scene's `technique` |
 | `flow_narrate` | Free narration audio, any length: `gemini` (Google AI Studio text-to-speech, with the same voices Flow has, plus a `style` note) or `mac` (a voice installed on this computer, no key needed) |
 | `flow_voices` | Narrator voices available, and whether a Google key is set up |
@@ -204,7 +206,7 @@ character or product consistent). Flow's *composer* takes either frames or refer
 when you need a start frame **and** a character locked together, use `flow_continue`, which goes through
 Flow's agent mode and does both.
 
-Output lands in `~/flow-mcp-out/<project>/scene-NN.ext`.
+Output lands in `~/flow-mcp-out/<project>/` (change it with `FLOW_MCP_OUTPUT`). Files keep the names Flow gives them (`<title>_<timestamp>.jpg` / `.mp4`), so they also open from Chrome's own download list; they are not renamed.
 
 ### Narration with Google's voices (optional)
 
@@ -226,7 +228,7 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
   Chrome window always shows Flow in English (it adds `?hl=en` to the address). Your account's own
   language setting is never changed, and prompts can be written in any language.
 - Environment variables: `GEMINI_API_KEY`, `FLOW_MCP_PORT` (8787), `FLOW_MCP_OUTPUT`,
-  `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`, `FLOW_MCP_PAUSE_MIN_S`,
+  `FLOW_MCP_HOME`, `FLOW_MCP_USER_DOWNLOADS` (where downloads you make by hand in that Chrome land; default `~/Downloads`), `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`, `FLOW_MCP_PAUSE_MIN_S`,
   `FLOW_MCP_PAUSE_MAX_S`.
 
 ## If something goes wrong

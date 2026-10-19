@@ -1,15 +1,29 @@
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
-import { HOME_DIR, getFlowPage, inEnglish } from "./chrome.js";
+import { HOME_DIR, OUTPUT_ROOT, USER_DOWNLOAD_DIR, getFlowPage, inEnglish } from "./chrome.js";
 import type { Job } from "./queue.js";
 import { extractZip } from "./platform.js";
+
+
+// A download may land on the system drive (Chrome's own Downloads) while the project folders sit on another drive, and
+// rename() cannot cross drives (EXDEV, 2026-10-19). Fall back to copy + delete so nothing is left behind on the system drive.
+function moveFile(from: string, to: string): void {
+  try {
+    renameSync(from, to);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+    copyFileSync(from, to);
+    unlinkSync(from);
+  }
+}
 
 export interface FlowState {
   url: string;
   signedIn: boolean;
   inProject: boolean;
+  project?: string; // title of the open project: every tool acts on THIS one, so a wrong project is easy to spot
   plan?: string;
   credits_remaining?: number;
   composer?: string;
@@ -30,6 +44,7 @@ export async function getFlowState(detailed = false): Promise<FlowState> {
   const signedIn = !/\/about|accounts\.google\.com/.test(url);
   const inProject = /\/project\//.test(url);
   const state: FlowState = { url, signedIn, inProject };
+  if (signedIn && inProject) state.project = await page.getByRole("heading", { level: 1 }).first().innerText({ timeout: 1500 }).then((t) => t.trim(), () => undefined);
   if (!signedIn) state.hint = "Not signed in. Run `npm run login` and sign in to Google in the Flow Chrome window.";
   else if (!inProject) state.hint = "Signed in, but no project is open. Open or create a project in the Flow Chrome window.";
   else if (detailed) {
@@ -444,7 +459,24 @@ export async function attachAsset(page: Page, opener: Locator, assetName: string
     await pause(page, 1000);
   }
   await list.waitFor({ state: "visible", timeout: 10_000 });
+  // The picker keeps the last search text, which would hide the next asset; start clean.
+  const search = page.getByRole("textbox", { name: "Search assets" });
+  if (await search.isVisible().catch(() => false)) {
+    if (await search.inputValue().catch(() => "")) {
+      await search.fill("");
+      await pause(page, 800);
+    }
+  }
   let option = optionByName(list, assetName);
+  // The list renders only the first options (newest first), so an image further down - a location plate, an older still -
+  // is simply not there to click: attaching plates failed that way in agent AND normal mode (2026-10-19). The picker's
+  // own search box reaches everything, so use it before anything else.
+  if (!(await option.isVisible().catch(() => false)) && (await search.isVisible().catch(() => false))) {
+    await search.fill(assetName);
+    await pause(page, 1500);
+    option = optionByName(list, assetName);
+    await option.waitFor({ state: "visible", timeout: 6000 }).catch(() => {});
+  }
   // Voices, characters and avatars live behind their own tabs, so look there when "All" does not have it.
   if (!(await option.isVisible().catch(() => false))) {
     for (const tab of ["Voices", "Characters", "Avatars", "Uploads"]) {
@@ -514,28 +546,44 @@ function tileByIdOrTitle(page: Page, id: string, title?: string): TileResolver {
   };
 }
 
-const DOWNLOAD_DIR = join(HOME_DIR, "downloads");
-let downloadsReady = false;
+const DOWNLOAD_DIR = join(HOME_DIR, "downloads"); // legacy hidden folder, still watched
+// The folder the download in progress should land in. Chrome keeps the file's REAL name (Flow names it
+// "<title>_<timestamp>.<ext>"), so it stays openable from Chrome's download list: the files are NOT renamed afterwards,
+// because a renamed or moved file breaks that list's link (the user's complaint, 2026-10-19, after the old
+// "allowAndName" mode left random-ID entries nobody could open).
+let downloadTarget: string | undefined;
 
-// Playwright keeps a download in a per-connection temp file it can delete from under us; pointing Chrome itself at a
-// directory we own makes the bytes ours the moment they land.
-async function useOwnDownloadDir(page: Page): Promise<void> {
-  // Setting this once per process was not enough: another CDP client attaching resets it browser-wide, and Chrome
-  // quietly goes back to ~/Downloads. Every file we "could not download" tonight was sitting there the whole time,
-  // so this is re-asserted before every single download rather than cached behind a flag.
-  mkdirSync(DOWNLOAD_DIR, { recursive: true });
+// Points Chrome at the project folder for the download that is about to start.
+async function useOwnDownloadDir(page: Page, dir: string): Promise<void> {
+  // Setting this once per process was not enough: another CDP client attaching resets it browser-wide, so it is
+  // re-asserted before every single download rather than cached behind a flag.
+  mkdirSync(dir, { recursive: true });
+  downloadTarget = dir;
   const cdp = await page.context().newCDPSession(page);
-  await cdp.send("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: DOWNLOAD_DIR, eventsEnabled: true }).catch(() => {});
-  downloadsReady = true;
+  await cdp.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: dir, eventsEnabled: true }).catch(() => {});
+}
+
+// If the file landed somewhere else (an override reset behind our back), bring it into the folder, keeping its name.
+function inFolder(file: string, dir: string): string {
+  if (join(file, "..") === join(dir)) return file;
+  mkdirSync(dir, { recursive: true });
+  const dest = join(dir, basename(file));
+  moveFile(file, dest);
+  return dest;
 }
 
 // Chrome's own Downloads folder, where files land whenever the override above has been reset out from under us.
 const SYSTEM_DOWNLOADS = join(homedir(), "Downloads");
 
-// Everything already sitting in either folder, so a new arrival can be told apart from what was there before.
+// Every folder a download can land in: ours, Chrome's own, and the user's configured one (they differ only if the
+// user points them elsewhere). Chrome-wide download overrides outlive the session that set them and can clash, which once
+// left a finished file in a folder nobody was watching (2026-10-19), so all of them are watched.
+const watchedDirs = () => [...new Set([downloadTarget, DOWNLOAD_DIR, SYSTEM_DOWNLOADS, USER_DOWNLOAD_DIR].filter((d): d is string => Boolean(d)))];
+
+// Everything already sitting in any of those folders, so a new arrival can be told apart from what was there before.
 function downloadsNow(): Set<string> {
   const seen = new Set<string>();
-  for (const dir of [DOWNLOAD_DIR, SYSTEM_DOWNLOADS]) if (existsSync(dir)) for (const f of readdirSync(dir)) seen.add(`${dir}/${f}`);
+  for (const dir of watchedDirs()) if (existsSync(dir)) for (const f of readdirSync(dir)) seen.add(`${dir}/${f}`);
   return seen;
 }
 
@@ -547,7 +595,7 @@ async function waitForDownloadedFile(page: Page, before: Set<string>, timeoutMs:
     await pause(page, 1000);
     // Both places: ours, and Chrome's own folder for when the override has been reset behind our back.
     const candidates: string[] = [];
-    for (const dir of [DOWNLOAD_DIR, SYSTEM_DOWNLOADS]) {
+    for (const dir of watchedDirs()) {
       if (!existsSync(dir)) continue;
       for (const f of readdirSync(dir)) {
         if (before.has(`${dir}/${f}`) || f.endsWith(".crdownload") || f.startsWith(".")) continue;
@@ -556,11 +604,29 @@ async function waitForDownloadedFile(page: Page, before: Set<string>, timeoutMs:
     }
     for (const path of candidates) {
       const size = statSync(path).size;
-      if (stable?.path === path && stable.size === size && size > 0) return path;
+      if (stable?.path === path && stable.size === size && size > 0) {
+        await visibleDownloadsAgain(page);
+        return path;
+      }
       stable = { path, size };
     }
   }
+  await visibleDownloadsAgain(page);
   throw new Error("Flow started the download but no file arrived in either the tool's folder or ~/Downloads.");
+}
+
+// useOwnDownloadDir sends Chrome's downloads to a hidden folder under random names, and left it that way: a file the
+// USER then downloaded in this Chrome "happened" but could not be found in any folder (2026-10-19). As soon as the
+// tool's own file has arrived, hand Chrome back to a normal visible folder with the real file names.
+async function visibleDownloadsAgain(page: Page): Promise<void> {
+  try {
+    // "default" hands Chrome back to its own settings (the profile's download folder, real file names). The override
+    // outlives the CDP session that set it, so it has to be undone explicitly.
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Browser.setDownloadBehavior", { behavior: "default" });
+  } catch {
+    /* cosmetic: a failure here must never lose the file that just arrived */
+  }
 }
 
 // Flow reveals a tile's controls on a genuine pointer move, so the mouse is driven to the tile itself.
@@ -606,10 +672,10 @@ function unpackTakes(zip: string, targetStem: string): string[] {
   const out: string[] = [];
   for (const [i, path] of takes.entries()) {
     const dest = `${targetStem}${i ? `-v${i + 1}` : ""}${extensionOf(path)}`;
-    renameSync(path, dest);
+    moveFile(path, dest);
     out.push(dest);
   }
-  renameSync(zip, `${targetStem}-takes.zip`);
+  moveFile(zip, `${targetStem}-takes.zip`);
   if (!out.length) throw new Error("Flow sent a ZIP with nothing usable inside it.");
   return out;
 }
@@ -642,7 +708,8 @@ async function renameTile(page: Page, tile: Locator, title: string): Promise<boo
 }
 
 async function downloadTile(page: Page, target: Locator | TileResolver, targetStem: string, quality: DownloadQuality): Promise<string[]> {
-  await useOwnDownloadDir(page);
+  const folder = join(targetStem, "..");
+  await useOwnDownloadDir(page, folder);
   const resolve: TileResolver = typeof target === "function" ? target : async () => target;
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -674,11 +741,7 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
       const kind = extensionOf(file);
       let saved: string[];
       if (kind === ".zip") saved = unpackTakes(file, targetStem);
-      else {
-        const target = `${targetStem}${kind}`;
-        renameSync(file, target);
-        saved = [target];
-      }
+      else saved = [inFolder(file, folder)];
       await page.keyboard.press("Escape");
       await scrollToTop(page);
       return saved;
@@ -922,9 +985,8 @@ async function leaveCharacterEditor(page: Page): Promise<void> {
 // Playwright's download event, is why an edit that worked never reached disk (2026-10-02). Point at the picture, then
 // download through the same watched folders as every other file.
 async function savePortrait(page: Page, name: string): Promise<string> {
-  await useOwnDownloadDir(page);
-  const dir = join(process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out"), "_cast");
-  mkdirSync(dir, { recursive: true });
+  const dir = join(OUTPUT_ROOT, "_cast");
+  await useOwnDownloadDir(page, dir);
   const picture = page.getByRole("img", { name: "Generated character image" }).first();
   const button = page.getByRole("button", { name: "Download image", exact: true });
   const before = downloadsNow();
@@ -938,9 +1000,7 @@ async function savePortrait(page: Page, name: string): Promise<string> {
   }
   if (!pressed) throw new Error("Flow never showed the portrait's Download image button");
   const file = await waitForDownloadedFile(page, before, 90_000);
-  const portrait = join(dir, `${name.replace(/[^\w.-]+/g, "_")}${extensionOf(file)}`);
-  renameSync(file, portrait);
-  return portrait;
+  return inFolder(file, dir);
 }
 
 // Opens an existing character and restyles its portrait in place (Nano Banana, free) instead of making a new one.
@@ -955,7 +1015,7 @@ export async function editCharacter(name: string, change?: string, job?: Job): P
   await openProjectNav(page, "Characters");
   await pause(page, 2500);
 
-  const card = page.locator("flow-character-tile").filter({ hasText: name }).first();
+  const card = characterTile(page, name);
   if (!(await card.isVisible().catch(() => false))) throw new Error(`No character called "${name}". Use flow_characters to list them.`);
   await card.scrollIntoViewIfNeeded();
   await card.click();
@@ -1032,28 +1092,134 @@ export async function downloadAsset(name: string, targetStem: string, quality: D
   return downloadTile(page, tileOf(page, found), targetStem, quality);
 }
 
+// Types into the project's top-bar search so the grid shows only matching tiles. Far more reliable than scrolling the
+// virtual grid to a tile far down the list, which timed out whole batches of trash calls (2026-10-19). The user's
+// instruction: open the Images tab first, then search by the image name.
+async function searchProject(page: Page, text: string): Promise<void> {
+  const box = page.getByRole("textbox", { name: "Search", exact: true });
+  // The top bar goes visibility:hidden once the grid is scrolled (CLAUDE.md), and the user's own fix is the same:
+  // scroll up and it is back. So scroll to the top until the box shows, before touching it.
+  for (let attempt = 0; attempt < 4 && !(await box.isVisible().catch(() => false)); attempt++) {
+    await scrollToTop(page);
+    await pause(page, 700);
+  }
+  await box.click({ timeout: 8000 });
+  await box.fill(text);
+  await box.press("Enter");
+  await pause(page, 1500);
+}
+async function clearProjectSearch(page: Page): Promise<void> {
+  const box = page.getByRole("textbox", { name: "Search", exact: true });
+  for (let attempt = 0; attempt < 3 && !(await box.isVisible().catch(() => false)); attempt++) {
+    await scrollToTop(page);
+    await pause(page, 700);
+  }
+  if (await box.isVisible().catch(() => false)) {
+    await box.fill("").catch(() => {});
+    await box.press("Enter").catch(() => {});
+    await pause(page, 1200);
+  }
+}
+
 // Moves one item in the open project to Flow's Trash. Flow keeps it there with Restore and Delete permanently, so this
 // is recoverable - and it never deletes permanently. Flow asks NO confirmation (mapped 2026-10-01: the tile menu's
 // "Move to trash" removes the tile at once), so whoever calls this must confirm with the user first. Matching is by
-// EXACT title, and an ambiguous title is refused: Flow reuses titles, and trashing the wrong one is the worst outcome.
+// EXACT title (a name shown cut off with "…" in flow_assets matches by its start), and an ambiguous title is refused:
+// Flow reuses titles, and trashing the wrong one is the worst outcome.
 export async function trashAsset(name: string): Promise<{ trashed: string }> {
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
   await ensureProjectGrid(page);
-  const same = (await scanGrid(page)).filter((a) => a.name === name);
-  if (!same.length) throw new Error(`Nothing in the open project is called "${name}".`);
-  if (same.length > 1) throw new Error(`${same.length} items are called "${name}", so it isn't clear which one to trash. Rename one in Flow first.`);
-  // Scan again, stopping on the tile so it stays mounted in the virtual grid (no scrollToTop before acting on it).
-  await scanGrid(page, (seen) => seen.some((a) => a.name === name));
-  const tile = tileOf(page, same[0]);
-  await hoverTile(page, tile);
-  await tile.getByRole("button", { name: "More options" }).click();
-  await page.getByRole("menuitem", { name: "Move to trash", exact: true }).click();
+  const cut = name.endsWith("…");
+  const want = cut ? name.slice(0, -1) : name;
+  await openProjectNav(page, "Images");
+  await pause(page, 1500);
+  try {
+    await searchProject(page, want);
+    const tiles = page.locator("flow-grid-tile-container").filter({ has: page.locator("img, video") });
+    const readLabels = async () => (await tiles.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label") ?? ""))).filter(Boolean);
+    // Wait until the grid really shows the filtered results (every tile matches the search), not just a fixed pause.
+    let labels = await readLabels();
+    for (let i = 0; i < 8 && !(labels.length && labels.every((l) => l.toLowerCase().includes(want.toLowerCase()))); i++) {
+      await pause(page, 1000);
+      labels = await readLabels();
+    }
+    const same = labels.filter((l) => (cut ? l.startsWith(want) : l === want));
+    if (!same.length) throw new Error(`Nothing in the open project is called "${name}".`);
+    if (same.length > 1) throw new Error(`${same.length} items are called "${name}", so it isn't clear which one to trash. Rename one in Flow first.`);
+    const tile = page.locator("flow-grid-tile-container").filter({ has: page.locator("img, video") }).and(page.locator(`[aria-label="${same[0].replace(/"/g, '\\"')}"]`)).first();
+    await tile.scrollIntoViewIfNeeded();
+    await hoverTile(page, tile);
+    await tile.getByRole("button", { name: "More options" }).click();
+    await page.getByRole("menuitem", { name: "Move to trash", exact: true }).click();
+    await pause(page, 2000);
+    if (await tile.count()) throw new Error(`"${name}" is still in the project - Flow did not move it to Trash.`);
+    return { trashed: same[0] };
+  } finally {
+    await clearProjectSearch(page).catch(() => {});
+    await showAllMedia(page).catch(() => {});
+  }
+}
+
+export interface FlowProject {
+  name: string;
+  id: string;
+  url: string;
+  current: boolean;
+}
+
+// The projects on Flow's home page, read in a spare tab so the working tab is not disturbed. Each project is a link to
+// /project/<uuid> followed by its title (mapped 2026-10-19); the card also holds "Delete project", which is never touched.
+export async function listProjects(): Promise<{ projects: FlowProject[]; current?: string }> {
+  const page = await getFlowPage();
+  const here = page.url().match(/\/project\/([0-9a-f-]{36})/)?.[1];
+  const tab = await page.context().newPage();
+  try {
+    await tab.goto(inEnglish("https://flow.google.com/"), { waitUntil: "domcontentloaded" });
+    await tab.locator("a[href*='/project/']").first().waitFor({ state: "attached", timeout: 20_000 }).catch(() => {});
+    await tab.waitForTimeout(1500);
+    const found = await tab.evaluate(() => {
+      const skip = new Set(["", "Edit project title", "Delete project", "Open project"]);
+      const seen = new Set<string>();
+      const out: { id: string; name: string }[] = [];
+      for (const a of Array.from(document.querySelectorAll("a[href*='/project/']"))) {
+        const id = a.getAttribute("href")?.match(/\/project\/([0-9a-f-]{36})/)?.[1];
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        let card: Element = a;
+        while (card.parentElement && card.parentElement.querySelectorAll("a[href*='/project/']").length === 1) card = card.parentElement;
+        const lines = ((card as HTMLElement).innerText ?? "").split("\n").map((l) => l.trim());
+        out.push({ id, name: lines.find((l) => !skip.has(l)) ?? id });
+      }
+      return out;
+    });
+    const projects = found.map((p) => ({ name: p.name, id: p.id, url: `https://flow.google.com/project/${p.id}`, current: p.id === here }));
+    return { projects, current: projects.find((p) => p.current)?.name };
+  } finally {
+    await tab.close().catch(() => {});
+  }
+}
+
+// Switches the working tab to another project, by title (case-insensitive, exact) or by project link. Everything the
+// tools see afterwards - characters, assets, generations - belongs to THAT project, which is how an agent batch failed
+// on 2026-10-19: the open project held other characters. Callers must have the user's OK first.
+export async function openProject(target: string): Promise<{ name: string; url: string }> {
+  const page = await getFlowPage();
+  const id = target.match(/\/project\/([0-9a-f-]{36})/)?.[1] ?? (/^[0-9a-f-]{36}$/.test(target) ? target : undefined);
+  const { projects } = await listProjects();
+  const hit = id ? projects.find((p) => p.id === id) : projects.filter((p) => p.name.toLowerCase() === target.trim().toLowerCase());
+  const chosen = Array.isArray(hit) ? (hit.length === 1 ? hit[0] : undefined) : hit;
+  if (!chosen) {
+    const known = projects.map((p) => `"${p.name}"`).join(", ");
+    if (Array.isArray(hit) && hit.length > 1) throw new Error(`${hit.length} projects are called "${target}". Pass the project link instead.`);
+    throw new Error(`No project "${target}" on your Flow home page. Projects: ${known || "none found"}.`);
+  }
+  await page.goto(inEnglish(chosen.url), { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "Add media menu" }).waitFor({ state: "visible", timeout: 30_000 }).catch(() => {});
   await pause(page, 2000);
-  if (await tile.count()) throw new Error(`"${name}" is still in the project - Flow did not move it to Trash.`);
-  await scrollToTop(page);
-  return { trashed: name };
+  await showAllMedia(page, true).catch(() => {});
+  return { name: chosen.name, url: chosen.url };
 }
 
 // A scene's tile menu downloads a ZIP of its loose clips, which is not what anyone wants. The whole scene comes out as
@@ -1061,7 +1227,8 @@ export async function trashAsset(name: string): Promise<{ trashed: string }> {
 // scene..." before the file arrives (a 29 s scene took a few seconds). The user showed this route; verified 2026-10-01.
 // Nothing may be pressed while it exports - an Escape here cancelled an earlier attempt.
 async function downloadScene(page: Page, scene: FlowAsset, targetStem: string): Promise<string[]> {
-  await useOwnDownloadDir(page);
+  const folder = join(targetStem, "..");
+  await useOwnDownloadDir(page, folder);
   const tile = tileOf(page, scene);
   await hoverTile(page, tile);
   const box = await tile.boundingBox();
@@ -1072,8 +1239,7 @@ async function downloadScene(page: Page, scene: FlowAsset, targetStem: string): 
   const before = downloadsNow();
   await page.getByRole("button", { name: "Download scene", exact: true }).click();
   const file = await waitForDownloadedFile(page, before, 600_000);
-  const target = `${targetStem}${extensionOf(file)}`;
-  renameSync(file, target);
+  const target = inFolder(file, folder);
   await page.getByRole("button", { name: "Back button to go to previous page" }).click().catch(() => {});
   await pause(page, 2000);
   await ensureProjectGrid(page).catch(() => {});
@@ -1108,7 +1274,118 @@ export function rememberCharacter(name: string, look: string): void {
   writeFileSync(LOOKS_FILE, JSON.stringify(all, null, 2));
 }
 
-export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ name: string; url: string; portrait?: string }> {
+// Which voice each character has. Flow shows it in the character editor and nowhere else, and a copy of a character (a new
+// outfit of Ollie) has to get the SAME voice as the original, so the choice is kept on disk too, keyed by name.
+const VOICES_FILE = join(HOME_DIR, "voices.json");
+const loadVoices = (): Record<string, string> => {
+  try {
+    return JSON.parse(readFileSync(VOICES_FILE, "utf8")) as Record<string, string>;
+  } catch {
+    return {};
+  }
+};
+export const characterVoice = (name: string): string | undefined => loadVoices()[name.toLowerCase()];
+export function rememberVoice(name: string, voice: string | undefined): void {
+  const all = loadVoices();
+  if (voice) all[name.toLowerCase()] = voice;
+  else delete all[name.toLowerCase()];
+  mkdirSync(HOME_DIR, { recursive: true });
+  writeFileSync(VOICES_FILE, JSON.stringify(all, null, 2));
+}
+
+// A tile's textContent is "<name>accessibility_newfavoritemore_vert" (icon ligatures glued on, no space; innerText has a
+// newline), so "Ollie" must not match "Ollie_Village": the name has to be followed by the icon text or the end. The old
+// plain hasText search opened the wrong character for any name that starts another (2026-10-19: "Ollie" opened
+// "Ollie_Village").
+const characterTile = (page: Page, name: string) =>
+  page.locator("flow-character-tile").filter({ hasText: new RegExp(`^\\s*${escapeRe(name)}(?=\\s|$|accessibility_new|person|favorite)`) }).first();
+
+// Opens a character's editor page from the Characters section.
+async function openCharacter(page: Page, name: string): Promise<void> {
+  await leaveCharacterEditor(page);
+  await dismissOverlays(page);
+  await openProjectNav(page, "Characters");
+  await pause(page, 2500);
+  const card = characterTile(page, name);
+  if (!(await card.isVisible().catch(() => false))) throw new Error(`No character called "${name}". Use flow_characters to list them.`);
+  await card.scrollIntoViewIfNeeded();
+  await card.click();
+  await page.waitForURL(/\/character\/[0-9a-f-]{36}/, { timeout: 20_000 });
+  await pause(page, 2000);
+}
+
+// The editor shows the voice as a button NAMED after it ("orus"), right before "Play preview" and "Remove". A character
+// without one shows "Select a voice" instead (mapped live 2026-10-19).
+async function readVoice(page: Page): Promise<string | undefined> {
+  const snap = await page.locator("main").first().ariaSnapshot();
+  if (/button "Select a voice"/.test(snap)) return undefined;
+  const lines = snap.split(/\r?\n/);
+  const at = lines.findIndex((l) => l.includes('button "Play preview"'));
+  return at > 0 ? lines[at - 1].match(/button "([^"]+)"/)?.[1] : undefined;
+}
+
+// Chooses a stock voice in the open character editor. Both the "Select a voice" button and the current voice's button
+// open the same dialog. The list shows only the first voices, so the search box reaches the rest. "Customize performance"
+// would generate a NEW voice, so it is left alone.
+async function pickVoice(page: Page, voice: string): Promise<void> {
+  const current = await readVoice(page);
+  const opener = current ? page.getByRole("button", { name: current, exact: true }) : page.getByRole("button", { name: "Select a voice" });
+  await opener.first().click();
+  const dialog = page.getByRole("dialog").first();
+  const list = dialog.getByRole("listbox", { name: "Asset list" });
+  await list.waitFor({ state: "visible", timeout: 10_000 });
+  await dialog.getByRole("textbox", { name: "Search assets" }).fill(voice).catch(() => {});
+  await pause(page, 900);
+  const option = optionByName(list, voice);
+  if (!(await option.isVisible().catch(() => false))) {
+    const available = (await list.getByRole("option").allInnerTexts()).map((t) => t.split("\n").filter((l) => l && l !== "voice_selection").join(" - "));
+    await dialog.getByRole("button", { name: "Close" }).click().catch(() => {});
+    throw new Error(`Voice "${voice}" not found. Available: ${available.join("; ")}`);
+  }
+  await option.click();
+  await dialog.getByRole("button", { name: "Add to character", exact: true }).click();
+  await pause(page, 1200);
+  const now = await readVoice(page);
+  if (now?.toLowerCase() !== voice.toLowerCase()) throw new Error(`Flow did not take the voice: ${name_(now)} instead of "${voice}".`);
+}
+const name_ = (v?: string) => (v ? `"${v}"` : "no voice");
+
+// Gives an existing character a stock voice. Returns the old one too.
+export async function setCharacterVoice(name: string, voice: string): Promise<{ name: string; voice: string; previous?: string }> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  await openCharacter(page, name);
+  const previous = await readVoice(page);
+  try {
+    if (previous?.toLowerCase() !== voice.toLowerCase()) await pickVoice(page, voice);
+  } finally {
+    await leaveCharacterEditor(page);
+  }
+  rememberVoice(name, voice.toLowerCase());
+  return { name, voice: voice.toLowerCase(), previous };
+}
+
+// Reads what voice each named character has, straight from Flow (about 8 s each), and remembers it.
+export async function characterVoices(names: string[]): Promise<Record<string, string | null>> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  const out: Record<string, string | null> = {};
+  try {
+    for (const name of names) {
+      await openCharacter(page, name);
+      const voice = await readVoice(page);
+      rememberVoice(name, voice);
+      out[name] = voice ?? null;
+    }
+  } finally {
+    await leaveCharacterEditor(page);
+  }
+  return out;
+}
+
+export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ name: string; url: string; portrait?: string; voice?: string }> {
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
@@ -1117,7 +1394,7 @@ export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ 
   if (!c.image) {
     if (!c.describe) throw new Error("Pass either an image or a description for the character.");
     if (job) job.progress = "drawing the character";
-    const dir = join(process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out"), "_cast");
+    const dir = join(OUTPUT_ROOT, "_cast");
     const made = await runGeneration({
       ...(job ?? ({ id: "char", status: "running", files: [], attempts: 1, createdAt: "" } as unknown as Job)),
       files: [],
@@ -1192,6 +1469,9 @@ export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ 
     await page.getByRole("button", { name: "Add to character", exact: true }).click();
     await pause(page, 1000);
   }
+  // Whatever voice the character ended up with (Flow may give one on its own) is kept for later copies.
+  const voice = await readVoice(page).catch(() => undefined);
+  rememberVoice(c.name, voice);
 
   // Flow labels this "Done editing" or just "Done" depending on the panel state.
   await page.getByRole("button", { name: /^Done( editing)?$/ }).first().click();
@@ -1202,7 +1482,7 @@ export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ 
   if (await clear.isVisible().catch(() => false)) await clear.click();
   await showAllMedia(page);
   if (c.describe) rememberCharacter(c.name, c.describe);
-  return { name: c.name, url, portrait };
+  return { name: c.name, url, portrait, voice };
 }
 
 const EDIT_TIMEOUT_MS = 10 * 60_000;
@@ -1398,11 +1678,47 @@ async function agentRound(
 
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
+  // Characters ride along as chips in the agent's composer (+ button, Characters tab). Clear prompt also drops the chips,
+  // so they are attached after it, every round. Verified by the user 2026-10-19: a 20-image batch kept one character
+  // identical in every frame this way.
+  const cast = s.attach ?? [];
+  // Reference images (location plates, start frames) ride along the same way, by their title in the open project. The
+  // agent has no Start-frame slot like the normal composer, so the scene text has to say which image is the location
+  // and which is the start frame of which scene.
+  const refs = s.agent_refs ?? [];
+  for (const name of [...cast, ...refs]) {
+    step(job, `attaching ${name} to the agent`);
+    // Retried with the picker closed in between: a failed attach once looked like a timing problem, but that run was
+    // really in the wrong project (2026-10-19), and the retry stays only because it costs nothing.
+    await pause(page, 1500);
+    let lastErr = "";
+    let attached = false;
+    for (let attempt = 0; attempt < 3 && !attached; attempt++) {
+      try {
+        await attachAsset(page, page.getByRole("button", { name: "Add ingredients to the prompt box" }), name);
+        attached = true;
+      } catch (err) {
+        lastErr = (err as Error).message.split("\n")[0];
+        await page.keyboard.press("Escape").catch(() => {});
+        await clearBackdrops(page).catch(() => {});
+        await pause(page, 2000);
+      }
+    }
+    if (!attached) throw new Error(`Could not attach ${name} to the agent (${lastErr}).`);
+    await pause(page, 1000);
+  }
   const script = indexes.map((i) => `Scene ${i + 1}: ${scenes[i].replace(/\s*\n+\s*/g, " ").trim()}`).join(" ");
   const lead = retry
     ? `${indexes.length} image(s) from the last batch failed to generate. Generate them again now, one image per scene`
     : `Generate exactly ${indexes.length} separate images, one image per scene, in scene order`;
-  const ask = `${lead}. Images only, never video. ${aspect} aspect ratio. Do not ask questions, generate them now. ${script}`;
+  const cast_note = cast.length
+    ? ` Use the attached character reference${cast.length > 1 ? "s" : ""} (${cast.join(", ")}) as the exact look of ${cast.length > 1 ? "those characters" : "that character"} in every scene they appear in: same face, build, colours and outfit, never redesigned.`
+    : "";
+  const refs_note = refs.length
+    ? ` These attached images are references, identified by their names: ${refs.map((n) => `"${n}"`).join(", ")}. Where a scene says "location: <name>", use that image as the exact location and background of that scene; where it says "start frame: <name>", use that image as the opening frame to build that scene's image from, keeping its composition.`
+    : "";
+  const style_note = s.agent_style ? ` ${s.agent_style.replace(/\s*\n+\s*/g, " ").trim()}` : "";
+  const ask = `${lead}. Images only, never video. ${aspect} aspect ratio.${cast_note}${refs_note}${style_note} Do not ask questions, generate them now. ${script}`;
   await page.locator(".ProseMirror").first().click();
   await page.keyboard.insertText(ask);
   await pause(page, 800);
@@ -1657,6 +1973,7 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
         prompt: scenes[i],
         type: "image",
         max_credits: 0,
+        reference_images: [...(s.attach ?? []), ...(s.agent_refs ?? [])].map((n) => `asset:${n}`).slice(0, 3),
         aspect_ratio: s.aspect_ratio,
         download_quality: s.download_quality,
         output_dir: s.output_dir,

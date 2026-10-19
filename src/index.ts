@@ -170,7 +170,7 @@ server.registerTool(
   {
     title: "Fast image batch via Flow's agent",
     description:
-      "Hand up to 50 image scenes to Flow's own Agent mode, which renders them all in parallel (about a minute for a whole batch) and enriches each prompt itself. Images only, 0 credits. Less exact than flow_generate: the agent picks the wording, no techniques/reference images, and file order is best-effort. Use flow_generate when every scene needs exact settings. Returns a job id; use flow_wait.",
+      "Hand up to 50 image scenes to Flow's own Agent mode, which renders them all in parallel (about a minute for a whole batch) and enriches each prompt itself. Images only, 0 credits. Pass `characters` (up to 3, by name from flow_characters) to attach them to the agent so they stay identical across the whole batch (verified by the user on a 20-image run), `references` (reference images in the open project: location plates, start-frame stills; each scene's text must say 'location: <title>' or 'start frame: <title>'), and `style` for a global directive. Less exact than flow_generate: the agent picks the wording, no other reference images/techniques, and file order is best-effort. Use flow_generate when every scene needs exact settings or reference plates. Returns a job id; use flow_wait.",
     inputSchema: shapes.agent,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
@@ -218,7 +218,7 @@ server.registerTool(
   {
     title: "Create a reusable character",
     description:
-      "Create a reusable Flow character (person, mascot, product) so it looks the same in every scene. Free. Give `describe` and Flow draws the portrait first, or `image` to use a picture you already have; optionally a personality and a stock voice. Afterwards pass 'asset:<name>' in a scene's reference_images.",
+      "Create a reusable Flow character (person, mascot, product) so it looks the same in every scene. Free. Give `describe` and Flow draws the portrait first, or `image` to use a picture you already have; optionally a personality and a stock voice. Always set a voice on a new character; for a COPY or outfit variation of an existing character pass `voice_from` (the original's name) so it sounds the same. The result reports the voice the character ended up with. Afterwards pass 'asset:<name>' in a scene's reference_images.",
     inputSchema: shapes.character,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
@@ -230,7 +230,7 @@ server.registerTool(
   {
     title: "Restyle an existing character",
     description:
-      "Change how an existing character looks without creating a new one (Flow redraws the portrait in place, free), and save the new portrait to <films>/_cast. The character keeps its name, personality and voice, so every scene that references it picks up the new look. Pass `look` with the full updated description so scene prompts stop quoting the old one. With no `change` it only saves the current portrait.",
+      "Change how an existing character looks without creating a new one (Flow redraws the portrait in place, free), and save the new portrait to <films>/_cast. The character keeps its name, personality and voice, so every scene that references it picks up the new look. Also changes a character's VOICE: `voice` (a stock voice name) or `voice_from` (copy another character's voice); a voice-only call skips the redraw. Pass `look` with the full updated description so scene prompts stop quoting the old one. With no `change` it only saves the current portrait.",
     inputSchema: shapes.character_edit,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
@@ -241,11 +241,36 @@ server.registerTool(
   "flow_characters",
   {
     title: "List characters",
-    description: "List the reusable characters in the open Flow project. Each can be used in a scene as 'asset:<name>'.",
+    description:
+      "List the reusable characters in the open Flow project, each with the voice it has (read live from Flow; `with_voices: false` skips that for a quick list). Each can be used in a scene as 'asset:<name>'.",
     inputSchema: shapes.characters,
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
-  () => reply(patient("flow_characters", core.characters())),
+  (args) => reply(patient("flow_characters", core.characters(args))),
+);
+
+server.registerTool(
+  "flow_projects",
+  {
+    title: "List Flow projects",
+    description:
+      "List the projects on the user's Flow home page and say which one is open. Every other flow_* tool acts on the OPEN project only (characters, assets, generations are per project), so check this when a character or asset 'does not exist'. flow_status also shows the open project's title.",
+    inputSchema: shapes.projects,
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  },
+  () => reply(patient("flow_projects", core.projects())),
+);
+
+server.registerTool(
+  "flow_open_project",
+  {
+    title: "Switch to another Flow project",
+    description:
+      "Open another existing Flow project in the Flow tab, by title or link. ONLY after the user has told you in chat which project to switch to (set user_confirmed: true). Never creates or deletes a project. Characters, assets, generations and trash then act on that project.",
+    inputSchema: shapes.open_project,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  (args) => reply(patient("flow_open_project", core.open_project(args))),
 );
 
 server.registerTool(

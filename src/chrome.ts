@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
@@ -41,6 +41,33 @@ async function cdpUp(): Promise<boolean> {
   }
 }
 
+// Where files the USER downloads by hand in this Chrome land: the normal Downloads folder, exactly like any regular Chrome
+// profile (the user's call, 2026-10-19). The tools' own downloads go through a hidden folder and are renamed into the
+// project folders; they used to leave Chrome pointed there with random file names, so a manual download "happened" but
+// could not be found. Override with FLOW_MCP_USER_DOWNLOADS.
+// Where the tools save what they download: <output root>/<project>/, with the files keeping their real names (Flow names
+// them "<title>_<timestamp>.<ext>") so Chrome's download list can still open them. The default is ~/flow-mcp-out (macOS
+// protects ~/Downloads, ~/Desktop and ~/Documents from background programs); set FLOW_MCP_OUTPUT to put it anywhere,
+// e.g. a folder inside Downloads on Windows.
+export const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out");
+export const USER_DOWNLOAD_DIR = process.env.FLOW_MCP_USER_DOWNLOADS ?? join(homedir(), "Downloads");
+
+// Chrome reads its own default download folder from the profile's Preferences file and rewrites that file when it
+// exits, so it can only be changed while Chrome is NOT running: right before launching it.
+function pointChromeDownloadsAt(dir: string): void {
+  const file = join(PROFILE_DIR, "Default", "Preferences");
+  if (!existsSync(file)) return; // a brand-new profile has none yet; the first run's own default applies
+  try {
+    mkdirSync(dir, { recursive: true });
+    const prefs = JSON.parse(readFileSync(file, "utf8")) as Record<string, any>;
+    prefs.download = { ...(prefs.download ?? {}), default_directory: dir, prompt_for_download: false, directory_upgrade: true };
+    prefs.savefile = { ...(prefs.savefile ?? {}), default_directory: dir };
+    writeFileSync(file, JSON.stringify(prefs));
+  } catch {
+    /* a Preferences file that cannot be read or written must never stop Chrome from starting */
+  }
+}
+
 // Real Chrome with a dedicated profile: Google sign-in works normally and the
 // session persists, while the user's everyday profile is never touched.
 async function launchChrome(): Promise<void> {
@@ -49,6 +76,7 @@ async function launchChrome(): Promise<void> {
     throw new Error("Google Chrome not found. Set FLOW_MCP_CHROME to the Chrome executable path.");
   }
   mkdirSync(PROFILE_DIR, { recursive: true });
+  pointChromeDownloadsAt(USER_DOWNLOAD_DIR);
   const child = spawn(
     chromePath,
     [

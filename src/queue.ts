@@ -18,6 +18,8 @@ export interface SceneParams {
   reference_from?: string;
   edit_asset?: string;
   agent_scenes?: string[];
+  agent_style?: string;
+  agent_refs?: string[];
   continue_from?: string;
   attach?: string[];
   continue_mode?: "exact" | "likeness";

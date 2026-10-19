@@ -5,12 +5,13 @@ import { z } from "zod";
 import { assemble, localVoices, speakLocally } from "./assemble.js";
 import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemini.js";
 import { extractLastFrame } from "./chain.js";
-import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
+import { listProjects, openProject, characterLook, characterVoice, characterVoices, createCharacter, setCharacterVoice, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
 import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
-export const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out");
+export { OUTPUT_ROOT } from "./chrome.js";
+import { OUTPUT_ROOT } from "./chrome.js";
 const words = (s: string) => s.split(/[^a-z0-9]+/i).filter((w) => w.length > 3).map((w) => w.toLowerCase());
 
 export const projectDir = (project: string) => resolve(OUTPUT_ROOT, project.replace(/[^\w.-]+/g, "_"));
@@ -86,8 +87,34 @@ export const shapes = {
   agent: {
     project: z.string().min(1).describe("Folder name for the downloaded images."),
     scenes: z.array(z.string().min(1)).min(1).max(50).describe("One image description per scene, in order."),
+    characters: z
+      .array(z.string().min(1))
+      .max(3)
+      .optional()
+      .describe(
+        "Characters (or avatars) to attach to Flow's agent, by name as listed by flow_characters, so every image keeps them identical. Verified by the user 2026-10-19: with a character attached, the agent kept it consistent across a 20-image batch. Attach the characters that appear in MOST scenes; describe any other character in the scene text.",
+      ),
+    references: z
+      .array(z.string().min(1))
+      .max(8)
+      .optional()
+      .describe(
+        "Reference IMAGES already in the open project, by title (location plates, earlier stills used as start frames), attached to the agent next to the characters. The agent has no Start-frame slot, so each scene's text must say what each is for, using the exact title: 'location: Banyan tree on grassy bank' or 'start frame: Scene_Images-scene-01'.",
+      ),
+    style: z
+      .string()
+      .max(1500)
+      .optional()
+      .describe("Global directive for the whole batch (consistent look, colour grade, camera language, things to avoid), sent once before the scene list."),
     aspect_ratio: z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]).default("16:9"),
     download_quality: z.enum(["original", "upscaled"]).optional(),
+  },
+  projects: {},
+  open_project: {
+    project: z.string().min(1).describe("Title of the project as listed by flow_projects, or its project link."),
+    user_confirmed: z
+      .literal(true)
+      .describe("Must be true, and only after the USER has said in chat which project to switch to. Everything afterwards (characters, assets, generations, trash) acts on that project."),
   },
   voices: {},
   narrate: {
@@ -140,9 +167,22 @@ export const shapes = {
   set_key: { key: z.string().min(1).max(200) },
   discard: { path: z.string().min(1).describe("A saved film, still, narration or whole project folder inside the films folder, to move to this computer's bin (Mac Trash, Windows Recycle Bin).") },
   outputs: {},
-  characters: {},
+  characters: {
+    with_voices: z
+      .boolean()
+      .default(true)
+      .describe("Also read each character's voice from Flow (about 8 s per character, since each editor has to be opened). Set false for a quick list of names."),
+  },
   character_edit: {
     name: z.string().min(1).describe("Character to change, as listed by flow_characters."),
+    voice: z
+      .string()
+      .optional()
+      .describe("Give the character this stock Flow voice (e.g. 'Achird'), changing the current one. Voice-only edits skip the portrait redraw."),
+    voice_from: z
+      .string()
+      .optional()
+      .describe("Give the character the SAME voice as this other character, e.g. when `name` is a new outfit or copy of it. Read live from Flow if not remembered."),
     change: z
       .string()
       .min(1)
@@ -174,7 +214,11 @@ export const shapes = {
       .describe("Existing picture instead of `describe`: absolute path, or 'asset:<title>' of an image already in the Flow project."),
     aspect_ratio: z.enum(["3:4", "1:1", "9:16", "16:9", "4:3"]).optional().describe("Frame for the drawn portrait when using `describe`. Default 3:4."),
     personality: z.string().max(500).optional().describe("How the character acts; Flow uses it when crafting scenes."),
-    voice: z.string().optional().describe("Flow voice name, e.g. 'Charon' (male, informative) or 'Aoede' (female, breezy)."),
+    voice: z.string().optional().describe("Flow voice name, e.g. 'Charon' (male, informative) or 'Aoede' (female, breezy). Every new character should get one."),
+    voice_from: z
+      .string()
+      .optional()
+      .describe("For a COPY or variation of an existing character (a new outfit): the original's name. It gets the same voice as that character, so the voice stays continuous. Used instead of `voice`."),
   },
   techniques: { category: z.enum(["camera", "product", "transition", "image"]).optional() },
 };
@@ -206,10 +250,12 @@ export interface Core {
   download(a: Args<"download">): Promise<unknown>;
   assemble(a: Args<"assemble">): Promise<unknown>;
   techniques(a: Args<"techniques">): Promise<unknown>;
+  projects(): Promise<unknown>;
+  open_project(a: Args<"open_project">): Promise<unknown>;
   voices(): Promise<unknown>;
   narrate(a: Args<"narrate">): Promise<unknown>;
   character(a: Args<"character">): Promise<unknown>;
-  characters(): Promise<unknown>;
+  characters(a: Args<"characters">): Promise<unknown>;
   character_edit(a: Args<"character_edit">): Promise<unknown>;
   edit(a: Args<"edit">): Promise<unknown>;
   trash(a: Args<"trash">): Promise<unknown>;
@@ -390,15 +436,18 @@ export class LocalCore implements Core {
     return `${prefix}-${String(Math.max(0, ...onDisk, ...queued) + 1).padStart(2, "0")}`;
   }
 
-  async agent({ project, scenes, aspect_ratio, download_quality }: Args<"agent">) {
+  async agent({ project, scenes, characters, references, style, aspect_ratio, download_quality }: Args<"agent">) {
     const output_dir = projectDir(project);
     const job = this.queue.add({
-      prompt: `Agent batch: ${scenes.length} images`,
+      prompt: `Agent batch: ${scenes.length} images${characters?.length ? ` with ${characters.join(", ")}` : ""}${references?.length ? ` + ${references.length} reference image(s)` : ""}`,
+      agent_refs: references,
       type: "image",
       max_credits: 0,
       aspect_ratio,
       download_quality,
       agent_scenes: scenes,
+      agent_style: style,
+      attach: characters,
       output_dir,
       file_stem: this.nextStem(output_dir, "scene"),
     });
@@ -465,29 +514,58 @@ export class LocalCore implements Core {
   async character(a: Args<"character">) {
     if (this.queue.busy) throw new Error(BUSY);
     if (!a.image && !a.describe) throw new Error("Pass either `describe` (Flow draws the portrait) or `image`.");
-    const made = await createCharacter(a);
+    const voice = await this.resolveVoice(a.voice, a.voice_from);
+    const made = await createCharacter({ ...a, voice });
     if (a.describe) rememberCharacter(a.name, a.describe);
-    return { ...made, use_as: `asset:${a.name}` };
+    return {
+      ...made,
+      use_as: `asset:${a.name}`,
+      ...(made.voice ? {} : { note: "This character has NO voice. Give it one with flow_character_edit (voice or voice_from) so its voice stays the same across clips." }),
+    };
   }
 
-  async character_edit({ name, change, look }: Args<"character_edit">) {
+  // A copy of a character must sound like the original. The remembered voice is used when there is one, otherwise it is
+  // read live from Flow; a source with no voice is an error, because there is nothing to copy.
+  private async resolveVoice(voice?: string, from?: string): Promise<string | undefined> {
+    if (voice || !from) return voice;
+    const known = characterVoice(from) ?? (await characterVoices([from]))[from];
+    if (!known) throw new Error(`"${from}" has no voice, so there is nothing to copy. Pass an explicit voice instead, or give "${from}" one first.`);
+    return known;
+  }
+
+  async character_edit({ name, change, look, voice, voice_from }: Args<"character_edit">) {
     if (this.queue.busy) throw new Error(BUSY);
-    const out = await editCharacter(name, change);
+    const wantVoice = await this.resolveVoice(voice, voice_from);
+    // A voice-only edit must not redraw or re-save the portrait.
+    const out = change || look || !wantVoice ? await editCharacter(name, change) : { name };
     // Every scene that references the character quotes this description in its character lock, so it has to describe
     // the NEW look - "deep navy coat" left in it would argue with a portrait whose coat is now red.
     if (look) rememberCharacter(name, look);
     else if (change) rememberCharacter(name, `${characterLook(name) ?? ""} Changed since, and this wins over anything above: ${change.replace(/[.\s]+$/, "")}`.trim());
-    return { ...out, use_as: `asset:${name}` };
+    const set = wantVoice ? await setCharacterVoice(name, wantVoice) : undefined;
+    return { ...out, ...(set ? { voice: set.voice, previous_voice: set.previous ?? null } : {}), use_as: `asset:${name}` };
   }
 
-  async characters() {
+  async characters({ with_voices }: Args<"characters">) {
     if (this.queue.busy) throw new Error(BUSY);
-    return (await listCharacters()).map((name) => ({ name, use_as: `asset:${name}` }));
+    const names = await listCharacters();
+    const voices = with_voices === false ? {} : await characterVoices(names);
+    return names.map((name) => ({ name, use_as: `asset:${name}`, voice: with_voices === false ? (characterVoice(name) ?? null) : (voices[name] ?? null) }));
   }
 
   // Panel only: deliberately NOT registered as an MCP tool, so a key typed into Flow Studio never reaches Claude.
   async set_key({ key }: Args<"set_key">) {
     return saveGeminiKey(key);
+  }
+
+  async projects() {
+    if (this.queue.busy) throw new Error(BUSY);
+    return listProjects();
+  }
+
+  async open_project({ project }: Args<"open_project">) {
+    if (this.queue.busy) throw new Error(BUSY);
+    return openProject(project);
   }
 
   async voices() {

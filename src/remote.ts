@@ -23,10 +23,12 @@ export class RemoteCore implements Core {
   download = (a: unknown) => call("download", a);
   assemble = (a: unknown) => call("assemble", a);
   techniques = (a: unknown) => call("techniques", a);
+  projects = () => call("projects", {});
+  open_project = (a: unknown) => call("open_project", a);
   voices = () => call("voices", {});
   narrate = (a: unknown) => call("narrate", a);
   character = (a: unknown) => call("character", a);
-  characters = () => call("characters", {});
+  characters = (a: unknown) => call("characters", a ?? {});
   character_edit = (a: unknown) => call("character_edit", a);
   edit = (a: unknown) => call("edit", a);
   trash = (a: unknown) => call("trash", a);
