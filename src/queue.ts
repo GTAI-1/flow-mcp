@@ -20,6 +20,9 @@ export interface SceneParams {
   agent_scenes?: string[];
   agent_style?: string;
   agent_refs?: string[];
+  // The scene number each agent scene is saved as. A retry of scenes 7 and 12 keeps scene-07 and scene-12; without it
+  // the numbers run on from file_stem.
+  agent_numbers?: number[];
   continue_from?: string;
   attach?: string[];
   continue_mode?: "exact" | "likeness";
@@ -39,6 +42,8 @@ export interface Job {
   progress?: string;
   note?: string;
   error?: string;
+  // Scene numbers a batch still could not make after all its own retries; flow_retry redoes just these.
+  failed_scenes?: number[];
   createdAt: string;
   finishedAt?: string;
 }

@@ -225,7 +225,7 @@ export const shapes = {
 
 type Args<K extends keyof typeof shapes> = z.infer<z.ZodObject<(typeof shapes)[K]>>;
 
-export const jobView = ({ id, status, params, files, attempts, credits, progress, note, error }: Job) => ({
+export const jobView = ({ id, status, params, files, attempts, credits, progress, note, error, failed_scenes }: Job) => ({
   id,
   status,
   project: params.output_dir,
@@ -237,6 +237,7 @@ export const jobView = ({ id, status, params, files, attempts, credits, progress
   files,
   note,
   error,
+  failed_scenes,
 });
 
 // One implementation runs in whichever process owns the Flow tab; the other process talks to it over HTTP (remote.ts).
@@ -378,9 +379,33 @@ export class LocalCore implements Core {
   }
 
   async retry({ job_ids }: Args<"retry">) {
-    const ids = job_ids ?? this.queue.list().filter((j) => j.status === "failed").map((j) => j.id);
-    const jobs = ids.map((id) => this.queue.retry(id)).filter((j): j is Job => Boolean(j));
-    if (!jobs.length) throw new Error("No failed jobs to retry.");
+    const ids = job_ids ?? this.queue.list().filter((j) => j.status === "failed" || j.failed_scenes?.length).map((j) => j.id);
+    const jobs: Job[] = [];
+    for (const id of ids) {
+      const job = this.queue.get(id);
+      const p = job?.params;
+      if (job?.failed_scenes?.length && p?.agent_scenes && job.status === "done") {
+        // A batch that finished with some images still failed: make just those again, under their own scene numbers,
+        // instead of re-running the whole batch. The list moves to the new job, so it is never retried twice.
+        const base = Number(p.file_stem.match(/\d+/)?.[0] ?? 1);
+        const numbers = p.agent_numbers ?? p.agent_scenes.map((_, i) => base + i);
+        const pick = job.failed_scenes.map((n) => numbers.indexOf(n)).filter((i) => i >= 0);
+        job.failed_scenes = undefined;
+        jobs.push(
+          this.queue.add({
+            ...p,
+            prompt: `Agent batch: ${pick.length} failed image(s) again`,
+            agent_scenes: pick.map((i) => p.agent_scenes![i]),
+            agent_numbers: pick.map((i) => numbers[i]),
+            file_stem: `scene-${String(numbers[pick[0]]).padStart(2, "0")}`,
+          }),
+        );
+        continue;
+      }
+      const again = this.queue.retry(id);
+      if (again) jobs.push(again);
+    }
+    if (!jobs.length) throw new Error("Nothing to retry: no failed jobs, and no batch with failed images.");
     return { jobs: jobs.map(jobView) };
   }
 

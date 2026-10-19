@@ -917,13 +917,13 @@ function renderStatus(st) {
   $("#hint").innerHTML = f.hint ? `<div class="hint">${esc(f.hint)}</div>` : "";
   $("#pacing").innerHTML = st.pacing ? `<div class="pacing">⏱ ${esc(st.pacing)}</div>` : "";
   const jobs = [...st.jobs].reverse();
-  const sig = JSON.stringify(jobs.map((j) => [j.id, j.status, j.progress, j.files.length, j.credits, j.attempts]));
+  const sig = JSON.stringify(jobs.map((j) => [j.id, j.status, j.progress, j.files.length, j.credits, j.attempts, j.failed_scenes?.length ?? 0]));
   if (sig !== renderStatus.sig) {
     if (renderStatus.sig && LIVE) loadGallery(slateFolder());
     renderStatus.sig = sig;
     $("#jobs").innerHTML = jobs.map((j) => `<div class="job"><div class="top"><span class="name">${esc((j.project || "").split(/[\\/]/).pop())} · ${esc(j.scene)}</span>
       <span class="badge ${j.status}">${j.status}${j.progress ? " " + esc(j.progress) : ""}</span>${j.credits !== undefined ? `<span class="badge">${j.credits} cr</span>` : ""}${j.attempts > 1 ? `<span class="badge">try ${j.attempts}</span>` : ""}
-      ${j.status === "queued" ? `<button class="btn small ghost" data-cancel="${j.id}">Cancel</button>` : ""}${/failed|cancelled/.test(j.status) ? `<button class="btn small" data-retry="${j.id}">Retry</button>` : ""}</div>
+      ${j.status === "queued" ? `<button class="btn small ghost" data-cancel="${j.id}">Cancel</button>` : ""}${/failed|cancelled/.test(j.status) ? `<button class="btn small" data-retry="${j.id}">Retry</button>` : ""}${j.status === "done" && j.failed_scenes?.length ? `<button class="btn small" data-retry="${j.id}">Retry ${j.failed_scenes.length} failed image${j.failed_scenes.length > 1 ? "s" : ""}</button>` : ""}</div>
       ${j.status === "running" ? `<div class="meter"><i style="width:${parseInt(j.progress) || 4}%"></i></div>` : ""}
       <p>${esc(j.prompt)}</p>${j.note ? `<p style="color:var(--warn)">${esc(j.note)}</p>` : ""}${j.error ? `<p class="err">${esc(j.error)}</p>` : ""}
       ${j.files.map((p) => (/\.(mp4|webm|mov)$/i.test(p) ? `<video controls playsinline preload="metadata" src="${media(p)}"></video>` : /\.(m4a|mp3|wav)$/i.test(p) ? `<audio controls src="${media(p)}"></audio>` : `<img class="out" src="${media(p)}">`)).join("")}</div>`).join("") || `<p class="empty">Nothing queued yet.</p>`;

@@ -135,7 +135,7 @@ server.registerTool(
   "flow_retry",
   {
     title: "Retry failed Flow jobs",
-    description: "Put failed jobs back in the queue with the same settings and file names (default: all failed jobs). Scenes already retry once on their own when Flow reports a failure.",
+    description: "Put failed jobs back in the queue with the same settings and file names (default: all failed jobs). Scenes already retry once on their own when Flow reports a failure. An image batch that finished with some images still failed (its job lists failed_scenes) is not run again whole: only those images are made again, saved under their own scene numbers.",
     inputSchema: shapes.retry,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
