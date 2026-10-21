@@ -72,8 +72,10 @@ both attached and were honoured in the result, each one measured to be OUTSIDE t
 Before the fix, on the same live grid and with nothing generated at all, the old rule reported 31 "fresh" tiles.
 `flow_rename` (added 2026-10-21) puts a name back on demand through the tile menu's `Rename`: exact title, refuses
 an ambiguous one and a target that is already taken, and runs renameTile with the OUR_TITLE guard off, since putting
-such a name back is its whole purpose. Used it to repair the two assets the bug mislabelled; verified by downloading
-them again and matching MD5s against the local K01-Mendeleev-1869.jpeg and K03-galiu-in-palma.jpeg.
+such a name back is its whole purpose. Used it to repair all four assets the bug mislabelled; verified by downloading
+each one again and matching MD5s against the local files (K01-Mendeleev-1869.jpeg, K03-galiu-in-palma.jpeg,
+_cast-nou/Joseph Black.jpeg, _cast-nou/Lagrange.jpeg) - the MD5 is what says which tile is which, since the grid's
+own order put the two portraits the other way round from what their titles suggested.
 Not re-tested after this change: video generation, flow_edit and flow_continue (the day's 50 credits were spent).
 Omni 1.1 Flash quotes: 360p 4/5/6/7 and 720p 7/10/12/15 credits for 4/6/8/10 s.
 Not built: "improve prompt (AI)" in Studio (bundled Claude Code CLI exists at
@@ -581,3 +583,15 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   The Start/End (Frames) picker shows only the tabs `Images` and `Uploads`; `Voices`/`Characters`/`Avatars` are the
   ingredients picker's. The old workaround (`first_frame` as an absolute path) still works but re-uploads the image
   and doubles the asset every run, so it is no longer needed.
+- RENAME SETTLES LATE (2026-10-21). Flow writes a new title into the tile optimistically and reconciles with its
+  server afterwards. Watched live while putting two portraits' names back: the rename reported success (a fresh
+  `scanGrid` really did see the new title), then the grid showed the OLD title again for minutes - `flow_assets` and
+  a direct DOM read both said the rename had not happened - and only later settled on the new one. A second rename
+  attempted in between is refused with "Nothing in the open project is called ...", which is the giveaway that it
+  actually landed. So ONE scan after a rename proves nothing in either direction: renameAsset now polls for a scan
+  that has the new title AND no longer has the old one (5 tries, 4 s apart; a real round trip took 33 s each way).
+  Never conclude from a single listing that a rename failed - and never re-issue it on that basis.
+- Flow TRUNCATES a long auto title in the tile's aria-label, ellipsis included: "Man posing for portrait illustra…"
+  is 33 characters ending in U+2026, and that is the exact string selectors must match. Two tiles can therefore look
+  like a prefix of one another ("Man posing for portrait" is also a real, separate title), so flow_download's
+  prefix matching picks whichever comes first in the grid - identify by MD5, not by name, whenever it matters.

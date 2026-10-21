@@ -1231,9 +1231,18 @@ export async function renameAsset(name: string, newName: string): Promise<{ rena
     throw new Error(`Flow's tile menu did not offer Rename for "${name}", so nothing was changed.`);
   }
   await scrollToTop(page);
-  const after = await scanGrid(page, (seen) => seen.some((a) => a.name === newName));
-  if (!after.some((a) => a.name === newName)) throw new Error(`Flow did not accept the new title: "${name}" is still called that.`);
-  return { renamed: name, to: newName };
+  // Flow writes the new title into the tile optimistically and reconciles with its server afterwards, so right after
+  // a rename the grid can show the new title, fall back to the old one, and only settle a minute later (watched that
+  // happen on 2026-10-21 while putting two portraits' names back). A single scan is therefore no proof either way:
+  // this waits for a scan that has the new title and no longer has the old one.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await pause(page, 4000);
+    const now = await scanGrid(page);
+    if (now.some((a) => a.name === newName) && !now.some((a) => a.name === name)) return { renamed: name, to: newName };
+  }
+  throw new Error(
+    `Flow has not settled on "${newName}" for "${name}". Look at the project in Flow before renaming anything again - the rename may still land on its own.`,
+  );
 }
 
 // A scene's tile menu downloads a ZIP of its loose clips, which is not what anyone wants. The whole scene comes out as
