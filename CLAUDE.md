@@ -591,6 +591,10 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   actually landed. So ONE scan after a rename proves nothing in either direction: renameAsset now polls for a scan
   that has the new title AND no longer has the old one (5 tries, 4 s apart; a real round trip took 33 s each way).
   Never conclude from a single listing that a rename failed - and never re-issue it on that basis.
+  The SAME lag hits trashAsset: clearing out ten test tiles, each call confirmed the tile had left the DOM, yet
+  scanGrid went on listing one of them for several minutes while `flow_trash` on that very title answered "Nothing
+  in the open project is called ...". The grid is an eventually-consistent view of the project, for every write.
+  A `page.reload()` gives ground truth at once when one is really needed.
 - Flow TRUNCATES a long auto title in the tile's aria-label, ellipsis included: "Man posing for portrait illustra…"
   is 33 characters ending in U+2026, and that is the exact string selectors must match. Two tiles can therefore look
   like a prefix of one another ("Man posing for portrait" is also a real, separate title), so flow_download's
