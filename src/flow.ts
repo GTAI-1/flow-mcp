@@ -104,25 +104,108 @@ async function readCredits(page: Page): Promise<number | undefined> {
 
 const settingsTrigger = (page: Page) => page.getByRole("button", { name: "Settings trigger" });
 
-// Every finished tile carries its media id in data-media-id; some thumbnails also have it in the URL, but Flow
-// serves signed /asb/ links with no uuid, so the attribute comes first and the URL is only a fallback.
-// Video tiles at rest expose neither, and their signed thumbnail URL is re-signed over time - using it as a handle
-// made old tiles look new. Titles are stable, so an id-less tile is identified by its title instead.
-// A rendering tile already carries its final title (2026-10-09), so it must not count as media until it is done.
+// A tile's identity is the uuid of the media inside it, and nothing else. Images carry it in data-media-id;
+// everything else carries it in the media URL, which Flow now serves as flow-content.google/<kind>/<uuid>
+// (re-mapped 2026-10-21 - the old signed /asb/ links without a uuid are only left on older video thumbnails).
+// A rendering tile already carries its final title (2026-10-09) and an error tile carries one too (2026-10-11),
+// so neither counts as media until it is done.
+//
+// There used to be a fallback: an id-less tile was identified by its TITLE. That cost real work on 2026-10-21.
+// Flow reuses its own auto titles, so two portraits of one batch both came back "Man posing for portrait" and
+// shared one identity; the second looked like a tile we already knew, and the job went on to rename and download
+// two unrelated frames from another clip instead. A tile with no uuid is now simply not identifiable, and the job
+// says so rather than guessing.
 const TILE_ID_JS = `(tile) => {
   if (tile.querySelector("flow-pending-tile, flow-error-tile")) return undefined;
-  const media = tile.querySelector("img[data-media-id], video[data-media-id], img[src], video[src]");
-  const id = media && (media.getAttribute("data-media-id") || media.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0]);
-  if (id) return id;
-  const title = tile.getAttribute("aria-label");
-  return title ? "title:" + title : undefined;
+  const withId = tile.querySelector("[data-media-id]");
+  if (withId) return withId.getAttribute("data-media-id") || undefined;
+  // Order matters: a video tile at rest holds only its thumbnail <img>, and gains a <video> with a DIFFERENT uuid
+  // once it plays, so the thumbnail is read first and the tile keeps one id either way.
+  const media = tile.querySelector("img[src]") || tile.querySelector("video[src]");
+  return media?.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0] || undefined;
 }`;
 
+// What the grid looked like before a job started: the media uuids of the tiles mounted at the top, plus the titles
+// of the few older video tiles that still have no uuid at all. The titles are only ever used to recognise a tile
+// that was already there - never to identify a new one.
 export async function mediaIds(page: Page): Promise<string[]> {
   return page.evaluate(
-    (js) => [...document.querySelectorAll("flow-grid-tile-container")].map(eval(js)).filter(Boolean) as string[],
+    (js) =>
+      [...document.querySelectorAll("flow-grid-tile-container")].flatMap((t) => {
+        const id = (eval(js) as (t: Element) => string | undefined)(t);
+        if (id) return [id];
+        const name = t.getAttribute("aria-label");
+        return name ? ["title:" + name] : [];
+      }),
     TILE_ID_JS,
   );
+}
+
+// One walk down from the top of the grid, shared by everything that asks "what is new?". The grid is VIRTUALISED -
+// a 97-tile project mounts about 33 tiles at the top - so "an id that was not in my snapshot" proves nothing: a
+// download that scrolls mounts old tiles, and they then look fresh. Measured on 2026-10-21 with nothing generated
+// at all, that rule reported 31 fresh tiles. What is reliable is the ORDER: Flow puts a new tile first. So the walk
+// stops at the first tile we already knew, and only what is above it is new.
+//
+// Each candidate carries what freshMedia needs to throw it out again: three things have looked "new" here without
+// being it (2026-10-09: 31 finished clips reported failed with "tile menu has no Download item. It offered: Delete")
+// - our OWN uploads (named fm-<job>-...), a tile of the wrong kind such as the still "Save frame" makes on the way
+// to a continuation, and a tile still rendering. A busy tile neither counts nor ends the walk: it is just not ready.
+const WALK_JS = `([known, idJs]) => {
+  const seen = new Set(known);
+  const idOf = eval(idJs);
+  const fresh = [];
+  const pending = [];
+  let errors = 0;
+  for (const tile of document.querySelectorAll("flow-grid-tile-container")) {
+    const id = idOf(tile);
+    if (id && seen.has(id)) return { fresh, pending, errors, sawKnown: true };
+    if (tile.querySelector("flow-error-tile")) { errors++; continue; }
+    const text = tile.innerText || "";
+    const pct = text.match(/\d+%/);
+    // For the first seconds after Start generation, before any "NN%" shows, a new video tile is titled with the
+    // prompt itself and has no thumbnail; then it takes a short title of Flow's own and counts up; finished, it has
+    // its thumbnail (watched live 2026-10-16, a 4 s clip: prompt title at 9 s, "0%" at 12 s, 100% at 34 s, thumbnail
+    // at 35 s). "No NN% means done" took the tile in those first seconds and lost a user's clip.
+    const isVideo = !!tile.querySelector("flow-video-tile");
+    const busy = !!pct || (isVideo && !tile.querySelector('img[alt="Generated video thumbnail"], video'));
+    if (busy) { if (pct) pending.push(pct[0]); continue; }
+    if (id) {
+      fresh.push({ id, kind: isVideo ? "video" : tile.querySelector("flow-image-tile") ? "image" : "other", label: tile.getAttribute("aria-label") || "" });
+      continue;
+    }
+    // No uuid and not rendering: one of Flow's older /asb/ video thumbnails. Nothing Flow makes today looks like
+    // that, so it cannot be new - if we knew its title it ends the walk, otherwise it is simply stepped over.
+    const name = tile.getAttribute("aria-label");
+    if (name && seen.has("title:" + name)) return { fresh, pending, errors, sawKnown: true };
+  }
+  return { fresh, pending, errors, sawKnown: false };
+}`;
+
+type MediaKind = "image" | "video";
+
+interface GridWalk {
+  fresh: { id: string; kind: string; label: string }[];
+  pending: string[];
+  errors: number;
+  sawKnown: boolean;
+}
+
+async function walkNewTiles(page: Page, known: Iterable<string>): Promise<GridWalk> {
+  return page.evaluate(
+    ([ids, idJs, walkJs]: [string[], string, string]) => (eval(walkJs) as (a: [string[], string]) => GridWalk)([ids, idJs]),
+    [[...known], TILE_ID_JS, WALK_JS] as [string[], string, string],
+  );
+}
+
+// The ids of tiles above the snapshot that really are this job's output: not one of our own uploads, and of the
+// kind asked for.
+function ownTiles(walk: GridWalk, kind?: MediaKind): string[] {
+  return [...new Set(walk.fresh.filter((t) => !t.label.startsWith("fm-") && (!kind || t.kind === kind)).map((t) => t.id))];
+}
+
+export async function freshMedia(page: Page, before: string[], kind?: MediaKind): Promise<string[]> {
+  return ownTiles(await walkNewTiles(page, before), kind);
 }
 
 // The grid is virtualised and the top bar hides once it is scrolled, so every step starts from the top,
@@ -139,28 +222,14 @@ const tileOf = (page: Page, asset: FlowAsset) =>
     ? page.locator(`flow-grid-tile-container[aria-label="${asset.name.replace(/"/g, '\\"')}"]`).first()
     : mediaTile(page, asset.id!);
 
+// A media uuid, and only a media uuid: whatever this returns is the tile that actually holds that piece of media.
 const mediaTile = (page: Page, id: string) =>
-  page
-    .locator(
-      id.startsWith("title:")
-        ? `flow-grid-tile-container[aria-label="${id.slice(6).replace(/"/g, '\\"')}"]`
-        : `flow-grid-tile-container:has([data-media-id="${id}"]), flow-grid-tile-container:has([src*="${id}"])`,
-    )
-    .first();
+  page.locator(`flow-grid-tile-container:has([data-media-id="${id}"]), flow-grid-tile-container:has([src*="${id}"])`).first();
 
 // A failed generation becomes a <flow-error-tile> ("Failed ... You have not been charged") with Flow's own Retry
 // button. Old failures can sit anywhere in the grid, so only error tiles above the first already-known tile count.
 export async function newErrorTiles(page: Page, known: Iterable<string>): Promise<number> {
-  return page.evaluate(([ids, js]: [string[], string]) => {
-    const seen = new Set(ids);
-    let errors = 0;
-    for (const tile of document.querySelectorAll("flow-grid-tile-container")) {
-      const id = (eval(js) as (t: Element) => string | undefined)(tile);
-      if (id && seen.has(id)) break;
-      if (tile.querySelector("flow-error-tile")) errors++;
-    }
-    return errors;
-  }, [[...known], TILE_ID_JS] as [string[], string]);
+  return (await walkNewTiles(page, known)).errors;
 }
 
 // Flow's Retry replaces the failed tile with a fresh render of the same prompt and settings, free of charge.
@@ -197,7 +266,8 @@ export async function retryNewErrorTiles(
         for (const tile of document.querySelectorAll("flow-grid-tile-container")) {
           const id = (eval(js) as (t: Element) => string | undefined)(tile);
           const name = tile.getAttribute("aria-label");
-          if ((id && seen.has(id)) || (name && seen.has(name))) return "known";
+          // "title:<name>" is how a snapshot records a tile with no uuid; a bare name is what the agent batch passes.
+          if ((id && seen.has(id)) || (name && (seen.has(name) || seen.has("title:" + name)))) return "known";
           if (tile.querySelector("flow-error-tile")) return "error";
         }
         return "none";
@@ -229,62 +299,29 @@ export async function retryNewErrorTiles(
   return { errors, reachedKnown, retried };
 }
 
-type MediaKind = "image" | "video";
-
-// New tiles that can be the result we are waiting for. Three things looked "new" here without being it (2026-10-09:
-// 31 finished clips reported failed with "tile menu has no Download item. It offered: Delete"):
-// - our OWN uploads (first/last frames, references - always named fm-<job>-...): an upload's tile shows up while it is
-//   still processing and only gets its final id a moment later, after the "before" snapshot, so it read as new;
-// - a tile of the wrong kind, such as the still that "Save frame" makes on the way to a continuation clip;
-// - a tile still rendering ("NN%").
-export async function freshMedia(page: Page, before: string[], kind?: MediaKind): Promise<string[]> {
-  const tiles = await page.evaluate(
-    (js) => {
-      const idOf = eval(js) as (t: Element) => string | undefined;
-      return [...document.querySelectorAll("flow-grid-tile-container")].map((t) => ({
-        id: idOf(t),
-        kind: t.querySelector("flow-video-tile") ? "video" : t.querySelector("flow-image-tile") ? "image" : "other",
-        label: t.getAttribute("aria-label") ?? "",
-        // For the first seconds after Start generation, before any "NN%" shows, a new video tile is titled with the
-        // prompt itself and has no thumbnail; then it takes a short title of Flow's own and counts up; finished, it
-        // has its thumbnail (watched live 2026-10-16, a 4 s clip: prompt title at 9 s, "0%" at 12 s, 100% at 34 s,
-        // thumbnail at 35 s). The old test - no "NN%" means done - took the tile in those first seconds and lost a
-        // user's clip. A video without its thumbnail counts as busy.
-        busy:
-          /\d+%/.test((t as HTMLElement).innerText) ||
-          (!!t.querySelector("flow-video-tile") && !t.querySelector('img[alt="Generated video thumbnail"], video')),
-      }));
-    },
-    TILE_ID_JS,
-  );
-  const ours = tiles.filter((t) => t.id && !before.includes(t.id) && !t.label.startsWith("fm-") && !t.busy && (!kind || t.kind === kind));
-  return [...new Set(ours.map((t) => t.id!))];
-}
-
+// Returns the media uuids of the tiles this job just made - nothing else. A tile only counts when it sits ABOVE a
+// tile that was already in the snapshot, so a stranger the virtualised grid happened to mount can never be mistaken
+// for ours. If no such tile ever appears, this times out and says so, which is the honest answer: on 2026-10-21 the
+// old rule instead handed back two frames from another clip, which were then renamed and downloaded over the job's
+// real output.
 async function waitForNewMedia(page: Page, before: string[], count: number, timeoutMs: number, job?: Job, kind?: MediaKind): Promise<string[]> {
   const deadline = Date.now() + timeoutMs;
+  const emptyGrid = before.length === 0;
   let retriesLeft = job?.params.retries ?? 1;
   let failures = 0;
   let seen = "";
   while (Date.now() < deadline) {
     await pause(page, 2000);
-    const fresh = await freshMedia(page, before, kind);
-    // New tiles are listed first, so anything beyond the requested count is not ours.
-    if (fresh.length >= count) {
-      const picked = fresh.slice(0, count);
-      // A video has no media id and is tracked by its title, which Flow may still change right after finishing: take
-      // it only once the same titles show twice running, or the download looks for a name that no longer exists.
-      const settled = !picked.some((id) => id.startsWith("title:")) || picked.join("|") === seen;
-      if (settled) return picked;
-      seen = picked.join("|");
-      if (job) job.progress = "Flow is finishing the video";
-      continue;
-    }
-    const progress = await page.evaluate(() =>
-      [...document.querySelectorAll("flow-grid-tile-container")].slice(0, 8).map((t) => (t as HTMLElement).innerText.match(/\d+%/)?.[0]).filter(Boolean),
-    );
-    if (job) job.progress = progress.join(", ") || undefined;
-    const errors = progress.length ? 0 : await newErrorTiles(page, before);
+    // The walk only means anything read from the top: scrolled down, the first tile in the DOM is an old one, and
+    // one that was outside the snapshot's window would be taken for new. Re-asserting the top costs nothing.
+    await scrollToTop(page);
+    const walk = await walkNewTiles(page, before);
+    const fresh = ownTiles(walk, kind);
+    // Without a known tile below them there is no proof these are new - unless the project really was empty.
+    const trustworthy = walk.sawKnown || emptyGrid;
+    if (trustworthy && fresh.length >= count) return fresh.slice(0, count);
+    if (job) job.progress = walk.pending.join(", ") || undefined;
+    const errors = walk.pending.length ? 0 : walk.errors;
     if (!errors) continue;
     failures += errors;
     if (retriesLeft > 0) {
@@ -293,10 +330,13 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
       const retried = await retryErrorTile(page, page.locator("flow-grid-tile-container:has(flow-error-tile)").first());
       if (retried) continue;
     }
-    if (fresh.length) return fresh;
+    if (trustworthy && fresh.length) return fresh;
     throw new Error(`Flow failed this generation ${failures} time(s) ("Sorry, this image/video failed to generate"). Nothing was charged. Try again later or reword the prompt.`);
   }
-  throw new Error(`Timed out after ${Math.round(timeoutMs / 1000)}s waiting for Flow to finish.`);
+  throw new Error(
+    `Timed out after ${Math.round(timeoutMs / 1000)}s waiting for Flow to finish. Nothing was renamed or downloaded. ` +
+      `If Flow did produce it, the media is in the project under Flow's own title and flow_download fetches it without spending credits again.`,
+  );
 }
 
 async function openSettings(page: Page): Promise<void> {
@@ -420,6 +460,45 @@ const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const optionByName = (list: Locator, name: string) =>
   list.getByRole("option", { name: new RegExp(`^${escapeRe(name)}`, "i") }).first();
 
+// The asset list is a cdk-virtual-scroll-viewport ("asset-list-viewport"): it holds about 15 of the project's
+// assets in the DOM at a time out of a 3504px-tall list (mapped 2026-10-21). Waiting for an option that is simply
+// not mounted yet is how three animations died on a 10 s timeout, while two frames with titles of exactly the same
+// shape attached first time - the difference was only that they were among the newest.
+const assetViewport = "cdk-virtual-scroll-viewport.asset-list-viewport";
+
+// Finds the option wherever it is in the list: what is already mounted, then the panel's own "Search assets" box
+// (it filters the whole project, not just the mounted window), then the viewport scrolled to the end.
+async function findAssetOption(page: Page, list: Locator, assetName: string): Promise<Locator | null> {
+  const option = optionByName(list, assetName);
+  const visible = () => option.isVisible().catch(() => false);
+  if (await visible()) return option;
+
+  const search = page.getByPlaceholder("Search assets");
+  if (await search.isVisible().catch(() => false)) {
+    await search.fill(assetName);
+    await pause(page, 1500);
+    if (await visible()) return option;
+    await search.fill("");
+    await pause(page, 1000);
+  }
+
+  await page.evaluate((sel) => document.querySelector(sel)?.scrollTo({ top: 0 }), assetViewport);
+  await pause(page, 500);
+  for (let step = 0; step < 80; step++) {
+    const moved = await page.evaluate((sel) => {
+      const vp = document.querySelector(sel);
+      if (!vp) return false;
+      const top = vp.scrollTop;
+      vp.scrollTop = top + vp.clientHeight * 0.8;
+      return vp.scrollTop > top;
+    }, assetViewport);
+    await pause(page, 400);
+    if (await visible()) return option;
+    if (!moved) break;
+  }
+  return null;
+}
+
 // The frame pickers attach on click; the ingredients picker only previews and needs "Add to prompt".
 // Option names are "<asset name>" or "<asset name> Image|Video", so match on the prefix.
 export async function attachAsset(page: Page, opener: Locator, assetName: string): Promise<void> {
@@ -446,17 +525,32 @@ export async function attachAsset(page: Page, opener: Locator, assetName: string
     await pause(page, 1000);
   }
   await list.waitFor({ state: "visible", timeout: 10_000 });
-  let option = optionByName(list, assetName);
+  // A search left over from a previous attach would hide everything, so the panel always starts unfiltered.
+  // Short timeout on purpose: a picker without a search box must not cost 30 s of Playwright's default wait.
+  const search = page.getByPlaceholder("Search assets");
+  if (await search.inputValue({ timeout: 1500 }).catch(() => "")) {
+    await search.fill("");
+    await pause(page, 800);
+  }
+  let option = await findAssetOption(page, list, assetName);
   // Voices, characters and avatars live behind their own tabs, so look there when "All" does not have it.
-  if (!(await option.isVisible().catch(() => false))) {
+  if (!option) {
     for (const tab of ["Voices", "Characters", "Avatars", "Uploads"]) {
       const t = page.getByRole("tab", { name: tab, exact: true });
       if (!(await t.isVisible().catch(() => false))) continue;
       await t.click();
       await pause(page, 1200);
-      option = optionByName(list, assetName);
-      if (await option.isVisible().catch(() => false)) break;
+      option = await findAssetOption(page, list, assetName);
+      if (option) break;
     }
+  }
+  if (!option) {
+    // The ingredients picker leaves aria-label EMPTY and names its options through their text, so both are read.
+    const offered = await list.getByRole("option").evaluateAll((os) => os.slice(0, 8).map((o) => (o.getAttribute("aria-label") || o.textContent || "").replace(/\s+/g, " ").trim()));
+    await page.keyboard.press("Escape").catch(() => {});
+    throw new Error(
+      `Flow's asset list has nothing starting with "${assetName}", after searching it and scrolling it to the end. Nothing was generated. Check the title with flow_assets, or pass an absolute file path instead. The list showed: ${offered.join(" | ") || "(empty)"}`,
+    );
   }
   await option.waitFor({ state: "visible", timeout: 10_000 });
   await option.click();
@@ -618,10 +712,22 @@ function unpackTakes(zip: string, targetStem: string): string[] {
   return out;
 }
 
+// Titles this tool gives assets of its own: "<folder>-<file stem>", where the stems are scene-NN / clip-NN /
+// edit-NN. A tile already wearing one is an asset from an earlier run, never a tile a job has just made.
+const OUR_TITLE = /-(?:scene|clip|edit)-\d{1,3}(?:-v\d+)?$/i;
+
 // Flow titles clips itself and happily reuses a title: two takes of the same scene both came back as "Woman climbing
 // granite wall", which makes a clip impossible to identify by name and cost real time tonight. Renaming each finished
 // tile to our own scene name fixes it at the source - the user's suggestion, and the right one.
+// The guard is the last line of defence under that: renaming a tile that already carries one of OUR names would wipe
+// a name later steps rely on, which is exactly what happened on 2026-10-21, so it throws instead.
 async function renameTile(page: Page, tile: Locator, title: string): Promise<boolean> {
+  const existing = (await tile.getAttribute("aria-label").catch(() => null)) ?? "";
+  if (OUR_TITLE.test(existing)) {
+    throw new Error(
+      `Refusing to rename "${existing}" to "${title}": that title was given by this tool to an earlier asset, so this is not the tile the job just made. Nothing was renamed or downloaded.`,
+    );
+  }
   try {
     await hoverTile(page, tile);
     const more = tile.getByRole("button", { name: "More options" });
@@ -836,9 +942,11 @@ export async function runGeneration(job: Job): Promise<string[]> {
     const label = fresh.length > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem;
     // Flow names clips itself and reuses those names, so two takes of one scene come back identically titled and
     // neither can be found by name afterwards. Renaming each finished tile to the scene's own file stem makes every
-    // later lookup - download, continue, assemble - unambiguous. Best effort: a failed rename must not lose the clip.
+    // later lookup - download, continue, assemble - unambiguous. A rename that merely fails returns false and the
+    // clip is still downloaded; the one thing that is NOT survivable is renaming a tile that is not ours, so that
+    // check throws and takes the whole job down with it rather than quietly destroying another asset's name.
     const newTitle = `${basename(s.output_dir)}-${label}`;
-    const renamed = await renameTile(page, mediaTile(page, id), newTitle).catch(() => false);
+    const renamed = await renameTile(page, mediaTile(page, id), newTitle);
     if (renamed) job.note = [job.note, `renamed in Flow to ${newTitle}`].filter(Boolean).join(" · ");
     await pause(page, 800);
     const stem = join(s.output_dir, label);

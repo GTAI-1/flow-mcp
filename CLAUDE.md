@@ -34,11 +34,19 @@ OmniFlow (lingoflow.pro/omniflow), using subscription credits instead of the API
 - Models/cost x1: Omni 1.1 Flash 7 (4s) / 12 (8s) · Veo 3.1 Lite 10 · Fast 20 · Quality 100 · images 0.
 - Upload: `Add media menu` → `Upload` fires a filechooser; asset name = file name, so we upload as
   `fm-<jobid>-<label>.ext`. Pickers (`Start`, `End`, ingredients) show listbox `Asset list`; clicking an
-  option attaches it immediately.
-- Grid: `flow-grid-tile-container` (aria-label = title), virtual scroll inside `.page-container`. The top
-  bar gets `visibility:hidden` once scrolled, so scroll to top before every step. New tiles appear first.
-- Tile identity: uuid in the media `src`. Image tiles: `flow-image-tile img[data-media-id]`. Video tiles at
-  rest hold only `img[alt="Generated video thumbnail"]`; a `<video>` appears after hover. In-progress tiles show `NN%`.
+  option attaches it immediately. That listbox is a `cdk-virtual-scroll-viewport.asset-list-viewport` holding
+  about 15 of the project's assets at a time, with `input[placeholder="Search assets"]` beside it and the most
+  recently used asset pinned first - so an older title is simply not in the DOM until you search or scroll (2026-10-21).
+- Grid: `flow-grid-tile-container` (aria-label = title), virtual scroll inside `.page-container` - measured
+  2026-10-21: a 97-tile project mounts 33 tiles at the top and mounts/unmounts as it scrolls, so a tile missing
+  from a snapshot is not evidence of anything. The top bar gets `visibility:hidden` once scrolled, so scroll to
+  top before every step. New tiles appear FIRST, and that order is the only reliable way to tell what is new.
+- Tile identity: the media uuid, and nothing else. Flow serves media from `https://flow-content.google/image/<uuid>`
+  and `.../video/<uuid>` (2026-10-21); images also carry it in `data-media-id` on `flow-image-tile img`. Video tiles
+  at rest hold only `img[alt="Generated video thumbnail"]` (its src carries the uuid); one that has PLAYED holds a
+  `<video>` with a different uuid, so read `img[src]` first. Older video thumbnails are still on signed
+  `flow.google.com/asb/...` URLs with no uuid at all. In-progress tiles show `NN%`. NEVER identify a tile by its
+  title: Flow reuses its auto titles.
 - Download: right-click tile → `Download` → submenu. Image: `1K Original size`, `2K Upscaled`. Video:
   `270p Animated GIF`, `720p Original size`, `1080p Upscaled` (4K disabled on Pro). Playwright `download.saveAs` works over CDP.
 - Other tile menu items not automated yet: `Animate` (image→video), `Add to scene`, `Add to prompt`, `Rename`.
@@ -56,6 +64,13 @@ flow_assets, flow_download, flow_techniques, flow_assemble (incl. looping music 
 volumedetect), flow_character, flow_edit (20 credits for a 4 s clip, result verified visually), flow_agent_images
 (20 scenes → 20 files in scene order, 204 s, 0 credits; and the re-ask + one-by-one recovery path), Studio panel,
 MCP-as-client via RemoteCore.
+Tile identity and the asset picker re-verified on Windows 2026-10-21, 0 credits, in a 97-tile project: a 6-image batch
+whose prompts invite one reused auto title came back as 6 files with 6 different MD5s, no duplicate among the 117
+images in `flow-generations`, no pre-existing file touched, and the only new titles in Flow were the six
+`zz-test-tiles-scene-NN`; `reference_images: ["asset:_cast-Democrit"]` and `asset:IstoriaChimiei-extra-cadre-scene-01`
+both attached and were honoured in the result, each one measured to be OUTSIDE the picker's loaded window first.
+Before the fix, on the same live grid and with nothing generated at all, the old rule reported 31 "fresh" tiles.
+Not re-tested after this change: video generation, flow_edit and flow_continue (the day's 50 credits were spent).
 Omni 1.1 Flash quotes: 360p 4/5/6/7 and 720p 7/10/12/15 credits for 4/6/8/10 s.
 Not built: "improve prompt (AI)" in Studio (bundled Claude Code CLI exists at
 ~/Library/Application Support/Claude/claude-code/<ver>/claude.app/Contents/MacOS/claude but is not logged in).
@@ -105,10 +120,10 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   newErrorTiles only counts error tiles above the first already-known tile (unit-checked with injected stand-ins).
   Both engines now press Flow's Retry (exact: `retries`, default 1; agent: up to 2 rounds) before giving up; agent scenes
   still missing afterwards are re-run one by one. NOT yet seen live: an automated run hitting a genuine failure end to end.
-- Tile identity (fixed 2026-09-20): Flow now serves thumbnails from signed `https://flow.google.com/asb/...` URLs with NO
-  uuid, so the old "uuid in src" extraction silently returned nothing for most tiles (listAssets: 5/42 ids). Use
-  TILE_ID_JS: `data-media-id` (images) → uuid in src → the signed src URL itself (video tiles at rest have only a
-  thumbnail `img[alt="Generated video thumbnail"]`). mediaTile handles both a uuid and a URL handle. Re-verified: 42/42.
+- Tile identity (2026-09-20, superseded 2026-10-21): Flow served thumbnails from signed `https://flow.google.com/asb/...`
+  URLs with NO uuid, so the "uuid in src" extraction returned nothing for most tiles (listAssets: 5/42 ids). TILE_ID_JS
+  then fell back to `data-media-id` → uuid in src → the signed URL → the tile's TITLE. The title fallback is what broke
+  on 2026-10-21; see the entry below.
 - Two flow-mcp processes attached to the same Chrome (e.g. Studio running while a test drives the MCP) break downloads:
   Playwright's per-connection artifact dir is swept while the other process saves → `download.saveAs ... ENOENT`.
   downloadTile now falls back to copying from `download.path()`; still, stop the Studio server before running MCP tests.
@@ -526,3 +541,39 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   download and the job died 12 min later with "no file arrived". TILE_ID_JS now skips tiles containing `flow-error-tile`
   (as it does `flow-pending-tile`), so the Retry path runs. Buttons on it: `Retry`, `Reuse prompt`, `Delete` (aria-labels).
   The same shot with a plain "Sound: quiet ambient wind." rendered fine on the next try.
+- WRONG TILE RENAMED AND DOWNLOADED (observed live 2026-10-21, 11 portraits in one `flow_generate`; fixed the same
+  day). Scenes 06 and 11 rendered fine in Flow, but the driver did not recognise their tiles: it left them with Flow's
+  auto title ("Man posing for portrait...") and instead renamed and downloaded two unrelated frames from clip 3
+  (`IstoriaChimiei-3-cadre-scene-09` and `-scene-11`, now called `_cast-nou-scene-06` and `_cast-nou-scene-11` in
+  Flow). The job reported "done". Two causes, both in the identity of a tile:
+  (1) TITLE AS AN IDENTITY. With no uuid, TILE_ID_JS used `"title:" + aria-label`. Flow reuses its auto titles, so
+  both portraits were `title:Man posing for portrait` - one identity for two tiles. The second one was therefore
+  already "known" and never counted as new. The title fallback is GONE: a tile is its media uuid or it is nothing.
+  (2) THE GRID IS VIRTUALISED, so "an id that was not in my snapshot" proves nothing. Measured 2026-10-21: a 97-tile
+  project mounts 33 tiles at the top, and `.page-container` mounts/unmounts as it scrolls. Every download scrolls, so
+  old tiles mount afterwards and look fresh - with NOTHING generated, the old rule reported 31 fresh tiles. What is
+  reliable is the order: Flow puts a new tile FIRST. `walkNewTiles` (WALK_JS) therefore walks down from the top and
+  stops at the first tile already in the snapshot; only what is above it is new, and without such a stop (`sawKnown`)
+  nothing is accepted at all, so the job times out honestly instead of grabbing a stranger.
+  Safety net in `renameTile`: it refuses, and throws, if the tile already carries a title of OUR shape
+  (`-scene-NN` / `-clip-NN` / `-edit-NN`, optional `-vN`) - that is an asset from an earlier run, never a new tile.
+  Check after any batch: `md5sum` the new files against the rest of `flow-generations`. Two identical files mean this.
+- TILE IDENTITY, re-mapped 2026-10-21: Flow now serves media from `https://flow-content.google/image/<uuid>` and
+  `.../video/<uuid>`, so EVERY tile Flow makes today has a uuid - images in `data-media-id`, video tiles in the src of
+  their thumbnail `img[alt="Generated video thumbnail"]`. Only older video tiles are still on the signed
+  `flow.google.com/asb/...` URLs with no uuid; they return no id and are simply not identifiable (a snapshot records
+  them as `"title:<name>"` so they can still END the walk, never start it). Hovering a video tile does NOT swap its
+  thumbnail, so the uuid is stable (checked on `IstoriaChimiei-extra-scene-04`); a tile that has actually PLAYED holds
+  a `<video>` with a different uuid, so TILE_ID_JS reads `img[src]` before `video[src]`.
+- ASSET PICKER IS VIRTUALISED TOO, and it has a SEARCH BOX (mapped 2026-10-21, cause of three failed animations).
+  `first_frame: "asset:<title>"` timed out with `locator.waitFor: Timeout 10000ms exceeded` on
+  `getByRole('listbox', {name:'Asset list'}).getByRole('option', {name:/^IstoriaChimiei-extra-cadre-scene-01/i})`
+  while `-scene-04` and `-scene-05`, same shape of title, attached first time: 11 images generated in between had
+  pushed the older frames out of the loaded window. The listbox IS a `cdk-virtual-scroll-viewport.asset-list-viewport`
+  (scrollHeight 3504 vs clientHeight 473, ~15 of the project's assets in the DOM at once). The panel has
+  `input[placeholder="Search assets"]` (same aria-label), which filters the WHOLE project: typing the title narrowed
+  the list to exactly that one option. `findAssetOption` now tries the open list, then the search box, then scrolls
+  the viewport to the end, and only then gives up - with an error that names the asset and shows what the list held.
+  The Start/End (Frames) picker shows only the tabs `Images` and `Uploads`; `Voices`/`Characters`/`Avatars` are the
+  ingredients picker's. The old workaround (`first_frame` as an absolute path) still works but re-uploads the image
+  and doubles the asset every run, so it is no longer needed.
