@@ -720,10 +720,11 @@ const OUR_TITLE = /-(?:scene|clip|edit)-\d{1,3}(?:-v\d+)?$/i;
 // granite wall", which makes a clip impossible to identify by name and cost real time tonight. Renaming each finished
 // tile to our own scene name fixes it at the source - the user's suggestion, and the right one.
 // The guard is the last line of defence under that: renaming a tile that already carries one of OUR names would wipe
-// a name later steps rely on, which is exactly what happened on 2026-10-21, so it throws instead.
-async function renameTile(page: Page, tile: Locator, title: string): Promise<boolean> {
+// a name later steps rely on, which is exactly what happened on 2026-10-21, so it throws instead. It is off only for
+// flow_rename, where putting such a name back is the whole point and the user has named the tile themselves.
+async function renameTile(page: Page, tile: Locator, title: string, guard = true): Promise<boolean> {
   const existing = (await tile.getAttribute("aria-label").catch(() => null)) ?? "";
-  if (OUR_TITLE.test(existing)) {
+  if (guard && OUR_TITLE.test(existing)) {
     throw new Error(
       `Refusing to rename "${existing}" to "${title}": that title was given by this tool to an earlier asset, so this is not the tile the job just made. Nothing was renamed or downloaded.`,
     );
@@ -1205,6 +1206,34 @@ export async function trashAsset(name: string): Promise<{ trashed: string }> {
   if (await tile.count()) throw new Error(`"${name}" is still in the project - Flow did not move it to Trash.`);
   await scrollToTop(page);
   return { trashed: name };
+}
+
+// Renames one item in the open project through the tile menu's `Rename`. runGeneration already does this for every
+// clip it makes; this is the same thing on demand, for putting a name back when something went wrong - on
+// 2026-10-21 two frames of clip 3 ended up wearing the portraits' names and there was no way to undo it from here.
+// Matching is by EXACT title and an ambiguous one is refused, as in trashAsset: Flow reuses titles, and renaming the
+// wrong item is how the damage happened in the first place. The target name is refused if it is already taken, so a
+// rename can never create that ambiguity either.
+export async function renameAsset(name: string, newName: string): Promise<{ renamed: string; to: string }> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  if (name === newName) throw new Error(`"${name}" is already called that.`);
+  const page = await getFlowPage();
+  await ensureProjectGrid(page);
+  const assets = await scanGrid(page);
+  const same = assets.filter((a) => a.name === name);
+  if (!same.length) throw new Error(`Nothing in the open project is called "${name}". Use flow_assets to list titles.`);
+  if (same.length > 1) throw new Error(`${same.length} items are called "${name}", so it isn't clear which one to rename. Rename one by hand in Flow first.`);
+  if (assets.some((a) => a.name === newName)) throw new Error(`Something in the project is already called "${newName}". Pick a title that is free.`);
+  // Scan again, stopping on the tile so it stays mounted in the virtual grid (no scrollToTop before acting on it).
+  await scanGrid(page, (seen) => seen.some((a) => a.name === name));
+  if (!(await renameTile(page, tileOf(page, same[0]), newName, false))) {
+    throw new Error(`Flow's tile menu did not offer Rename for "${name}", so nothing was changed.`);
+  }
+  await scrollToTop(page);
+  const after = await scanGrid(page, (seen) => seen.some((a) => a.name === newName));
+  if (!after.some((a) => a.name === newName)) throw new Error(`Flow did not accept the new title: "${name}" is still called that.`);
+  return { renamed: name, to: newName };
 }
 
 // A scene's tile menu downloads a ZIP of its loose clips, which is not what anyone wants. The whole scene comes out as

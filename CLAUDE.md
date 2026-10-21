@@ -70,6 +70,10 @@ images in `flow-generations`, no pre-existing file touched, and the only new tit
 `zz-test-tiles-scene-NN`; `reference_images: ["asset:_cast-Democrit"]` and `asset:IstoriaChimiei-extra-cadre-scene-01`
 both attached and were honoured in the result, each one measured to be OUTSIDE the picker's loaded window first.
 Before the fix, on the same live grid and with nothing generated at all, the old rule reported 31 "fresh" tiles.
+`flow_rename` (added 2026-10-21) puts a name back on demand through the tile menu's `Rename`: exact title, refuses
+an ambiguous one and a target that is already taken, and runs renameTile with the OUR_TITLE guard off, since putting
+such a name back is its whole purpose. Used it to repair the two assets the bug mislabelled; verified by downloading
+them again and matching MD5s against the local K01-Mendeleev-1869.jpeg and K03-galiu-in-palma.jpeg.
 Not re-tested after this change: video generation, flow_edit and flow_continue (the day's 50 credits were spent).
 Omni 1.1 Flash quotes: 360p 4/5/6/7 and 720p 7/10/12/15 credits for 4/6/8/10 s.
 Not built: "improve prompt (AI)" in Studio (bundled Claude Code CLI exists at
