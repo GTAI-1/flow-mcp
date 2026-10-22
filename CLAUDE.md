@@ -510,3 +510,17 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
 - CAPTIONS WORKFLOW (the user's rule, 2026-10-18): transcribe first, show the words with likely mishearings fixed,
   get the user's OK, THEN make the video once. The playbook and the flow_captions description say so too.
 
+- PROJECTS PAGE (mapped live 2026-10-22, because the MCP could not recover from "no project is open" - it only told
+  the user to click, and a restart of the Studio process navigates a project tab back to the start page). The page at
+  `flow.google.com` itself is `flow-projects-page` > `flow-projects-grid` > `flow-project-card`. A card's only link is
+  `a[aria-label="Open project"]` with href `/project/<uuid>`; the NAME is a bare text node, so the card's innerText is
+  "<name>" then "edit" then "delete" - the Material icon ligatures again, as in listCharacters - and the name is the
+  first line. Buttons on a card: `Edit project title`, `Delete project`; the page ends with `New project`.
+  Built in as `listProjects` / `openProject` / `flow_open_project`: exact name first, then a case-insensitive prefix,
+  a uuid or full URL taken as given, and an ambiguous prefix REFUSED (generating into the wrong project would mix up
+  someone else's work). `flow_status` now also lists the project names in its hint when none is open, so the next
+  step is obvious. Two things the first live test caught: looking a name up means LEAVING the project page, so a
+  refused name closed the project that was open (openProject now remembers the address and goes back on any failure),
+  and the page title is "Google Flow - <project>", not the project's name, so the uuid path strips that prefix.
+  Verified live: hint listed all four, "Istoria chimiei" opened, "Istoria" and the uuid opened it too, "Nu exista"
+  and the ambiguous "Oct 1" were both refused with the list AND left the open project open.
