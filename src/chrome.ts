@@ -82,7 +82,8 @@ export async function getFlowPage(): Promise<Page> {
   const b = await getBrowser();
   const context = b.contexts()[0];
   if (!context) throw new Error("Chrome has no browser context; restart the Flow Chrome window.");
-  const existing = context.pages().find((p) => FLOW_HOSTS.test(p.url()));
+  // FLOW_MCP_PROJECT (a project id) is a test hook: drive only that project's tab, never the one the real server uses.
+  const existing = context.pages().find((p) => FLOW_HOSTS.test(p.url()) && p.url().includes(process.env.FLOW_MCP_PROJECT ?? ""));
   if (existing) {
     await ensureEnglish(existing);
     return existing;
