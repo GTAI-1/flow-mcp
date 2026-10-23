@@ -56,8 +56,8 @@ export type JobRunner = (job: Job) => Promise<string[]>;
 
 // Flow is driven like a careful person would: one generation at a time, with a
 // randomised pause between them.
-const PAUSE_MIN_MS = Number(process.env.FLOW_MCP_PAUSE_MIN_S ?? 25) * 1000;
-const PAUSE_MAX_MS = Number(process.env.FLOW_MCP_PAUSE_MAX_S ?? 70) * 1000;
+const PAUSE_MIN_MS = Number(process.env.FLOW_MCP_PAUSE_MIN_S ?? 60) * 1000;
+const PAUSE_MAX_MS = Number(process.env.FLOW_MCP_PAUSE_MAX_S ?? 90) * 1000;
 
 export class JobQueue {
   private jobs = new Map<string, Job>();

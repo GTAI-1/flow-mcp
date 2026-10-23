@@ -84,6 +84,12 @@ async function closeAgentSettings(page: Page): Promise<void> {
     await back.click({ timeout: 5000 }).catch(() => {});
     await pause(page, 800);
   }
+  const close = page.locator("flow-agent-panel button[aria-label='Close'], button[aria-label='Close']").first();
+  if (await close.isVisible().catch(() => false)) {
+    await clearBackdrops(page);
+    await close.click({ timeout: 5000 }).catch(() => {});
+    await pause(page, 800);
+  }
 }
 
 // The balance only shows inside the account panel. That panel also holds "Sign out": never touch anything else in it.
@@ -699,15 +705,28 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
 // nothing visible. Each item's text holds its icon name and its label whether or not the label shows, so it is found by
 // label in both states. (Why the menu used to vanish altogether: see leaveSideMenu.)
 async function clickProjectNav(page: Page, item: string): Promise<boolean> {
+  const expand = page.locator("button:has-text('left_panel_open'), button[aria-label*='Expand']").first();
+  if (await expand.isVisible().catch(() => false)) {
+    await expand.click().catch(() => {});
+    await pause(page, 800);
+  }
   const button = page
     .getByRole("navigation", { name: "Project navigation" })
     .locator("button, a")
-    .filter({ hasText: new RegExp(`${item}\\s*$`) })
+    .filter({ hasText: new RegExp(item, "i") })
     .first();
-  if (!(await button.isVisible().catch(() => false))) return false;
-  await button.click({ timeout: 5000 });
-  await leaveSideMenu(page);
-  return true;
+  if (await button.isVisible().catch(() => false)) {
+    await button.click({ timeout: 5000 });
+    await leaveSideMenu(page);
+    return true;
+  }
+  const fallback = page.locator("button, a").filter({ hasText: new RegExp(item, "i") }).first();
+  if (await fallback.isVisible().catch(() => false)) {
+    await fallback.click({ timeout: 5000 });
+    await leaveSideMenu(page);
+    return true;
+  }
+  return false;
 }
 
 // The left-hand menu is a Material drawer, and Escape shuts it whenever the keyboard focus is inside it. Clicking
@@ -724,6 +743,14 @@ async function leaveSideMenu(page: Page): Promise<void> {
 }
 async function openProjectNav(page: Page, item: string): Promise<void> {
   if (await clickProjectNav(page, item)) return;
+  if (item === "Characters") {
+    const root = page.url().match(/^https:\/\/[^/]+\/project\/[0-9a-f-]{36}/)?.[0];
+    if (root) {
+      await page.goto(inEnglish(`${root}/character`), { waitUntil: "domcontentloaded" });
+      await pause(page, 2000);
+      return;
+    }
+  }
   // A page load shows the menu again in whatever state the user keeps it, and changes nothing about that choice.
   await page.goto(inEnglish(page.url()), { waitUntil: "domcontentloaded" });
   await pause(page, 3000);
@@ -775,8 +802,11 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const s = job.params;
 
   await ensureProjectGrid(page);
+  await closeAgentSettings(page);
   const agent = page.getByRole("button", { name: "Agent", exact: true });
-  if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
+  if (await agent.isVisible({ timeout: 2000 }).catch(() => false)) {
+    if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
+  }
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
 
