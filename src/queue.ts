@@ -16,6 +16,8 @@ export interface SceneParams {
   reference_images?: string[];
   chain_from?: string;
   reference_from?: string;
+  // Cutouts: this job redraws the white take of job <matte_from> on black, then both become one transparent PNG.
+  matte_from?: string;
   edit_asset?: string;
   agent_scenes?: string[];
   // The scene number each agent scene is saved as. A retry of scenes 7 and 12 keeps scene-07 and scene-12; without it
