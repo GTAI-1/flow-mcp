@@ -6,6 +6,7 @@ export const PLAYBOOK = {
     "Tell the user the expected credit total before queueing anything that costs credits.",
     "Call flow_wait repeatedly until finished is true; scenes run one at a time with 25-70 s pauses.",
     "To put the spoken words on screen: FIRST call flow_transcribe on the film (with `language`), show the user the words, flag anything that looks misheard (names especially, and words run together), propose the fixes, and wait for the user to confirm or correct them. Only then call flow_captions once, passing the agreed words as `text` (style bold for short-form, clean for subtitles).",
+    "Several stills (with or without reference_images)? Pass parallel_images: true to flow_generate: they are sent 10-20 s apart without waiting for each to finish, up to 6 at a time, and each file still lands on its own scene.",
     "If an image batch finishes with \"still failed: scene ...\" in its note, call flow_retry with its job id: only those images are made again, under their own scene numbers.",
     "No call blocks for more than about 45 s. A reply with still_working and a task_id means Flow is still busy with it: pass the task_id to flow_wait, and never repeat the call.",
   ],

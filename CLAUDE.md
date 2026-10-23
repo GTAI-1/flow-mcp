@@ -54,7 +54,8 @@ Verified unattended end to end: image (incl. x2 variants), text→video, first+l
 `asset:` characters), chain_previous, download (original + free 1080p upscale), credit guard, pacing, credits readout,
 flow_assets, flow_download, flow_techniques, flow_assemble (incl. looping music + voiceover mix, checked with
 volumedetect), flow_character, flow_edit (20 credits for a 4 s clip, result verified visually), flow_agent_images
-(20 scenes → 20 files in scene order, 204 s, 0 credits; and the re-ask + one-by-one recovery path), Studio panel,
+(20 scenes → 20 files in scene order, 204 s, 0 credits; and the re-ask + one-by-one recovery path), flow_generate
+parallel_images (5 stills with references: 174 s against 553 s one at a time, each file on its scene), Studio panel,
 MCP-as-client via RemoteCore.
 Omni 1.1 Flash quotes: 360p 4/5/6/7 and 720p 7/10/12/15 credits for 4/6/8/10 s.
 Not built: "improve prompt (AI)" in Studio (bundled Claude Code CLI exists at
@@ -345,6 +346,9 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   FLOW_MCP_PORT=8799 and FLOW_MCP_HOME=<scratch dir>. Never reuse the real home for that: a process that owns a port
   writes a fresh token to HOME/token, which locks every client of the real owner out (401). Symlink characters.json into
   the scratch home when looks must persist. Give the client a 60 s request timeout so the app's limit is reproduced.
+  When the real server's Flow tab must be left alone (another session using it), open a test project in a NEW Chrome
+  window (CDP `Target.createTarget` with `newWindow: true`) and set FLOW_MCP_PROJECT=<that project's id>: getFlowPage
+  then drives only that project's tab. Check the real owner's queue is idle first: downloads land in a browser-wide folder.
 - FLOW IN ENGLISH (2026-10-13): every driver step finds a button by its ENGLISH accessible name (~45 labels), so a
   Google account set to another language made the whole MCP fail. Measured on a spare tab: `?hl=es` turned every label
   Spanish ("Inicio", "Menú para añadir contenido multimedia") on an English account, the choice holds through in-app
@@ -510,3 +514,35 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
 - CAPTIONS WORKFLOW (the user's rule, 2026-10-18): transcribe first, show the words with likely mishearings fixed,
   get the user's OK, THEN make the video once. The playbook and the flow_captions description say so too.
 
+- PARALLEL IMAGE BATCHES (2026-10-23, asked for by someone who works this way by hand: send a prompt with references,
+  press generate and send the next one at once, several rendering together in one tab). Mapped live on a throwaway project ("zz
+  flow-mcp test (safe to delete)"), in its own Chrome window so the tab in normal use was never touched:
+  1. Start generation empties the composer at once - prompt AND reference chips - and keeps the settings (model, aspect,
+     xN). Within ~1 s a pending tile sits at the top: `flow-image-tile` > `flow-pending-tile`, aria-label = the whole
+     prompt, innerText "image NN% <prompt>", no data-media-id. Finished: Flow's short title as aria-label and
+     img[data-media-id]; the prompt text fades out of innerText a moment later.
+  2. A second prompt sent while the first was at 67% rendered alongside it (~20 s each). No limit was hit with 5 in
+     flight; none was probed with faster sends (that would be a burst).
+  3. A finished tile holds no prompt in its DOM (hovered: Favorite, Reuse prompt, More options). `Reuse prompt` puts the
+     exact prompt back AND its reference chips; a chip is `flow-base-prompt-box img` with src
+     flow-content.google/image/<media id of the reference>. Prompt + reference ids therefore identify a tile even when
+     two scenes share a prompt.
+  4. Left nav of a new project now: All media, Characters, Scenes, Library (Create collection), Tools, Create tool,
+     Trash, Collapse (no Images/Videos/Uploads entries).
+  BUILT: flow_generate `parallel_images: true` marks image scenes (not reference_previous ones) `parallel`; the queue
+  hands runs of up to 6 queued parallel jobs to runImageBatch (still one Job per scene, one result each). It opens the
+  settings popover only when aspect/model/variants change, uploads each distinct reference file once per batch, waits
+  at least a random 10-20 s between Start clicks (counted from the last click, so upload and typing count towards it),
+  counts a send only once the composer has emptied, waits until nothing renders (Flow's free Retry on new failed tiles,
+  once per scene), reads every new tile's key through Reuse prompt, ties tiles to scenes with matchSent (exact key; the
+  prompt's words for leftovers; `node scripts/check-match.mjs` checks it), then renames and downloads at downloadPace.
+  Video never batches. Bug found on the way: JobQueue.add() started work() synchronously, so the first scene of a call
+  ran before the others were queued and no batch formed; work now starts on setImmediate. About one rename in five was
+  skipped in each batch run (renameTile is best effort and says nothing; making it wait for the menu did not change
+  that, cause not found). The file still downloads under the right scene name; only Flow's title stays Flow's own.
+  VERIFIED live, 0 credits, 5 product stills with references (two with the SAME prompt and different references, one with
+  two references, one file used twice and uploaded once): parallel 174 s, 5/5, the keys read back identical to the
+  ones sent, every file on its scene (checked by eye); the same 5 one at a time 553 s (four 44-61 s pauses). Then on
+  the final code: 4 scenes, one at x2 -> 5 files in 150 s, the x2 pair saved as scene-03-v1/-v2.
+  NOT verified: a failed tile inside a batch; `asset:`/character references (a chip without an id in its src leaves the
+  prompt words to decide); more than 6 at once.

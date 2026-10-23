@@ -188,7 +188,7 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | Tool | Purpose |
 |---|---|
 | `flow_status` | Session state (signed in, project open, plan, credits left), queue, pacing, prompt playbook |
-| `flow_generate` | Queue scenes: prompt, image or video, model, aspect, duration, resolution, variants, first/last frame, reference images, `max_credits` cap |
+| `flow_generate` | Queue scenes: prompt, image or video, model, aspect, duration, resolution, variants, first/last frame, reference images, `max_credits` cap. `parallel_images: true` sends image scenes one after another without waiting for each to finish (see below) |
 | `flow_wait` | Wait for jobs, or for the task id of a slow call; returns file paths and results. Answers within about 40 s, so call again until `finished` is true |
 | `flow_cancel` | Cancel a job that has not started |
 | `flow_retry` | Re-queue failed jobs with the same settings and file names (a failed tile is first retried inside Flow with its own free Retry button: `retries`, default 1) |
@@ -230,6 +230,12 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
 
 - One generation at a time, with a random 25–70 second pause between them. The page carries an
   invisible reCAPTCHA; this drives the real interface at human pace and does nothing to evade it.
+- Stills can go faster, the way you would do it by hand: with `parallel_images: true`, `flow_generate` types an
+  image scene's prompt, attaches its references, presses Start generation and goes straight on to the next scene
+  while Flow renders, with 10-20 seconds between sends and up to 6 scenes at a time. Each reference file is
+  uploaded once per batch. Afterwards every image is tied back to its scene by the prompt and references Flow stored
+  for it, so `scene-03` is always scene 3's image, whatever order Flow finishes in. Images only (they cost nothing);
+  video, and stills using `reference_previous`, still run one at a time.
 - Before each generation the server reads Flow's own credit quote and skips the scene if it exceeds
   `max_credits` (default 25).
 - Any Google account language works. The server finds Flow's buttons by their English names, so its

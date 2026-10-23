@@ -31,6 +31,8 @@ export interface SceneParams {
   attach?: string[];
   continue_mode?: "exact" | "likeness";
   retries?: number;
+  // Image scene sent with the queued ones after it without waiting for each to finish (flow_generate parallel_images).
+  parallel?: boolean;
   download_quality?: "original" | "upscaled";
   output_dir: string;
   file_stem: string;
@@ -53,11 +55,17 @@ export interface Job {
 }
 
 export type JobRunner = (job: Job) => Promise<string[]>;
+// Sends several image scenes one after another without waiting for each, then collects them; one result per job.
+export type BatchRunner = (jobs: Job[]) => Promise<(string[] | Error)[]>;
 
 // Flow is driven like a careful person would: one generation at a time, with a
-// randomised pause between them.
+// randomised pause between them. Image scenes marked parallel go out together, as a person does by hand (the pause
+// between their sends lives in the driver), and the pause below then comes before the next batch.
 const PAUSE_MIN_MS = Number(process.env.FLOW_MCP_PAUSE_MIN_S ?? 25) * 1000;
 const PAUSE_MAX_MS = Number(process.env.FLOW_MCP_PAUSE_MAX_S ?? 70) * 1000;
+// shortcut: a batch counts on its new tiles staying in the part of the grid Flow keeps mounted at the top (30+ tiles
+// seen); a bigger batch would need a scrolling walk to find them all.
+const BATCH_MAX = 6;
 
 export class JobQueue {
   private jobs = new Map<string, Job>();
@@ -65,7 +73,10 @@ export class JobQueue {
   private lastFinished = 0;
   pausedReason: string | null = null;
 
-  constructor(private runner: JobRunner) {}
+  constructor(
+    private runner: JobRunner,
+    private batchRunner?: BatchRunner,
+  ) {}
 
   add(params: SceneParams): Job {
     const job: Job = {
@@ -77,7 +88,9 @@ export class JobQueue {
       createdAt: new Date().toISOString(),
     };
     this.jobs.set(job.id, job);
-    void this.work();
+    // Started on the next turn of the event loop, once the caller has queued the rest of its scenes: started at once,
+    // the first scene ran alone and a parallel batch never formed (2026-10-23).
+    setImmediate(() => void this.work());
     return job;
   }
 
@@ -131,6 +144,29 @@ export class JobQueue {
           }
         }
         if (job.status !== "queued") continue;
+        const batch = this.together();
+        if (batch.length > 1) {
+          for (const j of batch) {
+            j.status = "running";
+            j.attempts++;
+          }
+          // A whole-batch failure may come after some images were sent: those are in Flow (free), not lost.
+          const results = await this.batchRunner!(batch).catch((err: unknown) => batch.map(() => (err instanceof Error ? err : new Error(String(err)))));
+          for (const [i, j] of batch.entries()) {
+            const r = results[i];
+            if (r instanceof Error) {
+              j.error = r.message;
+              j.status = "failed";
+            } else {
+              j.files = r;
+              j.error = undefined;
+              j.status = "done";
+            }
+            j.finishedAt = new Date().toISOString();
+          }
+          this.lastFinished = Date.now();
+          continue;
+        }
         job.status = "running";
         job.attempts++;
         try {
@@ -150,5 +186,13 @@ export class JobQueue {
     } finally {
       this.working = false;
     }
+  }
+
+  // The run of queued parallel image scenes that starts with the next job in line (just that job otherwise).
+  private together(): Job[] {
+    const queued = this.list().filter((j) => j.status === "queued");
+    if (!this.batchRunner || !queued[0]?.params.parallel) return queued.slice(0, 1);
+    const end = queued.findIndex((j) => !j.params.parallel);
+    return queued.slice(0, end < 0 ? BATCH_MAX : Math.min(end, BATCH_MAX));
   }
 }
