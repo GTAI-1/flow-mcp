@@ -214,6 +214,18 @@ server.registerTool(
 );
 
 server.registerTool(
+  "flow_open_project",
+  {
+    title: "Open a Flow project",
+    description:
+      "Open one of the account's Flow projects in the Chrome window, by the name Flow shows (or its uuid/URL), so a run can carry on without the user clicking. flow_status lists the names whenever no project is open. Refuses a name that matches more than one project.",
+    inputSchema: shapes.open_project,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  (args) => reply(patient("flow_open_project", core.open_project(args))),
+);
+
+server.registerTool(
   "flow_character",
   {
     title: "Create a reusable character",

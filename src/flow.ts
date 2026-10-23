@@ -2,7 +2,7 @@ import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, 
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
-import { HOME_DIR, getFlowPage, inEnglish } from "./chrome.js";
+import { FLOW_URL, HOME_DIR, ensureEnglish, getFlowPage, inEnglish } from "./chrome.js";
 import type { Job } from "./queue.js";
 import { extractZip } from "./platform.js";
 
@@ -14,6 +14,7 @@ export interface FlowState {
   credits_remaining?: number;
   composer?: string;
   hint?: string;
+  projects?: string[];
 }
 
 const IMAGE_TIMEOUT_MS = 3 * 60_000;
@@ -31,13 +32,96 @@ export async function getFlowState(detailed = false): Promise<FlowState> {
   const inProject = /\/project\//.test(url);
   const state: FlowState = { url, signedIn, inProject };
   if (!signedIn) state.hint = "Not signed in. Run `npm run login` and sign in to Google in the Flow Chrome window.";
-  else if (!inProject) state.hint = "Signed in, but no project is open. Open or create a project in the Flow Chrome window.";
+  else if (!inProject) {
+    const names = await listProjects(page).then((p) => p.map((x) => x.name), () => []);
+    state.projects = names;
+    state.hint = names.length
+      ? `Signed in, but no project is open. Call flow_open_project with one of: ${names.join(" | ")}.`
+      : "Signed in, but no project is open. Open or create a project in the Flow Chrome window.";
+  }
   else if (detailed) {
     state.plan = await page.getByRole("button", { name: "Account details" }).innerText().then((t) => t.trim().split("\n")[0], () => undefined);
     state.credits_remaining = await readCredits(page).catch(() => undefined);
     state.composer = await settingsTrigger(page).innerText().then((t) => t.replace(/\s+/g, " ").trim(), () => undefined);
   }
   return state;
+}
+
+// The projects page (flow.google.com itself) is `flow-projects-page` > `flow-projects-grid` > `flow-project-card`
+// (mapped live 2026-10-22). A card's only link is `a[aria-label="Open project"]` with href /project/<uuid>, and the
+// name is the card's first line of innerText (the rest is "edit" and "delete", the Material icon ligatures - the
+// same trap as listCharacters).
+const PROJECT_CARD = "flow-project-card";
+
+export interface FlowProject {
+  name: string;
+  id: string;
+}
+
+export async function listProjects(page: Page): Promise<FlowProject[]> {
+  if (/\/project\//.test(page.url())) {
+    await page.goto(inEnglish(FLOW_URL), { waitUntil: "domcontentloaded" });
+    await pause(page, 2500);
+  }
+  await page.locator(PROJECT_CARD).first().waitFor({ state: "visible", timeout: 15_000 }).catch(() => {});
+  return page.evaluate((sel) => {
+    return [...document.querySelectorAll(sel)].flatMap((card) => {
+      const id = card.querySelector('a[href*="/project/"]')?.getAttribute("href")?.match(/[0-9a-f-]{36}/)?.[0];
+      const name = ((card as HTMLElement).innerText || "").split(String.fromCharCode(10))[0].trim();
+      return id && name ? [{ name, id }] : [];
+    });
+  }, PROJECT_CARD);
+}
+
+// Opens a project by name, so a run can recover on its own instead of telling the user to click. A uuid or a full
+// project URL is taken as given. Matching is exact first, then case-insensitively on the start of the name, and an
+// ambiguous name is refused rather than guessed - picking the wrong project would generate into someone else's work.
+export async function openProject(wanted: string): Promise<FlowProject & { url: string }> {
+  const state = await getFlowState();
+  if (!state.signedIn) throw new Error(state.hint);
+  const page = await getFlowPage();
+
+  // Looking the name up means leaving the project page, so a refused name would otherwise CLOSE the project that was
+  // open - caught in testing, where two failed lookups in a row left Flow on the start page. Whatever happens, a
+  // failure puts the window back where it was.
+  const wasAt = page.url();
+  const restore = async () => {
+    if (/\/project\//.test(wasAt) && page.url() !== wasAt) {
+      await page.goto(wasAt, { waitUntil: "domcontentloaded" }).catch(() => {});
+      await pause(page, 1500);
+    }
+  };
+
+  const direct = wanted.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0];
+  let project: FlowProject | undefined;
+  if (direct) project = { name: wanted, id: direct };
+  else {
+    const all = await listProjects(page).catch(async (err) => {
+      await restore();
+      throw err;
+    });
+    const fail = async (message: string): Promise<never> => {
+      await restore();
+      throw new Error(message);
+    };
+    if (!all.length) await fail("Flow shows no projects to open. Create one in the Flow Chrome window.");
+    const exact = all.filter((p) => p.name === wanted);
+    const starts = all.filter((p) => p.name.toLowerCase().startsWith(wanted.toLowerCase()));
+    const hits = exact.length ? exact : starts;
+    if (!hits.length) await fail(`No project called "${wanted}". Flow has: ${all.map((p) => p.name).join(" | ")}.`);
+    if (hits.length > 1)
+      await fail(`${hits.length} projects start with "${wanted}": ${hits.map((p) => p.name).join(" | ")}. Use the full name.`);
+    project = hits[0];
+  }
+
+  const url = `https://flow.google.com/project/${project.id}`;
+  await page.goto(inEnglish(url), { waitUntil: "domcontentloaded" });
+  await pause(page, 2500);
+  await ensureEnglish(page);
+  if (!/\/project\//.test(page.url())) throw new Error(`Flow did not open ${project.name} (ended up at ${page.url()}).`);
+  // The name is only known for sure once the project is open: a uuid was passed in as its own name.
+  const open = direct ? (await page.title().catch(() => "")).replace(/^Google Flow\s*[-–]\s*/, "").trim() || project.name : project.name;
+  return { name: open, id: project.id, url: page.url() };
 }
 
 // Menus close on Escape; the account panel does not and needs its own close button.
