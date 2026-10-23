@@ -3,9 +3,11 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { HOME_DIR } from "./chrome.js";
+import { findTool } from "./platform.js";
 
 const run = promisify(execFile);
-const FFMPEG = process.env.FLOW_MCP_FFMPEG ?? "ffmpeg";
+const ffmpeg = () => process.env.FLOW_MCP_FFMPEG ?? findTool("ffmpeg");
+const ffprobe = () => process.env.FLOW_MCP_FFPROBE ?? findTool("ffprobe");
 const KEY_FILE = join(HOME_DIR, "gemini-key");
 const MODEL = process.env.FLOW_MCP_GEMINI_TTS ?? "gemini-2.5-flash-preview-tts";
 
@@ -93,11 +95,11 @@ export async function speakWithGemini(text: string, voice: string, target: strin
   const rate = Number(part.inlineData.mimeType?.match(/rate=(\d+)/)?.[1] ?? 24000);
   const raw = target.replace(/\.\w+$/, "") + ".pcm";
   writeFileSync(raw, Buffer.from(part.inlineData.data, "base64"));
-  await run(FFMPEG, [
+  await run(ffmpeg(), [
     "-y", "-f", "s16le", "-ar", String(rate), "-ac", "1", "-i", raw,
     "-af", "highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", "-ac", "2", target,
   ]);
-  const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
+  const { stdout } = await run(ffprobe(), ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", target]);
   const duration = Number(stdout.trim());
   writeFileSync(raw, "");
   await run("rm", ["-f", raw]).catch(() => {});
