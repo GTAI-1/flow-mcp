@@ -1,10 +1,10 @@
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
 import { HOME_DIR, getFlowPage, inEnglish } from "./chrome.js";
 import type { Job } from "./queue.js";
-import { extractZip } from "./platform.js";
+import { extractZip, moveFile } from "./platform.js";
 
 export interface FlowState {
   url: string;
@@ -608,10 +608,10 @@ function unpackTakes(zip: string, targetStem: string): string[] {
   const out: string[] = [];
   for (const [i, path] of takes.entries()) {
     const dest = `${targetStem}${i ? `-v${i + 1}` : ""}${extensionOf(path)}`;
-    renameSync(path, dest);
+    moveFile(path, dest);
     out.push(dest);
   }
-  renameSync(zip, `${targetStem}-takes.zip`);
+  moveFile(zip, `${targetStem}-takes.zip`);
   if (!out.length) throw new Error("Flow sent a ZIP with nothing usable inside it.");
   return out;
 }
@@ -643,11 +643,18 @@ async function renameTile(page: Page, tile: Locator, title: string): Promise<boo
   }
 }
 
+// The upscale this tool may pick without asking: 2K for an image, 1080p for a video. Both are free. 4K costs credits on
+// plans that offer it, so it is never chosen here; if no free upscale is on offer, the original is taken instead.
+const FREE_UPSCALE = /\b(2K|1080p)\b/i;
+
 async function downloadTile(page: Page, target: Locator | TileResolver, targetStem: string, quality: DownloadQuality): Promise<string[]> {
   await useOwnDownloadDir(page);
   const resolve: TileResolver = typeof target === "function" ? target : async () => target;
   let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  // Only fetching the file is retried. Once it has arrived, a failure to place it (a full or offline drive, a bad path)
+  // must not trigger another download: that left three copies of every image in the download folder on 2026-10-21.
+  let file: string | undefined;
+  for (let attempt = 0; attempt < 3 && !file; attempt++) {
     try {
       const tile = await resolve();
       const before = downloadsNow();
@@ -668,30 +675,35 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
       // Size submenu: "720p Original size" / "1K Original size", or the best upscale the plan allows.
       const original = page.getByRole("menuitem", { name: /original/i }).first();
       if (await original.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false)) {
-        const upscaled = page.locator('[role="menuitem"]:not([aria-disabled="true"]):not([disabled])').filter({ hasText: /upscaled/i }).first();
+        const upscaled = page
+          .locator('[role="menuitem"]:not([aria-disabled="true"]):not([disabled])')
+          .filter({ hasText: /upscaled/i })
+          .filter({ hasText: FREE_UPSCALE })
+          .first();
         const wanted = quality === "upscaled" && (await upscaled.isVisible().catch(() => false)) ? upscaled : original;
         await wanted.click();
       }
       // Upscales are rendered on demand, so they can take minutes to appear.
-      const file = await waitForDownloadedFile(page, before, quality === "upscaled" ? 600_000 : 180_000);
-      const kind = extensionOf(file);
-      let saved: string[];
-      if (kind === ".zip") saved = unpackTakes(file, targetStem);
-      else {
-        const target = `${targetStem}${kind}`;
-        renameSync(file, target);
-        saved = [target];
-      }
+      file = await waitForDownloadedFile(page, before, quality === "upscaled" ? 600_000 : 180_000);
       await page.keyboard.press("Escape");
       await scrollToTop(page);
-      return saved;
     } catch (err) {
       lastError = err;
       await page.keyboard.press("Escape").catch(() => {});
       await pause(page, 2000);
     }
   }
-  throw lastError;
+  if (!file) throw lastError;
+  const kind = extensionOf(file);
+  try {
+    if (kind === ".zip") return unpackTakes(file, targetStem);
+    const target = `${targetStem}${kind}`;
+    moveFile(file, target);
+    return [target];
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`Downloaded, but could not be saved to ${targetStem}${kind}: ${reason}. The file is safe at ${file}.`);
+  }
 }
 
 // The left-hand "Project navigation" (All media, Images, Videos, Characters...). Its Collapse button (a setting Flow
@@ -824,7 +836,12 @@ export async function runGeneration(job: Job): Promise<string[]> {
   job.progress = undefined;
 
   mkdirSync(s.output_dir, { recursive: true });
+  // A start frame needs at least 1080p, and the original image download is about 1376 x 768. Images therefore default to
+  // the free 2K download; videos keep the original unless asked.
+  const quality = s.download_quality ?? (s.type === "image" ? "upscaled" : "original");
   const files: string[] = [];
+  const failed: string[] = [];
+  let firstError: unknown;
   for (const [i, id] of fresh.entries()) {
     const label = fresh.length > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem;
     // Flow names clips itself and reuses those names, so two takes of one scene come back identically titled and
@@ -839,8 +856,19 @@ export async function runGeneration(job: Job): Promise<string[]> {
     // old title failed every such download after 30 s ("locator.waitFor: Timeout 30000ms exceeded ... aria-label=
     // <the prompt>", reported by a user, 2026-10-15) while the clip sat finished and renamed in Flow.
     const handle = renamed && id.startsWith("title:") ? `title:${newTitle}` : id;
-    files.push(...(await downloadMedia(page, handle, stem, s.download_quality)));
+    // Each variant is downloaded on its own: one that fails must not stop the others (2026-10-21, an x2 image batch
+    // kept only its first take). The failed ones stay in Flow under their new titles for flow_download.
+    try {
+      files.push(...(await downloadMedia(page, handle, stem, quality)));
+    } catch (err) {
+      firstError ??= err;
+      failed.push(`${renamed ? newTitle : label}: ${err instanceof Error ? err.message : String(err)}`);
+    }
     await pause(page, 1500);
+  }
+  if (failed.length) {
+    if (!files.length) throw firstError;
+    job.note = [job.note, `not downloaded (still in Flow, fetch with flow_download): ${failed.join(" | ")}`].filter(Boolean).join(" · ");
   }
   return files;
 }
@@ -942,7 +970,7 @@ async function savePortrait(page: Page, name: string): Promise<string> {
   if (!pressed) throw new Error("Flow never showed the portrait's Download image button");
   const file = await waitForDownloadedFile(page, before, 90_000);
   const portrait = join(dir, `${name.replace(/[^\w.-]+/g, "_")}${extensionOf(file)}`);
-  renameSync(file, portrait);
+  moveFile(file, portrait);
   return portrait;
 }
 
@@ -1109,7 +1137,7 @@ async function downloadScene(page: Page, scene: FlowAsset, targetStem: string): 
   await page.getByRole("button", { name: "Download scene", exact: true }).click();
   const file = await waitForDownloadedFile(page, before, 600_000);
   const target = `${targetStem}${extensionOf(file)}`;
-  renameSync(file, target);
+  moveFile(file, target);
   await page.getByRole("button", { name: "Back button to go to previous page" }).click().catch(() => {});
   await pause(page, 2000);
   await ensureProjectGrid(page).catch(() => {});
