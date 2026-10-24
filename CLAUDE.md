@@ -567,3 +567,10 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   composer images, the agent's image default and the agent's one-by-one fallback (which used to drop the model).
   Verified live: set "Nano Banana Pro", one image with no model -> composer read "Nano Banana Pro"; "Imagen 9" refused
   with the available list.
+- ACCOUNTS x AGENT REFERENCES (2026-10-24, after rebasing onto upstream 84b548f "Agent image batches carry reference
+  images"): a batch whose references include an asset:<title> stays whole and runs on the first account (that media
+  lives in one project); file references split like any batch, each part gets its own slice of scene_references and
+  uploads the files into its own account's project. agent_ref_account records which account holds the uploads, so a
+  retry that lands on another account uploads again instead of attaching names that do not exist there. Verified live,
+  0 credits: 4 scenes, 2 file references (a rubber duck, a teacup) -> scenes 1-2 on main, 3-4 on acc2 at the same
+  time, both "2 reference image(s) attached", 4 of 4 from the agents, 109 s; the same duck and teacup in every image.
