@@ -8,6 +8,8 @@ export const PLAYBOOK = {
     "To put the spoken words on screen: FIRST call flow_transcribe on the film (with `language`), show the user the words, flag anything that looks misheard (names especially, and words run together), propose the fixes, and wait for the user to confirm or correct them. Only then call flow_captions once, passing the agreed words as `text` (style bold for short-form, clean for subtitles).",
     "If an image batch finishes with \"still failed: scene ...\" in its note, call flow_retry with its job id: only those images are made again, under their own scene numbers.",
     "Whenever an image must have no background (transparent PNG, cutout, sticker, logo, product on nothing), use flow_cutout, never flow_generate with 'transparent background' in the prompt: the models cannot draw transparency, so flow_cutout draws it on white, redraws it on black and computes real alpha from the pair.",
+    "Several Google accounts can work at once (flow_accounts): queue everything in one call and the scenes are shared out between them automatically. Only pass `account` when the work uses media from one account's project (asset:..., characters, edits) or the user asks. To add an account, flow_accounts add opens its Chrome window; the user signs in there by hand.",
+    "Image model: before a batch of images, if the user has not chosen one yet, call flow_image_models, show them the list and ask which they want; save their answer with set_default so later jobs use it without asking again.",
     "No call blocks for more than about 45 s. A reply with still_working and a task_id means Flow is still busy with it: pass the task_id to flow_wait, and never repeat the call.",
   ],
   models: {

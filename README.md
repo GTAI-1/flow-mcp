@@ -202,6 +202,8 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with a personality and a stock voice; use it as `asset:<name>` |
 | `flow_character_edit` | Restyle an existing character in place (free) and save the new portrait; name, personality and voice are kept, so every scene referencing it updates. Pass `look` with the updated description; with only a name it re-saves the current portrait |
 | `flow_characters` | List the project's characters |
+| `flow_accounts` | Several Google accounts working **at the same time**: `add` opens a new account's own Chrome window for you to sign in, `list` shows which are signed in, have a project open and are busy, `enable` / `disable` lets one take work or not. Queued work is shared out automatically |
+| `flow_image_models` | The image models Flow offers right now (read from its own menu) and the default one; `set_default` saves your choice (e.g. `Nano Banana Pro`) for every image job that names none, `latest` goes back to the newest Nano Banana |
 | `flow_techniques` | 39 film-technique prompt presets (camera moves, product shots, transitions, image commands); pass an id as a scene's `technique` |
 | `flow_narrate` | Free narration audio, any length: `gemini` (Google AI Studio text-to-speech, with the same voices Flow has, plus a `style` note) or `mac` (a voice installed on this computer, no key needed) |
 | `flow_voices` | Narrator voices available, and whether a Google key is set up |
@@ -217,6 +219,23 @@ Flow's agent mode and does both.
 
 Output lands in `~/flow-mcp-out/<project>/scene-NN.ext`.
 
+### Several accounts at once (optional)
+
+Each extra Google account gets its own Chrome window, its own Flow project and its own place in the line, and all
+of them generate at the same time:
+
+```bash
+npm run login -- acc2
+```
+
+(or ask Claude to "add a Flow account called acc2"). Sign in to that account in the window that opens, by hand, and
+open or create a project there. From then on, the scenes of one `flow_generate` call are shared out between the
+accounts, a `flow_agent_images` batch is split into one part per account (file numbers stay in scene order), and a
+`flow_cutout` can draw its two takes on different accounts. Each account still works one generation at a time with
+its own pauses, and downloads take turns so files never mix. Media that already lives in one project (`asset:...`,
+characters, edits, continuations) runs on the first account unless you pass `account`. An account that is signed
+out or has no project open simply takes no work until it is ready again.
+
 ### Narration with Google's voices (optional)
 
 `flow_narrate` with `engine: "mac"` uses your computer's own voices and works out of the box: macOS voices on a
@@ -229,7 +248,7 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
 
 ## Behaviour and settings
 
-- One generation at a time, with a random 25–70 second pause between them. The page carries an
+- One generation at a time per account, with a random 25–70 second pause between them. The page carries an
   invisible reCAPTCHA; this drives the real interface at human pace and does nothing to evade it.
 - Before each generation the server reads Flow's own credit quote and skips the scene if it exceeds
   `max_credits` (default 25).
@@ -245,7 +264,7 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
 | Symptom | Cause |
 |---|---|
 | Mac: the server will not start, `EPERM: operation not permitted` | The folder is in a macOS-protected location. Move it out of `~/Desktop`, `~/Documents` or `~/Downloads` and update the path in your Claude config |
-| *"Not signed in"* or *"no project open"* | Run `npm run login`, sign in, open a Flow project, leave the window open |
+| *"Not signed in"* or *"no project open"* | Run `npm run login` (or `npm run login -- <account>` for an extra account), sign in, open a Flow project, leave the window open |
 | A clip generated but no file arrived | The media is still in Flow. `flow_download` pulls it back for nothing. Never re-generate and pay twice |
 | Everything times out | The Chrome window was closed, or the machine slept. Reopen it with `npm run login` |
 

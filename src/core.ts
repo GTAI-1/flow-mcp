@@ -6,7 +6,9 @@ import { assemble, localVoices, speakLocally, voiceTrack } from "./assemble.js";
 import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemini.js";
 import { extractLastFrame } from "./chain.js";
 import { burnCaptions, captionedName, captionSetup, previewCaptions, transcribe } from "./captions.js";
-import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
+import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, imageModelFor, LATEST_IMAGE_MODEL, listAssets, listCharacters, listImageModels, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
+import { accountByName, addAccount, defaultAccount, defaultImageModel, enabledAccounts, listAccounts, loadSettings, onAccount, profileDir, saveSettings, setAccountEnabled } from "./accounts.js";
+import { getFlowPage } from "./chrome.js";
 import { differenceMatte } from "./matte.js";
 import { JobQueue, type Job } from "./queue.js";
 import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
@@ -93,11 +95,19 @@ const captionFields = {
     ),
 };
 
+// Several Google accounts can be signed in, each in its own Chrome; jobs spread over all of them at once.
+const accountField = z
+  .string()
+  .min(1)
+  .optional()
+  .describe("Run on this Flow account only (a name from flow_accounts). Default: queued work goes to whichever account is free first; anything that uses media already in a Flow project goes to the first account.");
+
 export const shapes = {
   status: { detailed: z.boolean().default(true).describe("false skips the plan/credits readout, which briefly opens Flow's account panel.") },
   generate: {
     project: z.string().min(1).describe("Folder name for the downloaded clips, e.g. 'HotelPromo'."),
     scenes: z.array(sceneSchema).min(1).max(100),
+    account: accountField,
   },
   wait: {
     job_ids: z.array(z.string()).optional().describe("Job ids from a queued call, or the task_id of a call that answered still_working. Default: every queued job."),
@@ -105,11 +115,12 @@ export const shapes = {
   },
   cancel: { job_id: z.string() },
   retry: { job_ids: z.array(z.string()).optional().describe("Jobs to re-queue. Default: every failed job.") },
-  assets: { kind: z.enum(["image", "video", "scene"]).optional() },
+  assets: { kind: z.enum(["image", "video", "scene"]).optional(), account: accountField },
   download: {
     project: z.string().min(1).describe("Local folder name under the output root."),
     assets: z.array(z.string().min(1)).min(1).max(30).describe("Titles (or title prefixes) from flow_assets, in the order they should be numbered."),
     quality: z.enum(["original", "upscaled"]).default("original"),
+    account: accountField,
   },
   assemble: {
     project: z.string().min(1).describe("Same project name used in flow_generate."),
@@ -156,6 +167,7 @@ export const shapes = {
     project: z.string().min(1).describe("Folder name for the downloaded images."),
     scenes: z.array(z.string().min(1)).min(1).max(50).describe("One image description per scene, in order."),
     aspect_ratio: z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]).default("16:9"),
+    model: z.string().optional().describe("Image model label as shown in Flow, e.g. 'Nano Banana Pro'. Default: the saved default (flow_image_models), else the newest Nano Banana."),
     download_quality: z.enum(["original", "upscaled"]).optional(),
     references: z
       .array(
@@ -173,6 +185,13 @@ export const shapes = {
       .array(z.array(z.string()))
       .optional()
       .describe("One list per scene, in scene order: the reference names that scene uses (empty list for none). Without it the agent decides which references fit each scene."),
+    account: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Run the whole batch on this account. Default: with several accounts enabled the batch is split between them and they all render at once; scene numbers stay in order. A batch whose references are 'asset:' items stays whole on the first account, where that media lives.",
+      ),
   },
   voices: {},
   narrate: {
@@ -196,8 +215,9 @@ export const shapes = {
       .describe("What to draw, e.g. 'a red sneaker, three-quarter view, studio product photo'. Leave the background out: it is set for you. With `image`, an optional note on what to keep."),
     image: z.string().min(1).optional().describe("Cut out a picture you already have instead: absolute path, or 'asset:<title>' of an image in the Flow project."),
     aspect_ratio: z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]).default("1:1"),
-    model: z.string().optional().describe("Image model label as shown in Flow. Default: the newest Nano Banana."),
+    model: z.string().optional().describe("Image model label as shown in Flow. Default: the saved default (flow_image_models), else the newest Nano Banana."),
     download_quality: z.enum(["original", "upscaled"]).optional().describe("'upscaled' makes a 2K cutout (slower)."),
+    account: accountField,
   },
   edit: {
     project: z.string().min(1).describe("Local folder for the edited clip."),
@@ -207,6 +227,7 @@ export const shapes = {
       .literal(true)
       .describe("Must be true. Flow shows no quote for edits, so max_credits cannot protect you: a 4 s clip cost 20 credits when measured. The real cost is reported on the finished job."),
     download_quality: z.enum(["original", "upscaled"]).optional(),
+    account: accountField,
   },
   continue_shot: {
     project: z.string().min(1).describe("Local folder for the new clip."),
@@ -232,12 +253,30 @@ export const shapes = {
       .boolean()
       .optional()
       .describe("Skip the guard that refuses to run when Flow already holds a fresh-looking continuation of this clip. Only pass it when you have checked the grid and genuinely want another paid take."),
+    account: accountField,
   },
-  trash: { name: z.string().min(1).describe("Exact title of the item to move to Flow's Trash, as listed by flow_assets.") },
+  trash: { name: z.string().min(1).describe("Exact title of the item to move to Flow's Trash, as listed by flow_assets."), account: accountField },
   set_key: { key: z.string().min(1).max(200) },
   discard: { path: z.string().min(1).describe("A saved film, still, narration or whole project folder inside the films folder, to move to this computer's bin (Mac Trash, Windows Recycle Bin).") },
   outputs: {},
-  characters: {},
+  characters: { account: accountField },
+  accounts: {
+    action: z
+      .enum(["list", "add", "open", "enable", "disable"])
+      .default("list")
+      .describe(
+        "list: every account with whether it is signed in, has a project open and is busy. add: create a new account and open its own Chrome window on Flow for the user to sign in by hand. open: bring an account's Chrome window up (to sign in or open a project). enable / disable: let an account take work or not (its sign-in is kept).",
+      ),
+    name: z.string().min(1).max(31).optional().describe("Account name for add/open/enable/disable, e.g. 'work' or 'acc2'. The original account is 'main'."),
+  },
+  image_models: {
+    set_default: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Make this the image model every image job uses when it names none, e.g. 'Nano Banana Pro'. 'latest' goes back to always using the newest Nano Banana. Checked against Flow's own list."),
+    account: accountField,
+  },
   character_edit: {
     name: z.string().min(1).describe("Character to change, as listed by flow_characters."),
     change: z
@@ -256,6 +295,7 @@ export const shapes = {
       .describe(
         "The character's whole description AFTER the change, e.g. the old one with 'navy coat' swapped for 'red coat'. Scenes quote it word for word to hold the design, so a stale colour in it fights the new portrait. Without it, the change is added to the end of the old description.",
       ),
+    account: accountField,
   },
   character: {
     name: z.string().min(1).max(60).describe("Character name; scenes then reference it as 'asset:<name>' in reference_images."),
@@ -271,6 +311,7 @@ export const shapes = {
       .describe("Existing picture instead of `describe`: absolute path, or 'asset:<title>' of an image already in the Flow project."),
     aspect_ratio: z.enum(["3:4", "1:1", "9:16", "16:9", "4:3"]).optional().describe("Frame for the drawn portrait when using `describe`. Default 3:4."),
     personality: z.string().max(500).optional().describe("How the character acts; Flow uses it when crafting scenes."),
+    account: z.string().min(1).optional().describe("Account whose Flow project gets the character (characters belong to one project). Default: the first account."),
     voice: z.string().optional().describe("Flow voice name, e.g. 'Charon' (male, informative) or 'Aoede' (female, breezy)."),
   },
   techniques: { category: z.enum(["camera", "product", "transition", "image"]).optional() },
@@ -278,9 +319,10 @@ export const shapes = {
 
 type Args<K extends keyof typeof shapes> = z.infer<z.ZodObject<(typeof shapes)[K]>>;
 
-export const jobView = ({ id, status, params, files, attempts, credits, progress, note, error, failed_scenes }: Job) => ({
+export const jobView = ({ id, status, params, files, attempts, credits, progress, note, error, failed_scenes, account }: Job) => ({
   id,
   status,
+  account: account ?? params.account,
   project: params.output_dir,
   scene: params.file_stem,
   prompt: params.prompt,
@@ -307,7 +349,9 @@ export interface Core {
   voices(): Promise<unknown>;
   narrate(a: Args<"narrate">): Promise<unknown>;
   character(a: Args<"character">): Promise<unknown>;
-  characters(): Promise<unknown>;
+  characters(a: Args<"characters">): Promise<unknown>;
+  accounts(a: Args<"accounts">): Promise<unknown>;
+  image_models(a: Args<"image_models">): Promise<unknown>;
   character_edit(a: Args<"character_edit">): Promise<unknown>;
   edit(a: Args<"edit">): Promise<unknown>;
   cutout(a: Args<"cutout">): Promise<unknown>;
@@ -342,6 +386,9 @@ export const VOICES = [
   { name: "Iapetus", description: "male, clear, mid-low pitch" },
 ];
 
+// The highest scene number a queued job will write: an image batch writes one file per scene, not just its first.
+const lastNumber = (j: Job) => Math.max(Number(j.params.file_stem.match(/\d+/)?.[0] ?? 0) + (j.params.agent_scenes?.length ?? 1) - 1, ...(j.params.agent_numbers ?? []));
+
 const BUSY = "A generation is running in the Flow tab. Wait for it to finish (flow_wait), then retry.";
 
 const STILL = /\.(jpe?g|png|webp)$/i;
@@ -353,7 +400,18 @@ const TO_BLACK =
   "Change ONLY the background of this image to pure solid black (#000000), perfectly flat and even. Keep the subject pixel-for-pixel identical: same position, same size, same pose, same crop and framing, same colours, same lighting, every detail and edge unchanged. Do not add any shadow, glow, rim light, reflection or outline.";
 
 export class LocalCore implements Core {
-  private queue: JobQueue = new JobQueue(async (job) => {
+  // One worker per enabled account, all running at once; each job runs inside its account, so every Flow step it takes
+  // (getFlowPage, downloads) goes to that account's own Chrome.
+  private queue: JobQueue = new JobQueue((job, account) => onAccount(account, () => this.run(job)), {
+    accounts: () => enabledAccounts().map((a) => a.name),
+    ready: (account) =>
+      onAccount(account, async () => {
+        const state = await getFlowState();
+        return state.signedIn && state.inProject ? undefined : state.hint;
+      }),
+  });
+
+  private async run(job: Job): Promise<string[]> {
     const { chain_from, reference_from } = job.params;
     if (reference_from) {
       const still = this.queue.get(reference_from)?.files.find((f) => /\.(jpe?g|png|webp)$/i.test(f));
@@ -370,7 +428,23 @@ export class LocalCore implements Core {
     if (job.params.agent_scenes) return runAgentBatch(job);
     if (job.params.edit_asset) return runEdit(job);
     return runGeneration(job);
-  });
+  }
+
+  // Calls that drive one account's Flow tab directly (not through the queue) run on the account asked for, or the first
+  // one, and wait for nothing: if that account's Chrome is in the middle of a job they say so instead.
+  private direct<T>(account: string | undefined, work: () => Promise<T>): Promise<T> {
+    const target = account ? accountByName(account) : defaultAccount();
+    if (this.queue.busyOn(target.name)) return Promise.reject(new Error(`${BUSY} (account "${target.name}")`));
+    return onAccount(target, work);
+  }
+
+  // Which account a queued job must run on: the one named, or - for work that uses media already in a Flow project
+  // (asset:..., an edit, a continuation) - the first account, since that media lives in one account's project.
+  // Everything else is left free for whichever account is idle first.
+  private pin(account: string | undefined, usesProject: boolean): string | undefined {
+    if (account) return accountByName(account).name;
+    return usesProject && enabledAccounts().length > 1 ? defaultAccount().name : undefined;
+  }
 
   // Second half of a cutout: redraw the white take on black through Flow, then difference-matte the pair locally.
   private async runCutout(job: Job, whiteJob: string): Promise<string[]> {
@@ -391,11 +465,24 @@ export class LocalCore implements Core {
   }
 
   async status({ detailed }: Args<"status">) {
-    const flow = await getFlowState(detailed && !this.queue.busy);
-    return { flow, pacing: this.queue.pausedReason, output_root: OUTPUT_ROOT, jobs: this.queue.list().map(jobView) };
+    const enabled = enabledAccounts();
+    const accounts = [];
+    for (const a of enabled) {
+      const flow = await onAccount(a, () => getFlowState(detailed && !this.queue.busyOn(a.name))).catch((err: Error) => ({ error: err.message }));
+      accounts.push({ name: a.name, ...this.queue.workerView(a.name), flow });
+    }
+    // `flow` stays the first account's state so a single-account setup (and the Studio panel) reads it as before.
+    return {
+      flow: accounts[0]?.flow,
+      ...(enabled.length > 1 ? { accounts } : {}),
+      image_model: defaultImageModel() ?? "latest (the newest Nano Banana)",
+      pacing: this.queue.pausedReason,
+      output_root: OUTPUT_ROOT,
+      jobs: this.queue.list().map(jobView),
+    };
   }
 
-  async generate({ project, scenes }: Args<"generate">) {
+  async generate({ project, scenes, account }: Args<"generate">) {
     const invalid = scenes.findIndex((s, i) => s.chain_previous && (i === 0 || s.first_frame || s.type === "image"));
     if (invalid >= 0) {
       throw new Error(`Scene ${invalid + 1}: chain_previous needs a preceding video scene in the same call and cannot be combined with first_frame.`);
@@ -408,7 +495,7 @@ export class LocalCore implements Core {
     const output_dir = projectDir(project);
     // Continue numbering after whatever is already on disk or queued, so reruns never overwrite earlier scenes.
     const onDisk = existsSync(output_dir) ? readdirSync(output_dir).map((f) => Number(f.match(/^scene-(\d+)/)?.[1] ?? 0)) : [];
-    const queued = this.queue.list().filter((j) => j.params.output_dir === output_dir).map((j) => Number(j.params.file_stem.match(/\d+/)?.[0] ?? 0));
+    const queued = this.queue.list().filter((j) => j.params.output_dir === output_dir).map(lastNumber);
     const offset = Math.max(0, ...onDisk, ...queued);
     const jobs: Job[] = [];
     for (const [i, { chain_previous, reference_previous, technique, ...scene }] of scenes.entries()) {
@@ -433,6 +520,7 @@ export class LocalCore implements Core {
           prompt: `${scene.prompt.trim().replace(/\.?$/, ".")}${phrase ? ` ${phrase}` : ""}${lock}${inherit}`,
           chain_from: chain_previous ? jobs[i - 1].id : undefined,
           reference_from: reference_previous ? jobs[i - 1].id : undefined,
+          account: this.pin(account, [scene.first_frame, scene.last_frame, ...(scene.reference_images ?? [])].some((r) => r?.startsWith("asset:"))),
           output_dir,
           file_stem: `scene-${String(offset + i + 1).padStart(2, "0")}`,
         }),
@@ -493,13 +581,15 @@ export class LocalCore implements Core {
     return { jobs: jobs.map(jobView) };
   }
 
-  async assets({ kind }: Args<"assets">) {
-    if (this.queue.busy) throw new Error(BUSY);
-    return (await listAssets()).filter((a) => !kind || a.kind === kind).map(({ name, kind }) => ({ name, kind }));
+  async assets({ kind, account }: Args<"assets">) {
+    return this.direct(account, async () => (await listAssets()).filter((a) => !kind || a.kind === kind).map(({ name, kind }) => ({ name, kind })));
   }
 
-  async download({ project, assets, quality }: Args<"download">) {
-    if (this.queue.busy) throw new Error(BUSY);
+  async download({ project, assets, quality, account }: Args<"download">) {
+    return this.direct(account, () => this.downloadNow(project, assets, quality));
+  }
+
+  private async downloadNow(project: string, assets: string[], quality: "original" | "upscaled") {
     const dir = projectDir(project);
     mkdirSync(dir, { recursive: true });
     const files: string[] = [];
@@ -575,11 +665,11 @@ export class LocalCore implements Core {
 
   private nextStem(output_dir: string, prefix: string): string {
     const onDisk = existsSync(output_dir) ? readdirSync(output_dir).map((f) => Number(f.match(new RegExp(`^${prefix}-(\\d+)`))?.[1] ?? 0)) : [];
-    const queued = this.queue.list().filter((j) => j.params.output_dir === output_dir && j.params.file_stem.startsWith(prefix)).map((j) => Number(j.params.file_stem.match(/\d+/)?.[0] ?? 0));
+    const queued = this.queue.list().filter((j) => j.params.output_dir === output_dir && j.params.file_stem.startsWith(prefix)).map(lastNumber);
     return `${prefix}-${String(Math.max(0, ...onDisk, ...queued) + 1).padStart(2, "0")}`;
   }
 
-  async agent({ project, scenes, aspect_ratio, download_quality, references, scene_references }: Args<"agent">) {
+  async agent({ project, scenes, aspect_ratio, model, download_quality, references, scene_references, account }: Args<"agent">) {
     const output_dir = projectDir(project);
     if (scene_references && scene_references.length !== scenes.length) {
       throw new Error(`scene_references has ${scene_references.length} entries for ${scenes.length} scenes; give one list per scene (empty for none).`);
@@ -590,28 +680,46 @@ export class LocalCore implements Core {
     for (const r of references ?? []) {
       if (!r.image.startsWith("asset:") && !existsSync(r.image)) throw new Error(`Reference image not found: ${r.image}`);
     }
-    const job = this.queue.add({
-      agent_refs: references?.length ? references : undefined,
-      agent_scene_refs: references?.length ? scene_references : undefined,
-      prompt: `Agent batch: ${scenes.length} images`,
-      type: "image",
-      max_credits: 0,
-      aspect_ratio,
-      download_quality,
-      agent_scenes: scenes,
-      output_dir,
-      file_stem: this.nextStem(output_dir, "scene"),
-    });
-    return { output_dir, jobs: [jobView(job)] };
+    // A reference already in a Flow project (asset:...) exists only in that account's project, so such a batch stays
+    // whole on one account. References given as files are uploaded by whichever account runs each part.
+    const pinned = this.pin(account, (references ?? []).some((r) => r.image.startsWith("asset:")));
+    const first = Number(this.nextStem(output_dir, "scene").match(/\d+/)![0]);
+    // With several accounts the batch is cut into one part per account (at least two scenes each) and every account's
+    // agent renders its part at the same time. Each part keeps its scenes' own numbers, so the files come out in order.
+    const parts = pinned ? 1 : Math.max(1, Math.min(enabledAccounts().length, Math.floor(scenes.length / 2)));
+    const size = Math.ceil(scenes.length / parts);
+    const jobs: Job[] = [];
+    for (let start = 0; start < scenes.length; start += size) {
+      const part = scenes.slice(start, start + size);
+      const numbers = part.map((_, i) => first + start + i);
+      jobs.push(
+        this.queue.add({
+          agent_refs: references?.length ? references : undefined,
+          agent_scene_refs: references?.length && scene_references ? scene_references.slice(start, start + size) : undefined,
+          prompt: parts > 1 ? `Agent batch: scenes ${numbers[0]}-${numbers.at(-1)} of ${first}-${first + scenes.length - 1}` : `Agent batch: ${scenes.length} images`,
+          type: "image",
+          model,
+          max_credits: 0,
+          aspect_ratio,
+          download_quality,
+          agent_scenes: part,
+          agent_numbers: parts > 1 ? numbers : undefined,
+          account: pinned,
+          output_dir,
+          file_stem: `scene-${String(numbers[0]).padStart(2, "0")}`,
+        }),
+      );
+    }
+    return { output_dir, jobs: jobs.map(jobView) };
   }
 
   // Two free Nano Banana stills - the subject on white, then the same picture redrawn on black - and a local
   // difference matte turns the pair into a PNG with real transparency, soft edges included.
-  async cutout({ project, prompt, image, aspect_ratio, model, download_quality }: Args<"cutout">) {
+  async cutout({ project, prompt, image, aspect_ratio, model, download_quality, account }: Args<"cutout">) {
     if (!prompt && !image) throw new Error("Pass `prompt` (Flow draws the subject) or `image` (cut out a picture you already have).");
     const output_dir = projectDir(project);
     const stem = this.nextStem(output_dir, "cutout");
-    const shared = { type: "image" as const, max_credits: 0, aspect_ratio, model, download_quality, output_dir };
+    const shared = { type: "image" as const, max_credits: 0, aspect_ratio, model, download_quality, output_dir, account: this.pin(account, Boolean(image?.startsWith("asset:"))) };
     const white = this.queue.add({
       ...shared,
       prompt: image
@@ -624,19 +732,19 @@ export class LocalCore implements Core {
     return { output_dir, cutout: join(output_dir, `${stem}.png`), jobs: [white, black].map(jobView) };
   }
 
-  async edit({ project, asset, prompt, download_quality }: Args<"edit">) {
+  async edit({ project, asset, prompt, download_quality, account }: Args<"edit">) {
     const output_dir = projectDir(project);
-    const job = this.queue.add({ prompt, type: "video", max_credits: 0, edit_asset: asset, download_quality, output_dir, file_stem: this.nextStem(output_dir, "edit") });
+    const job = this.queue.add({ prompt, type: "video", max_credits: 0, edit_asset: asset, download_quality, account: this.pin(account, true), output_dir, file_stem: this.nextStem(output_dir, "edit") });
     return { output_dir, jobs: [jobView(job)] };
   }
 
   // Flow's composer takes a start frame OR a character, never both; agent mode takes both, so this goes that way.
-  async continue_shot({ project, from_asset, prompt, attach, aspect_ratio, mode, download_quality, force }: Args<"continue_shot">) {
+  async continue_shot({ project, from_asset, prompt, attach, aspect_ratio, mode, download_quality, force, account }: Args<"continue_shot">) {
     // A lost queue entry is not proof that nothing ran: when the owner process is replaced mid-job the job vanishes
     // while Flow carries on and charges for it. Re-running then spends twice, which is exactly what happened on
     // 2026-09-20. Flow's own grid is the only honest record, so ask it before starting another paid generation.
     if (!force) {
-      const recent = (await listAssets()).slice(0, 6).filter((a) => a.kind === "video");
+      const recent = (await onAccount(account ?? defaultAccount(), () => listAssets())).slice(0, 6).filter((a) => a.kind === "video");
       const source = from_asset.toLowerCase();
       const echo = recent.find((a) => {
         const n = a.name.toLowerCase();
@@ -659,6 +767,7 @@ export class LocalCore implements Core {
       continue_mode: mode,
       aspect_ratio,
       download_quality,
+      account: this.pin(account, true),
       output_dir,
       file_stem: this.nextStem(output_dir, "shot"),
     });
@@ -676,22 +785,19 @@ export class LocalCore implements Core {
     return { trashed: target, to: moveToBin(target), bin: BIN };
   }
 
-  async trash({ name }: Args<"trash">) {
-    if (this.queue.busy) throw new Error(BUSY);
-    return trashAsset(name);
+  async trash({ name, account }: Args<"trash">) {
+    return this.direct(account, () => trashAsset(name));
   }
 
   async character(a: Args<"character">) {
-    if (this.queue.busy) throw new Error(BUSY);
     if (!a.image && !a.describe) throw new Error("Pass either `describe` (Flow draws the portrait) or `image`.");
-    const made = await createCharacter(a);
+    const made = await this.direct(a.account, () => createCharacter(a));
     if (a.describe) rememberCharacter(a.name, a.describe);
     return { ...made, use_as: `asset:${a.name}` };
   }
 
-  async character_edit({ name, change, look }: Args<"character_edit">) {
-    if (this.queue.busy) throw new Error(BUSY);
-    const out = await editCharacter(name, change);
+  async character_edit({ name, change, look, account }: Args<"character_edit">) {
+    const out = await this.direct(account, () => editCharacter(name, change));
     // Every scene that references the character quotes this description in its character lock, so it has to describe
     // the NEW look - "deep navy coat" left in it would argue with a portrait whose coat is now red.
     if (look) rememberCharacter(name, look);
@@ -699,9 +805,66 @@ export class LocalCore implements Core {
     return { ...out, use_as: `asset:${name}` };
   }
 
-  async characters() {
-    if (this.queue.busy) throw new Error(BUSY);
-    return (await listCharacters()).map((name) => ({ name, use_as: `asset:${name}` }));
+  async characters({ account }: Args<"characters">) {
+    return this.direct(account, async () => (await listCharacters()).map((name) => ({ name, use_as: `asset:${name}` })));
+  }
+
+  // Accounts: each is its own Chrome profile the user signs in to by hand. Adding one only opens that window on Flow.
+  async accounts({ action, name }: Args<"accounts">) {
+    const needName = () => {
+      if (!name) throw new Error(`Pass \`name\` with action "${action}".`);
+      return name;
+    };
+    if (action === "add") {
+      const a = addAccount(needName());
+      await getFlowPage(a).then((p) => p.bringToFront());
+      this.queue.kick();
+      return {
+        added: a.name,
+        profile: profileDir(a),
+        next: `A new Chrome window is open on Flow for "${a.name}". Sign in to that Google account there by hand, then open or create a project. Until then the other accounts take all the work.`,
+        accounts: await this.accountList(),
+      };
+    }
+    if (action === "open") {
+      const a = accountByName(needName());
+      await getFlowPage(a).then((p) => p.bringToFront());
+      return { opened: a.name, accounts: await this.accountList() };
+    }
+    if (action === "enable" || action === "disable") {
+      setAccountEnabled(needName(), action === "enable");
+      this.queue.kick();
+    }
+    return { accounts: await this.accountList() };
+  }
+
+  private async accountList() {
+    const out = [];
+    for (const a of listAccounts()) {
+      const flow = a.enabled ? await onAccount(a, () => getFlowState()).catch((err: Error) => ({ error: err.message })) : undefined;
+      out.push({ name: a.name, enabled: a.enabled, ...(a.enabled ? this.queue.workerView(a.name) : {}), ...(flow ? { flow } : {}) });
+    }
+    return out;
+  }
+
+  // The image models Flow offers (read live from its menu) and the one image jobs use when they name none.
+  async image_models({ set_default, account }: Args<"image_models">) {
+    const available = await this.direct(account, () => listImageModels());
+    if (set_default) {
+      const wanted = set_default.trim();
+      if (/^(latest|newest)$/i.test(wanted)) saveSettings({ ...loadSettings(), default_image_model: undefined });
+      else {
+        const match = available.find((m) => m.toLowerCase() === wanted.toLowerCase()) ?? available.find((m) => m.toLowerCase().includes(wanted.toLowerCase()));
+        if (!match) throw new Error(`Flow has no image model called "${wanted}". Available: ${available.join(", ")}.`);
+        saveSettings({ ...loadSettings(), default_image_model: match });
+      }
+    }
+    const saved = defaultImageModel();
+    return {
+      default_image_model: saved ?? LATEST_IMAGE_MODEL,
+      used_when_none_named: imageModelFor() === LATEST_IMAGE_MODEL ? "the newest Nano Banana in Flow's menu" : saved,
+      available,
+    };
   }
 
   // Panel only: deliberately NOT registered as an MCP tool, so a key typed into Flow Studio never reaches Claude.

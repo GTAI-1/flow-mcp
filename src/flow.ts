@@ -2,6 +2,7 @@ import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, 
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
+import { currentAccount, defaultImageModel, downloadDir } from "./accounts.js";
 import { HOME_DIR, getFlowPage, inEnglish } from "./chrome.js";
 import type { Job } from "./queue.js";
 import { extractZip } from "./platform.js";
@@ -60,15 +61,18 @@ async function clearBackdrops(page: Page): Promise<void> {
   }
 }
 
-// The agent's own image model, set to the newest Nano Banana like single images. Best effort: a batch never fails over it.
-async function pickAgentImageModel(page: Page): Promise<void> {
+// The agent's own image model: the one the job names, else the user's saved default, else the newest Nano Banana, like
+// single images. Best effort: a batch never fails over it.
+async function pickAgentImageModel(page: Page, model?: string): Promise<void> {
   const button = page.locator("flow-agent-panel").getByRole("button", { name: "Image generation default model" });
   if (!(await button.isVisible().catch(() => false))) return;
   await button.click({ timeout: 5000 }).catch(() => {});
   const items = page.getByRole("menuitem");
   if (!(await items.first().isVisible().catch(() => false))) await items.first().waitFor({ state: "visible", timeout: 4000 }).catch(() => {});
   const names = (await items.allInnerTexts().catch(() => [] as string[])).map((t) => t.replace(/\s+/g, " ").trim());
-  const index = newestNanoBanana(names);
+  const wanted = imageModelFor(model);
+  const named = wanted === LATEST_IMAGE_MODEL ? -1 : names.findIndex((n) => n.toLowerCase().includes(wanted.toLowerCase()));
+  const index = named >= 0 ? named : newestNanoBanana(names);
   const shown = (await button.innerText().catch(() => "")).replace(/\s+/g, " ");
   if (index >= 0 && !shown.includes(names[index])) await items.nth(index).click({ timeout: 4000 }).catch(() => {});
   else await page.keyboard.press("Escape");
@@ -310,7 +314,9 @@ async function openSettings(page: Page): Promise<void> {
 async function pickRadio(page: Page, name: string | RegExp): Promise<void> {
   const radio = page.getByRole("radio", { name, exact: typeof name === "string" }).first();
   if (!(await radio.isVisible().catch(() => false))) {
-    throw new Error(`Flow has no "${name}" option for the current mode/model.`);
+    // Name what the popover did offer, so a missing option explains itself next time.
+    const offered = await page.getByRole("radio").evaluateAll((rs) => rs.map((r) => (r.getAttribute("aria-label") || r.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean));
+    throw new Error(`Flow has no "${name}" option for the current mode/model. ${offered.length ? `It offered: ${offered.join(" | ")}` : "The settings popover was not open."}`);
   }
   if (!(await radio.isChecked())) {
     await radio.click();
@@ -324,6 +330,11 @@ async function pickRadio(page: Page, name: string | RegExp): Promise<void> {
 // read from Flow's own menu, so a later 2.2 or 3 is picked with no code change.
 export const LATEST_IMAGE_MODEL = "latest";
 const LEGACY_IMAGE_MODEL = /^\s*(nano banana( 2)?|latest)?\s*$/i;
+// The model an image job uses: the one it names, else the default the user saved (flow_image_models), else the newest.
+export const imageModelFor = (model?: string): string => {
+  const wanted = model ?? defaultImageModel();
+  return LEGACY_IMAGE_MODEL.test(wanted ?? "") ? LATEST_IMAGE_MODEL : wanted!;
+};
 export function newestNanoBanana(names: string[]): number {
   const version = (n: string) => /nano banana\s+(\d+(?:\.\d+)*)/i.exec(n)?.[1]?.split(".").map(Number);
   let best = -1;
@@ -358,6 +369,30 @@ async function pickModel(page: Page, model: string): Promise<void> {
   await pause(page, 700);
 }
 
+// The image models this account's Flow offers, read from the composer's own model menu (Image mode), so the list is
+// whatever Flow shows today rather than a list kept in code. Picks nothing: the menu and the popover are closed again.
+export async function listImageModels(): Promise<string[]> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  await ensureProjectGrid(page);
+  await openSettings(page);
+  try {
+    await pickRadio(page, "Image");
+    await page.getByRole("button", { name: "Select model family" }).click();
+    const items = page.getByRole("menuitem");
+    await items.first().waitFor({ state: "visible", timeout: 5000 });
+    // Labels start with an emoji ("🍌 Nano Banana Pro", seen 2026-10-24) that the agent's own model menu may not
+    // carry, so names are kept from the first letter or digit on; every lookup matches by "includes".
+    return (await items.allInnerTexts()).map((t) => t.replace(/\s+/g, " ").replace(/^[^\p{L}\p{N}]+/u, "").trim()).filter(Boolean);
+  } finally {
+    await page.keyboard.press("Escape");
+    await clearBackdrops(page);
+    await page.keyboard.press("Escape");
+    await pause(page, 400);
+  }
+}
+
 // Applies the scene settings and returns the credit cost Flow quotes for them.
 async function applySettings(page: Page, job: Job): Promise<number> {
   const s = job.params;
@@ -366,8 +401,13 @@ async function applySettings(page: Page, job: Job): Promise<number> {
   await pickRadio(page, s.type === "image" ? "Image" : "Video");
   if (s.type === "video") await pickRadio(page, framesMode ? "Frames" : "Ingredients");
   if (s.aspect_ratio) await pickRadio(page, s.aspect_ratio);
-  const model = s.type === "image" && LEGACY_IMAGE_MODEL.test(s.model ?? "") ? LATEST_IMAGE_MODEL : s.model;
-  if (model) await pickModel(page, model);
+  const model = s.type === "image" ? imageModelFor(s.model) : s.model;
+  if (model) {
+    await pickModel(page, model);
+    // When the model was already right, closing its menu (Escape, then the backdrop) can shut the whole popover too:
+    // the next image job on a second account then failed with "no x1 option ... popover was not open" (2026-10-24).
+    await openSettings(page);
+  }
   if (s.type === "video" && s.resolution) await pickRadio(page, new RegExp(`^${s.resolution}`));
   if (s.type === "video" && s.duration) await pickRadio(page, `${s.duration}s`);
   await pickRadio(page, `x${s.variants ?? 1}`);
@@ -514,8 +554,18 @@ function tileByIdOrTitle(page: Page, id: string, title?: string): TileResolver {
   };
 }
 
-const DOWNLOAD_DIR = join(HOME_DIR, "downloads");
-let downloadsReady = false;
+// Each account's Chrome saves into its own folder.
+const ownDownloads = () => downloadDir(currentAccount());
+
+// Accounts run at the same time, but downloads take turns: a file that slips past the override lands in the shared
+// ~/Downloads, and with two accounts downloading at once either watcher could claim the other's file. A download is a
+// few seconds, so taking turns costs little.
+let downloadTurn: Promise<unknown> = Promise.resolve();
+function oneDownloadAtATime<T>(work: () => Promise<T>): Promise<T> {
+  const mine = downloadTurn.then(work, work);
+  downloadTurn = mine.catch(() => {});
+  return mine;
+}
 
 // Playwright keeps a download in a per-connection temp file it can delete from under us; pointing Chrome itself at a
 // directory we own makes the bytes ours the moment they land.
@@ -523,10 +573,9 @@ async function useOwnDownloadDir(page: Page): Promise<void> {
   // Setting this once per process was not enough: another CDP client attaching resets it browser-wide, and Chrome
   // quietly goes back to ~/Downloads. Every file we "could not download" tonight was sitting there the whole time,
   // so this is re-asserted before every single download rather than cached behind a flag.
-  mkdirSync(DOWNLOAD_DIR, { recursive: true });
+  mkdirSync(ownDownloads(), { recursive: true });
   const cdp = await page.context().newCDPSession(page);
-  await cdp.send("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: DOWNLOAD_DIR, eventsEnabled: true }).catch(() => {});
-  downloadsReady = true;
+  await cdp.send("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: ownDownloads(), eventsEnabled: true }).catch(() => {});
 }
 
 // Chrome's own Downloads folder, where files land whenever the override above has been reset out from under us.
@@ -535,7 +584,7 @@ const SYSTEM_DOWNLOADS = join(homedir(), "Downloads");
 // Everything already sitting in either folder, so a new arrival can be told apart from what was there before.
 function downloadsNow(): Set<string> {
   const seen = new Set<string>();
-  for (const dir of [DOWNLOAD_DIR, SYSTEM_DOWNLOADS]) if (existsSync(dir)) for (const f of readdirSync(dir)) seen.add(`${dir}/${f}`);
+  for (const dir of [ownDownloads(), SYSTEM_DOWNLOADS]) if (existsSync(dir)) for (const f of readdirSync(dir)) seen.add(`${dir}/${f}`);
   return seen;
 }
 
@@ -549,7 +598,7 @@ async function waitForDownloadedFile(page: Page, before: Set<string>, timeoutMs:
     await pause(page, 250);
     // Both places: ours, and Chrome's own folder for when the override has been reset behind our back.
     const candidates: string[] = [];
-    for (const dir of [DOWNLOAD_DIR, SYSTEM_DOWNLOADS]) {
+    for (const dir of [ownDownloads(), SYSTEM_DOWNLOADS]) {
       if (!existsSync(dir)) continue;
       for (const f of readdirSync(dir)) {
         if (before.has(`${dir}/${f}`) || f.endsWith(".crdownload") || f.startsWith(".")) continue;
@@ -643,7 +692,11 @@ async function renameTile(page: Page, tile: Locator, title: string): Promise<boo
   }
 }
 
-async function downloadTile(page: Page, target: Locator | TileResolver, targetStem: string, quality: DownloadQuality): Promise<string[]> {
+function downloadTile(page: Page, target: Locator | TileResolver, targetStem: string, quality: DownloadQuality): Promise<string[]> {
+  return oneDownloadAtATime(() => downloadTileNow(page, target, targetStem, quality));
+}
+
+async function downloadTileNow(page: Page, target: Locator | TileResolver, targetStem: string, quality: DownloadQuality): Promise<string[]> {
   await useOwnDownloadDir(page);
   const resolve: TileResolver = typeof target === "function" ? target : async () => target;
   let lastError: unknown;
@@ -924,7 +977,11 @@ async function leaveCharacterEditor(page: Page): Promise<void> {
 // moves over the picture - the same rule as grid tiles - so a plain click lands on the image and times out. That, plus
 // Playwright's download event, is why an edit that worked never reached disk (2026-10-02). Point at the picture, then
 // download through the same watched folders as every other file.
-async function savePortrait(page: Page, name: string): Promise<string> {
+function savePortrait(page: Page, name: string): Promise<string> {
+  return oneDownloadAtATime(() => savePortraitNow(page, name));
+}
+
+async function savePortraitNow(page: Page, name: string): Promise<string> {
   await useOwnDownloadDir(page);
   const dir = join(process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out"), "_cast");
   mkdirSync(dir, { recursive: true });
@@ -1096,7 +1153,11 @@ export async function trashAsset(name: string): Promise<{ trashed: string }> {
 // ONE stitched file from inside the scene view: open the scene, press "Download scene", and Flow shows "Exporting your
 // scene..." before the file arrives (a 29 s scene took a few seconds). The user showed this route; verified 2026-10-01.
 // Nothing may be pressed while it exports - an Escape here cancelled an earlier attempt.
-async function downloadScene(page: Page, scene: FlowAsset, targetStem: string): Promise<string[]> {
+function downloadScene(page: Page, scene: FlowAsset, targetStem: string): Promise<string[]> {
+  return oneDownloadAtATime(() => downloadSceneNow(page, scene, targetStem));
+}
+
+async function downloadSceneNow(page: Page, scene: FlowAsset, targetStem: string): Promise<string[]> {
   await useOwnDownloadDir(page);
   const tile = tileOf(page, scene);
   await hoverTile(page, tile);
@@ -1329,7 +1390,7 @@ async function setAgentMode(page: Page, on: boolean): Promise<void> {
 }
 
 // "Never" lets the agent generate without asking; it is switched back to "Always" as soon as the batch ends.
-async function setAgentSettings(page: Page, confirm: "Always" | "Never", imageAspect?: string): Promise<void> {
+async function setAgentSettings(page: Page, confirm: "Always" | "Never", imageAspect?: string, imageModel?: string): Promise<void> {
   // Scoped to the prompt box: Flow added a second "Settings" button to the top bar ("View settings", seen 2026-10-13),
   // and an unscoped lookup matched both and failed every agent batch.
   await clearBackdrops(page);
@@ -1340,7 +1401,7 @@ async function setAgentSettings(page: Page, confirm: "Always" | "Never", imageAs
     if (imageAspect) {
       await page.getByRole("radio", { name: imageAspect, exact: true }).first().click();
       await page.getByRole("radio", { name: "x1", exact: true }).first().click();
-      await pickAgentImageModel(page);
+      await pickAgentImageModel(page, imageModel);
     }
     await pause(page, 300);
     await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -1504,7 +1565,12 @@ async function agentRound(
   const failedTiles = await retryNewErrorTiles(page, before, true)
     .then((r) => r.errors)
     .catch(() => 0);
-  const fresh = (await scanGrid(page)).filter((t) => t.id && !before.has(t.id) && !beforeNames.has(t.name) && t.kind === "image");
+  // New tiles always appear at the TOP, so only tiles above the first one already known count. A scan of a big project
+  // can miss a tile far down ("Hmida", 181st of 189, 2026-10-24); the next scan then found it, called it new, and its
+  // missing Reuse prompt sank an agent round that had in fact delivered every image.
+  const after = await scanGrid(page);
+  const firstKnown = after.findIndex((t) => (t.id && before.has(t.id)) || (!t.id && beforeNames.has(t.name)));
+  const fresh = (firstKnown < 0 ? after : after.slice(0, firstKnown)).filter((t) => t.id && !before.has(t.id) && !beforeNames.has(t.name) && t.kind === "image");
 
   // Tiles finish in any order and the agent rewords prompts, so each image is matched back to its scene by the
   // prompt Flow stored for it ("Reuse prompt" puts that text in the composer).
@@ -1513,11 +1579,14 @@ async function agentRound(
     step(job, `matching image ${k + 1} of ${fresh.length} to its scene`);
     await scanGrid(page, (seen) => seen.some((x) => x.id === tile.id));
     const el = mediaTile(page, tile.id!);
-    await el.scrollIntoViewIfNeeded();
-    await el.hover();
-    await el.getByRole("button", { name: "Reuse prompt" }).click();
-    await pause(page, 900);
-    prompts.push(await page.locator(".ProseMirror").first().innerText());
+    await hoverTile(page, el, 250);
+    // A tile without Reuse prompt (an upload, a character picture) matches no scene; it must not end the round.
+    const reused = await el
+      .getByRole("button", { name: "Reuse prompt" })
+      .click({ timeout: 6000 })
+      .then(() => true, () => false);
+    if (reused) await pause(page, 900);
+    prompts.push(reused ? await page.locator(".ProseMirror").first().innerText() : "");
   }
   await closeAgentSession(page);
 
@@ -1603,7 +1672,7 @@ export async function runContinue(job: Job): Promise<string[]> {
     }
 
     // 4. Agent mode asks for confirmation unless told not to, which would stall an unattended run.
-    await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9");
+    await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9", s.model);
     // Agent mode treats both chips as ingredients and decides what to do with them. Attaching the saved frame is not
     // enough - without being told, the agent reads it as a style reference and stages a fresh shot. It has to be told
     // in words that the frame IS the opening frame. (Cost 15 credits to learn on 2026-09-20.)
@@ -1683,7 +1752,8 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
   let agentProblem = "";
   try {
     // References are uploaded once with readable names (the agent sees them), before Agent mode hides the upload menu.
-    if (s.agent_refs?.length && !s.agent_ref_assets?.length) {
+    // Uploads live in one account's project: a retry that lands on another account uploads them there again.
+    if (s.agent_refs?.length && (!s.agent_ref_assets?.length || s.agent_ref_account !== currentAccount().name)) {
       await setAgentMode(page, false);
       const assets: string[] = [];
       for (const [k, r] of s.agent_refs.entries()) {
@@ -1692,11 +1762,12 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
         assets.push(await uploadAsset(page, job, r.image, label));
       }
       s.agent_ref_assets = assets;
+      s.agent_ref_account = currentAccount().name;
     }
     step(job, "switching Agent mode on");
     await setAgentMode(page, true);
     step(job, "setting the agent to generate without asking");
-    await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9");
+    await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9", s.model);
     for (let round = 0; round < 3; round++) {
       const todo = scenes.map((_, i) => i).filter((i) => !done.has(i));
       if (!todo.length) break;
@@ -1752,6 +1823,7 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
       params: {
         prompt: scenes[i],
         type: "image",
+        model: s.model,
         max_credits: 0,
         reference_images: refsFor(i),
         aspect_ratio: s.aspect_ratio,
