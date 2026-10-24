@@ -101,7 +101,7 @@ server.registerTool(
   {
     title: "Queue Flow generations",
     description:
-      "Queue one clip or image per scene in the open Flow project. Runs one at a time with human-like pauses and spends the user's Google AI credits (approx. per video: Omni 1.1 Flash 7-12, Veo 3.1 Lite 10, Fast 20, Quality 100; images 0). Each scene is checked against max_credits using Flow's own quote before anything is spent. Returns job ids immediately; use flow_wait for results.",
+      "Queue one clip or image per scene in the open Flow project. Runs one at a time per account with human-like pauses (with several accounts in flow_accounts, scenes are shared out and generate at the same time) and spends the user's Google AI credits (approx. per video: Omni 1.1 Flash 7-12, Veo 3.1 Lite 10, Fast 20, Quality 100; images 0). Each scene is checked against max_credits using Flow's own quote before anything is spent. Returns job ids immediately; use flow_wait for results.",
     inputSchema: shapes.generate,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
@@ -170,11 +170,23 @@ server.registerTool(
   {
     title: "Fast image batch via Flow's agent",
     description:
-      "Hand up to 50 image scenes to Flow's own Agent mode, which renders them all in parallel (minutes for a whole batch instead of one paced job per scene) and enriches each prompt itself. Images only, 0 credits. Pass `references` (characters, places, objects, each with a short name) to attach them once in the agent's composer, the way its + button does, and `scene_references` to say which scenes use which, so a whole story stays on-model. Scenes the agent drops are asked for again, then made one by one with their references. Less exact than flow_generate: the agent picks the wording, no techniques, and each image is matched back to its scene by its stored prompt. Returns a job id; use flow_wait.",
+      "Hand up to 50 image scenes to Flow's own Agent mode, which renders them all in parallel (minutes for a whole batch instead of one paced job per scene) and enriches each prompt itself. Images only, 0 credits. Pass `references` (characters, places, objects, each with a short name) to attach them once in the agent's composer, the way its + button does, and `scene_references` to say which scenes use which, so a whole story stays on-model. Scenes the agent drops are asked for again, then made one by one with their references. With several accounts enabled (flow_accounts) the batch is split between them and every account's agent works at the same time; files keep their scene numbers (a batch with 'asset:' references stays on the first account). Less exact than flow_generate: the agent picks the wording, no techniques, and each image is matched back to its scene by its stored prompt. Returns one job per account part; use flow_wait.",
     inputSchema: shapes.agent,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   (args) => reply(core.agent(args)),
+);
+
+server.registerTool(
+  "flow_cutout",
+  {
+    title: "Image with a transparent background",
+    description:
+      "Use whenever someone wants an image with no background, a transparent PNG, a cutout, a sticker or a logo to place on something else. Flow draws the subject on pure white, then redraws the same picture on pure black, and the two are compared pixel by pixel on this computer (difference matting), so hair, glass and soft edges keep real partial transparency instead of a hard cut. Give `prompt` to draw something new or `image` to cut out an existing picture. Two free images (0 credits). Returns two job ids; flow_wait the second one - its first file is the transparent <name>.png, and its note warns when the model changed the subject between the takes.",
+    inputSchema: shapes.cutout,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  (args) => reply(core.cutout(args)),
 );
 
 server.registerTool(
@@ -245,7 +257,31 @@ server.registerTool(
     inputSchema: shapes.characters,
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
-  () => reply(patient("flow_characters", core.characters())),
+  (args) => reply(patient("flow_characters", core.characters(args))),
+);
+
+server.registerTool(
+  "flow_accounts",
+  {
+    title: "Flow accounts working in parallel",
+    description:
+      "Several Google accounts can drive Flow at the same time, each in its own Chrome window with its own project: queued work (flow_generate scenes, flow_agent_images batches, flow_cutout takes) is shared out and every account generates at once, one job at a time each. action list (default) shows each account: signed in, project open, busy. add creates an account and opens its Chrome on Flow - the user signs in to Google there BY HAND (never type credentials for them) and opens a project. open brings an account's window up; enable / disable lets an account take work or not. Media already in a Flow project (asset:..., edits, continuations, characters) lives in one account's project, so that work goes to the first account unless `account` is passed.",
+    inputSchema: shapes.accounts,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  (args) => reply(patient("flow_accounts", core.accounts(args))),
+);
+
+server.registerTool(
+  "flow_image_models",
+  {
+    title: "Image models and the default one",
+    description:
+      "List the image models Flow offers right now (read from Flow's own menu) and which one image jobs use when they name none. Pass set_default to save the user's choice, e.g. 'Nano Banana Pro'; it then applies to flow_generate image scenes, flow_agent_images and flow_cutout until changed. 'latest' goes back to always using the newest Nano Banana. Any single call can still name its own `model`. Ask the user which model they want before setting it.",
+    inputSchema: shapes.image_models,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  (args) => reply(patient("flow_image_models", core.image_models(args))),
 );
 
 server.registerTool(

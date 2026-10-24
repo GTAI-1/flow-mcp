@@ -510,3 +510,67 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
 - CAPTIONS WORKFLOW (the user's rule, 2026-10-18): transcribe first, show the words with likely mishearings fixed,
   get the user's OK, THEN make the video once. The playbook and the flow_captions description say so too.
 
+- CUTOUTS / NO BACKGROUND (2026-10-23, the user's method, `src/matte.ts`, MCP `flow_cutout`): image models cannot draw
+  transparency, so a cutout is two free Nano Banana stills plus a local difference matte. Job 1 draws the subject on
+  flat #FFFFFF (or, with `image`, redraws that picture on white); job 2 (`matte_from` = job 1) attaches job 1's file as
+  a reference and asks for ONLY the background changed to #000000, then runCutout mattes the pair into <stem>.png.
+  Per channel onWhite - onBlack = (1 - alpha) * (white - black), so alpha is the mean over RGB; colour is un-premultiplied
+  from BOTH takes and averaged. The real background levels are measured from a 2% border ring (JPEG gives #fdfdfd, not
+  #ffffff), a 4% noise band at each end snaps to 0/1, and backgrounds that did not come out light/dark refuse with words.
+  mismatch_share (subject pixels BRIGHTER on black, impossible for a pure background swap) measures how much the model
+  changed the subject between takes; > 3% puts a warning in the job note. Pixels go through ffmpeg (rawvideo rgb24 in,
+  rgba PNG out) - no sharp, no new native dependency. Synthetic check (soft disc + 50% square, JPEG q3): mean alpha
+  error 0.24/255, the 50% square came back 128/128. Live, 0 credits: "glass bottle of olive oil + olive sprig" -> 2 jobs
+  in 2 min 43 s, 1024x1024, 17% solid / 82% clear, mismatch 0, glass neck genuinely see-through, no halo on the leaves.
+  The `image` path (cut out an existing picture) has NOT been run live yet.
+- SEVERAL ACCOUNTS IN PARALLEL (2026-10-24, the user's request; `src/accounts.ts`, MCP `flow_accounts`). Each Google
+  account is its own Chrome profile + CDP port + Flow project + download folder: "main" keeps the old profile
+  (~/.flow-mcp/chrome-profile, port 9333, ~/.flow-mcp/downloads), others live in ~/.flow-mcp/accounts/<name>/ with the
+  next free port (9334...), listed in ~/.flow-mcp/accounts.json. The current account travels in an AsyncLocalStorage
+  (onAccount/currentAccount), so getFlowPage() and the download folder follow it with no account argument threaded
+  through flow.ts. chrome.ts keeps one Browser per account and shares the connect promise (no double launch).
+  A new account's profile gets a Preferences file with its own download.default_directory before Chrome first starts.
+  QUEUE: one worker per enabled account, all at once, one shared line; pacing is per worker. A worker claims a job
+  before its pause so no other worker takes it. Jobs that build on another (chain_from, reference_from, matte_from) wait
+  until that one is done and fail with a reason if it failed; jobs pinned to a disabled account fail with a reason.
+  An account that is not ready (signed out / no project, checked with getFlowState, re-checked after 60 s) takes no
+  unpinned work; if NO account is ready the first one takes it and fails it with the hint, so nothing waits forever.
+  Pinning: `account` on any call; otherwise work that uses project media (asset:..., edits, continuations, characters,
+  assets/download/trash) goes to the first enabled account - that media lives in one project. Direct calls refuse only
+  when THEIR account is busy (busyOn). Downloads take turns across accounts (oneDownloadAtATime): the ~/Downloads
+  fallback is shared, and two accounts downloading at once could each claim the other's file.
+  flow_agent_images splits a batch into min(accounts, scenes/2) contiguous parts with agent_numbers, so files keep
+  scene order. Numbering (lastNumber) now counts every scene of a queued batch: before, a queued 20-image batch at
+  scene-01 made the next call start at scene-02.
+  Verified offline (fake runner, 3 accounts): two jobs started at the same instant on two accounts, a dependent job
+  waited for its source, a pinned job ran on its account, a job built on a failed one failed with the reason, the
+  not-ready account took no shared work. Verified live (0 credits, one signed-in account + a fresh "acc2"): add opened
+  acc2's own Chrome on Flow; acc2 had no project, so both halves of a split 4-image batch ran on main, files scene-02..05
+  in order. TWO SIGNED-IN ACCOUNTS, live (0 credits; acc2's profile signed in by the user by hand, moved into
+  ~/.flow-mcp/accounts/acc2 after a clean Browser.close - still signed in after the move; Flow's "New project" button
+  made acc2 its own project): 4 images + a 6-image agent batch -> main and acc2 ran at the same moment, the batch split
+  5-7 on acc2 / 8-10 on main, 3 of 3 from each agent, 187 s for all 10. Then 3 pinned to acc2 + 2 to main: all 5.
+  TWO BUGS FOUND BY THAT TEST, both older than the accounts work:
+  1. AGENT MATCHING: tiles "fresh" after an agent round were every tile not in the before-scan, and a scan of a big
+     project can miss one far down ("Hmida", 181st of 189 in MakinaAwja). That old tile (no Reuse prompt) made the
+     click throw, the whole round was abandoned and all three images the agent HAD made were generated again one by
+     one (twice, same tile id). Now only tiles ABOVE the first already-known tile count (new tiles always come first),
+     a tile without Reuse prompt is skipped instead of thrown, and the hover is a real pointer move (hoverTile).
+  2. POPOVER CLOSED BY THE MODEL STEP: when the model was already the right one, pickModel closes its menu with Escape
+     + clearBackdrops, which can shut the settings popover too; the next radio ("x1") then failed. Hit on acc2's second
+     image twice running. applySettings now calls openSettings() again after pickModel (a no-op when still open), and
+     pickRadio's error lists the radios Flow offered or says the popover was closed.
+- IMAGE MODEL DEFAULT (2026-10-24, MCP `flow_image_models`): the list is read live from the composer's model menu in
+  Image mode (picks nothing). Labels start with "🍌 " - stripped, since the agent's menu may not carry it and lookups
+  match by "includes". set_default is checked against that list and saved in ~/.flow-mcp/settings.json;
+  imageModelFor(): the job's own model, else the saved default, else the newest Nano Banana ("latest"). Applied to
+  composer images, the agent's image default and the agent's one-by-one fallback (which used to drop the model).
+  Verified live: set "Nano Banana Pro", one image with no model -> composer read "Nano Banana Pro"; "Imagen 9" refused
+  with the available list.
+- ACCOUNTS x AGENT REFERENCES (2026-10-24, after rebasing onto upstream 84b548f "Agent image batches carry reference
+  images"): a batch whose references include an asset:<title> stays whole and runs on the first account (that media
+  lives in one project); file references split like any batch, each part gets its own slice of scene_references and
+  uploads the files into its own account's project. agent_ref_account records which account holds the uploads, so a
+  retry that lands on another account uploads again instead of attaching names that do not exist there. Verified live,
+  0 credits: 4 scenes, 2 file references (a rubber duck, a teacup) -> scenes 1-2 on main, 3-4 on acc2 at the same
+  time, both "2 reference image(s) attached", 4 of 4 from the agents, 109 s; the same duck and teacup in every image.
