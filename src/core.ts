@@ -7,6 +7,7 @@ import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemi
 import { extractLastFrame } from "./chain.js";
 import { burnCaptions, captionedName, captionSetup, previewCaptions, transcribe } from "./captions.js";
 import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
+import { differenceMatte } from "./matte.js";
 import { JobQueue, type Job } from "./queue.js";
 import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
@@ -186,6 +187,18 @@ export const shapes = {
     voice: z.string().min(1).default("Charon").describe("Voice name from flow_voices, e.g. Charon (informative), Aoede (breezy), Gacrux (mature) for Google; Zoe or Samantha for macOS."),
     style: z.string().max(200).optional().describe("Delivery note for the 'gemini' engine, e.g. 'slowly and warmly, like a documentary narrator'."),
   },
+  cutout: {
+    project: z.string().min(1).describe("Folder for the cutout PNG (and the white and black takes it is made from)."),
+    prompt: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("What to draw, e.g. 'a red sneaker, three-quarter view, studio product photo'. Leave the background out: it is set for you. With `image`, an optional note on what to keep."),
+    image: z.string().min(1).optional().describe("Cut out a picture you already have instead: absolute path, or 'asset:<title>' of an image in the Flow project."),
+    aspect_ratio: z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]).default("1:1"),
+    model: z.string().optional().describe("Image model label as shown in Flow. Default: the newest Nano Banana."),
+    download_quality: z.enum(["original", "upscaled"]).optional().describe("'upscaled' makes a 2K cutout (slower)."),
+  },
   edit: {
     project: z.string().min(1).describe("Local folder for the edited clip."),
     asset: z.string().min(1).describe("Title (or title prefix) of a video already in the Flow project; see flow_assets."),
@@ -297,6 +310,7 @@ export interface Core {
   characters(): Promise<unknown>;
   character_edit(a: Args<"character_edit">): Promise<unknown>;
   edit(a: Args<"edit">): Promise<unknown>;
+  cutout(a: Args<"cutout">): Promise<unknown>;
   trash(a: Args<"trash">): Promise<unknown>;
   discard(a: Args<"discard">): Promise<unknown>;
   set_key(a: Args<"set_key">): Promise<unknown>;
@@ -330,6 +344,14 @@ export const VOICES = [
 
 const BUSY = "A generation is running in the Flow tab. Wait for it to finish (flow_wait), then retry.";
 
+const STILL = /\.(jpe?g|png|webp)$/i;
+// The matte reads transparency from how far each pixel moves between the two takes, so the background must be flat
+// and the subject must not change at all between them: no shadow, glow or reflection that exists on one take only.
+const ON_WHITE =
+  "show it alone on a pure solid white background (#FFFFFF), perfectly flat and even: no shadow, no floor, no reflection, no gradient, no vignette, no text, nothing else in the frame. The whole subject in frame with a clear margin on every side.";
+const TO_BLACK =
+  "Change ONLY the background of this image to pure solid black (#000000), perfectly flat and even. Keep the subject pixel-for-pixel identical: same position, same size, same pose, same crop and framing, same colours, same lighting, every detail and edge unchanged. Do not add any shadow, glow, rim light, reflection or outline.";
+
 export class LocalCore implements Core {
   private queue: JobQueue = new JobQueue(async (job) => {
     const { chain_from, reference_from } = job.params;
@@ -343,11 +365,30 @@ export class LocalCore implements Core {
       if (!clip) throw new Error(`chain_previous: the previous scene (${chain_from}) produced no video, so this scene was skipped.`);
       job.params.first_frame = await extractLastFrame(clip);
     }
+    if (job.params.matte_from) return this.runCutout(job, job.params.matte_from);
     if (job.params.continue_from) return runContinue(job);
     if (job.params.agent_scenes) return runAgentBatch(job);
     if (job.params.edit_asset) return runEdit(job);
     return runGeneration(job);
   });
+
+  // Second half of a cutout: redraw the white take on black through Flow, then difference-matte the pair locally.
+  private async runCutout(job: Job, whiteJob: string): Promise<string[]> {
+    const white = this.queue.get(whiteJob)?.files.find((f) => STILL.test(f));
+    if (!white) throw new Error(`The white-background take (job ${whiteJob}) produced no image, so there is nothing to cut out. Run flow_cutout again.`);
+    job.params.reference_images = [white];
+    const black = (await runGeneration(job)).find((f) => STILL.test(f));
+    if (!black) throw new Error("Flow made no black-background take, so the cutout could not be finished.");
+    const matte = await differenceMatte(white, black, join(job.params.output_dir, `${job.params.file_stem.replace(/-black$/, "")}.png`));
+    job.note = [
+      job.note,
+      `cutout ${matte.width}x${matte.height}: ${Math.round(matte.opaque_share * 100)}% solid, ${Math.round(matte.clear_share * 100)}% clear`,
+      matte.warning,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return [matte.file, white, black];
+  }
 
   async status({ detailed }: Args<"status">) {
     const flow = await getFlowState(detailed && !this.queue.busy);
@@ -562,6 +603,25 @@ export class LocalCore implements Core {
       file_stem: this.nextStem(output_dir, "scene"),
     });
     return { output_dir, jobs: [jobView(job)] };
+  }
+
+  // Two free Nano Banana stills - the subject on white, then the same picture redrawn on black - and a local
+  // difference matte turns the pair into a PNG with real transparency, soft edges included.
+  async cutout({ project, prompt, image, aspect_ratio, model, download_quality }: Args<"cutout">) {
+    if (!prompt && !image) throw new Error("Pass `prompt` (Flow draws the subject) or `image` (cut out a picture you already have).");
+    const output_dir = projectDir(project);
+    const stem = this.nextStem(output_dir, "cutout");
+    const shared = { type: "image" as const, max_credits: 0, aspect_ratio, model, download_quality, output_dir };
+    const white = this.queue.add({
+      ...shared,
+      prompt: image
+        ? `${prompt ? `${prompt.trim().replace(/\.?$/, ".")} ` : ""}Keep the main subject of the reference image exactly as it is - same shape, colours, details and pose - and ${ON_WHITE}`
+        : `${prompt!.trim().replace(/\.?$/, ".")} Draw the subject and ${ON_WHITE}`,
+      reference_images: image ? [image] : undefined,
+      file_stem: `${stem}-white`,
+    });
+    const black = this.queue.add({ ...shared, prompt: TO_BLACK, matte_from: white.id, file_stem: `${stem}-black` });
+    return { output_dir, cutout: join(output_dir, `${stem}.png`), jobs: [white, black].map(jobView) };
   }
 
   async edit({ project, asset, prompt, download_quality }: Args<"edit">) {

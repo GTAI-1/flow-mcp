@@ -178,6 +178,18 @@ server.registerTool(
 );
 
 server.registerTool(
+  "flow_cutout",
+  {
+    title: "Image with a transparent background",
+    description:
+      "Use whenever someone wants an image with no background, a transparent PNG, a cutout, a sticker or a logo to place on something else. Flow draws the subject on pure white, then redraws the same picture on pure black, and the two are compared pixel by pixel on this computer (difference matting), so hair, glass and soft edges keep real partial transparency instead of a hard cut. Give `prompt` to draw something new or `image` to cut out an existing picture. Two free images (0 credits). Returns two job ids; flow_wait the second one - its first file is the transparent <name>.png, and its note warns when the model changed the subject between the takes.",
+    inputSchema: shapes.cutout,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  (args) => reply(core.cutout(args)),
+);
+
+server.registerTool(
   "flow_edit",
   {
     title: "Edit an existing video",

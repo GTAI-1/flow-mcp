@@ -510,3 +510,16 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
 - CAPTIONS WORKFLOW (the user's rule, 2026-10-18): transcribe first, show the words with likely mishearings fixed,
   get the user's OK, THEN make the video once. The playbook and the flow_captions description say so too.
 
+- CUTOUTS / NO BACKGROUND (2026-10-23, the user's method, `src/matte.ts`, MCP `flow_cutout`): image models cannot draw
+  transparency, so a cutout is two free Nano Banana stills plus a local difference matte. Job 1 draws the subject on
+  flat #FFFFFF (or, with `image`, redraws that picture on white); job 2 (`matte_from` = job 1) attaches job 1's file as
+  a reference and asks for ONLY the background changed to #000000, then runCutout mattes the pair into <stem>.png.
+  Per channel onWhite - onBlack = (1 - alpha) * (white - black), so alpha is the mean over RGB; colour is un-premultiplied
+  from BOTH takes and averaged. The real background levels are measured from a 2% border ring (JPEG gives #fdfdfd, not
+  #ffffff), a 4% noise band at each end snaps to 0/1, and backgrounds that did not come out light/dark refuse with words.
+  mismatch_share (subject pixels BRIGHTER on black, impossible for a pure background swap) measures how much the model
+  changed the subject between takes; > 3% puts a warning in the job note. Pixels go through ffmpeg (rawvideo rgb24 in,
+  rgba PNG out) - no sharp, no new native dependency. Synthetic check (soft disc + 50% square, JPEG q3): mean alpha
+  error 0.24/255, the 50% square came back 128/128. Live, 0 credits: "glass bottle of olive oil + olive sprig" -> 2 jobs
+  in 2 min 43 s, 1024x1024, 17% solid / 82% clear, mismatch 0, glass neck genuinely see-through, no halo on the leaves.
+  The `image` path (cut out an existing picture) has NOT been run live yet.
