@@ -143,6 +143,14 @@ export class JobQueue {
           // is re-queued here. Timeouts are never retried automatically: they may still have spent credits.
           const retryable = /agent finished without creating/i.test(job.error);
           job.status = retryable && job.attempts <= (job.params.retries ?? 1) ? "queued" : "failed";
+          // Flow suspects automation: do not walk through the rest of the queue into the same refusal.
+          if (job.error.includes("unusual activity")) {
+            for (const other of this.list().filter((j) => j.status === "queued")) {
+              other.status = "failed";
+              other.error = "Not started: Flow refused an earlier job for unusual activity.";
+              other.finishedAt = new Date().toISOString();
+            }
+          }
         }
         job.finishedAt = new Date().toISOString();
         this.lastFinished = Date.now();

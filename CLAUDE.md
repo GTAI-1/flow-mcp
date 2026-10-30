@@ -510,3 +510,27 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
 - CAPTIONS WORKFLOW (the user's rule, 2026-10-18): transcribe first, show the words with likely mishearings fixed,
   get the user's OK, THEN make the video once. The playbook and the flow_captions description say so too.
 
+- AGENT PANEL OPEN ON LOAD (2026-10-27): Flow now opens a project with the agent session panel showing ("Hi <name>,
+  What would you like to create?", `Start new session`, `Close`). While it is open there is no `Agent` button at all
+  (only `Agent instructions`), so runGeneration timed out on `getByRole('button', { name: 'Agent', exact: true })`
+  before spending anything, every time; closing the panel by hand did not stick, since ensureProjectGrid reloads the
+  page and the panel comes back. runGeneration now calls closeAgentSession right after ensureProjectGrid. Verified
+  live via scripts/e2e.mjs on a scratch FLOW_MCP_HOME + port 8799: two Veo 3.1 Lite 9:16 clips, 10 credits each, done
+  and downloaded. Restarting the Claude app did NOT replace a Code session's own flow-mcp child (still the pre-build
+  process afterwards), so that session keeps the old code until the session itself restarts.
+- "UNUSUAL ACTIVITY" REFUSAL (2026-10-28, three free 9:16 stills in a row, account at 0 credits): each became a
+  `flow-error-tile` reading "We noticed some unusual activity. Note that browser extensions that modify the page may
+  cause issues... You have not been charged", with Retry / Reuse prompt / Delete, and - unlike the "Sorry, this image
+  failed" tile - TITLED WITH THE PROMPT and carrying an id, so freshMedia took it as the result and every job spent
+  ~10 min failing to download it. freshMedia now skips tiles holding flow-error-tile; waitForNewMedia and
+  retryNewErrorTiles throw BLOCKED_ERROR on this text (never press Retry on it), and the queue fails every remaining
+  queued job instead of walking into the same refusal. This is Flow's anti-automation check: back off, never work
+  around it; the user makes one generation by hand before anything is queued again. Checked against the live grid
+  (refused tiles detected); not yet seen firing inside a run.
+- MODEL NAMES DRIFT (2026-10-30): Flow's model menu now reads "Veo 3.1 - Lite" / "- Fast" / "- Quality", each item
+  prefixed with the icon ligature "volume_up", so model "Veo 3.1 Lite" failed with "not found" (nothing spent).
+  pickModel compares through modelKey() (lowercase, letters/digits/dots only). Verified: four Veo 3.1 Lite 9:16
+  first-frame clips, 10 credits each, all downloaded with audio.
+- SCRATCH HOME = SCRATCH CHROME PROFILE: PROFILE_DIR lives under FLOW_MCP_HOME, so an e2e run with a scratch home
+  while the real Flow Chrome is CLOSED launches a fresh, signed-out profile and reports "Not signed in". Start the
+  real Chrome first (import dist/chrome.js getFlowPage with FLOW_MCP_HOME unset), then run the test against it.
