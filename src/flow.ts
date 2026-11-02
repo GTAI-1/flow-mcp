@@ -110,17 +110,19 @@ async function readCredits(page: Page): Promise<number | undefined> {
 
 const settingsTrigger = (page: Page) => page.getByRole("button", { name: "Settings trigger" });
 
-// A tile's identity is the uuid of the media inside it, and nothing else. Images carry it in data-media-id;
-// everything else carries it in the media URL, which Flow now serves as flow-content.google/<kind>/<uuid>
-// (re-mapped 2026-10-21 - the old signed /asb/ links without a uuid are only left on older video thumbnails).
+// A tile's identity is the media inside it, and nothing else. Images carry a uuid in data-media-id; other tiles carry
+// one in the media URL when Flow serves it as flow-content.google/<kind>/<uuid> (2026-10-21). NEW video tiles are
+// back on signed flow.google.com/asb/<token> links with no uuid anywhere (2026-11-01: a fresh Veo clip, mapped live),
+// so the asb token is the identity there. Measured on that clip: the token survives a page reload, a rename and the
+// hover swap from thumbnail <img> to <video>; only a suffix after "=" (=s512-rw, =mm,22,15) changes, and is dropped.
 // A rendering tile already carries its final title (2026-10-09) and an error tile carries one too (2026-10-11),
 // so neither counts as media until it is done.
 //
 // There used to be a fallback: an id-less tile was identified by its TITLE. That cost real work on 2026-10-21.
 // Flow reuses its own auto titles, so two portraits of one batch both came back "Man posing for portrait" and
 // shared one identity; the second looked like a tile we already knew, and the job went on to rename and download
-// two unrelated frames from another clip instead. A tile with no uuid is now simply not identifiable, and the job
-// says so rather than guessing.
+// two unrelated frames from another clip instead. A tile with neither a uuid nor an asb token is now simply not
+// identifiable, and the job says so rather than guessing.
 const TILE_ID_JS = `(tile) => {
   if (tile.querySelector("flow-pending-tile, flow-error-tile")) return undefined;
   const withId = tile.querySelector("[data-media-id]");
@@ -128,7 +130,8 @@ const TILE_ID_JS = `(tile) => {
   // Order matters: a video tile at rest holds only its thumbnail <img>, and gains a <video> with a DIFFERENT uuid
   // once it plays, so the thumbnail is read first and the tile keeps one id either way.
   const media = tile.querySelector("img[src]") || tile.querySelector("video[src]");
-  return media?.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0] || undefined;
+  const src = media?.getAttribute("src") || "";
+  return src.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0] || src.match(/\\/asb\\/([\\w-]{40,})/)?.[1] || undefined;
 }`;
 
 // What the grid looked like before a job started: the media uuids of the tiles mounted at the top, plus the titles
@@ -180,8 +183,8 @@ const WALK_JS = `([known, idJs]) => {
       fresh.push({ id, kind: isVideo ? "video" : tile.querySelector("flow-image-tile") ? "image" : "other", label: tile.getAttribute("aria-label") || "" });
       continue;
     }
-    // No uuid and not rendering: one of Flow's older /asb/ video thumbnails. Nothing Flow makes today looks like
-    // that, so it cannot be new - if we knew its title it ends the walk, otherwise it is simply stepped over.
+    // No media id at all and not rendering (no uuid, no asb token): nothing to identify it by, so it cannot be
+    // claimed as new - if we knew its title it ends the walk, otherwise it is simply stepped over.
     const name = tile.getAttribute("aria-label");
     if (name && seen.has("title:" + name)) return { fresh, pending, errors, sawKnown: true };
   }

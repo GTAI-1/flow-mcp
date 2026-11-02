@@ -44,9 +44,9 @@ OmniFlow (lingoflow.pro/omniflow), using subscription credits instead of the API
 - Tile identity: the media uuid, and nothing else. Flow serves media from `https://flow-content.google/image/<uuid>`
   and `.../video/<uuid>` (2026-10-21); images also carry it in `data-media-id` on `flow-image-tile img`. Video tiles
   at rest hold only `img[alt="Generated video thumbnail"]` (its src carries the uuid); one that has PLAYED holds a
-  `<video>` with a different uuid, so read `img[src]` first. Older video thumbnails are still on signed
-  `flow.google.com/asb/...` URLs with no uuid at all. In-progress tiles show `NN%`. NEVER identify a tile by its
-  title: Flow reuses its auto titles.
+  `<video>` with a different uuid, so read `img[src]` first. Signed `flow.google.com/asb/<token>` URLs carry no uuid:
+  NEW video tiles are on them again since 2026-11-01, and their token (minus any `=...` suffix) is the identity.
+  In-progress tiles show `NN%`. NEVER identify a tile by its title: Flow reuses its auto titles.
 - Download: right-click tile → `Download` → submenu. Image: `1K Original size`, `2K Upscaled`. Video:
   `270p Animated GIF`, `720p Original size`, `1080p Upscaled` (4K disabled on Pro). Playwright `download.saveAs` works over CDP.
 - Other tile menu items not automated yet: `Animate` (image→video), `Add to scene`, `Add to prompt`, `Rename`.
@@ -623,3 +623,19 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   is 33 characters ending in U+2026, and that is the exact string selectors must match. Two tiles can therefore look
   like a prefix of one another ("Man posing for portrait" is also a real, separate title), so flow_download's
   prefix matching picks whichever comes first in the grid - identify by MD5, not by name, whenever it matters.
+- NEW VIDEOS ON /asb/ AGAIN (2026-11-01, Windows, Pro). A Veo 3.1 Lite clip (first frame `asset:`, 10 credits, the
+  user's OK) finished in Flow in about 2 min, yet the job waited out the full 12 min and failed "Timed out after 720s".
+  Mapped live over CDP: the finished tile had NO uuid anywhere - no data-media-id, thumbnail `img[alt="Generated video
+  thumbnail"]` and the hover `<video>` both on `flow.google.com/asb/<token>`, no uuid in any attribute - so TILE_ID_JS
+  returned nothing and WALK_JS stepped over it as an "older" tile. The 2026-10-21 assumption ("every tile Flow makes
+  today has a uuid") no longer holds for video. The asb token is stable: identical across a page reload, a rename
+  (`test-mcp-check-clip-01`) and the hover swap img -> video; only the suffix after "=" differs (`=s512-rw` on stills,
+  `=mm,22,15` on the hover video), and `[\w-]{40,}` stops before it. TILE_ID_JS now falls back to that token after
+  the uuid, and mediaTile's `[src*=id]` finds the tile by it in either state. Replayed against the live grid with
+  dist/flow.js (0 credits): nothing-new -> [] for video and image jobs; the clip left out of the snapshot -> exactly
+  that clip for a video job, [] for an image job; the token resolves to one tile. NOT yet re-run on a paid clip.
+  The asb token's lifetime beyond about an hour is unmeasured; if it ever rotates mid-job, renameTile's own-title
+  guard still refuses an old flow-mcp output. Recovery for a clip a job missed: flow_download by title (free).
+  Also seen that day: an upload of a local first frame did not finish processing within 90 s (it landed later as
+  `fm-<job>-start.jpeg`), and a leftover `cdk-overlay-backdrop blurred-backdrop` blocked the composer click until the
+  user closed it by hand. `first_frame: "asset:<title>"` avoided the upload entirely.
