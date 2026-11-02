@@ -633,7 +633,14 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   `=mm,22,15` on the hover video), and `[\w-]{40,}` stops before it. TILE_ID_JS now falls back to that token after
   the uuid, and mediaTile's `[src*=id]` finds the tile by it in either state. Replayed against the live grid with
   dist/flow.js (0 credits): nothing-new -> [] for video and image jobs; the clip left out of the snapshot -> exactly
-  that clip for a video job, [] for an image job; the token resolves to one tile. NOT yet re-run on a paid clip.
+  that clip for a video job, [] for an image job; the token resolves to one tile. Verified on a paid clip
+  2026-11-01 (Omni 1.1 Flash 4 s 720p, 7 credits, the user's OK): job "done" in ~80 s with no timeout, renamed
+  `mcp-smoke-test-scene-02`, the right clip downloaded (checked by frame and MD5 against the earlier one).
+  STALE OWNER (same day): a Code session's flow-mcp started BEFORE the build kept port 8787, and every newer session
+  became its RemoteCore client, so the fix ran nowhere and a paid clip waited out the 12 min again. Check which
+  process owns 8787 (`Get-NetTCPConnection -LocalPort 8787`) and when it started before trusting a fresh build. To
+  swap it without losing this session's tools: stop that owner (only if it is a Code session's child, never Claude
+  Desktop's own - see above) and run `node dist/studio.js`; clients read HOME/token per call, so they follow at once.
   The asb token's lifetime beyond about an hour is unmeasured; if it ever rotates mid-job, renameTile's own-title
   guard still refuses an old flow-mcp output. Recovery for a clip a job missed: flow_download by title (free).
   Also seen that day: an upload of a local first frame did not finish processing within 90 s (it landed later as
