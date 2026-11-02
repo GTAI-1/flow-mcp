@@ -214,6 +214,18 @@ server.registerTool(
 );
 
 server.registerTool(
+  "flow_rename",
+  {
+    title: "Rename an item in the Flow project",
+    description:
+      "Rename one image, video or scene in the open Flow project, by its exact current title from flow_assets. Use it to put a name back when something ended up mislabelled. Refuses if two items share the current title, or if the new title is already taken.",
+    inputSchema: shapes.rename,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  (args) => reply(patient("flow_rename", core.rename(args))),
+);
+
+server.registerTool(
   "flow_character",
   {
     title: "Create a reusable character",

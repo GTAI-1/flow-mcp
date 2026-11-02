@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "C:/Users/moses/tools/flow-mcp/src/flow.ts"
+        ],
+        "createdAt": "2026-11-02T01:50:26.334Z",
+        "reason": "Claude: L128 is a CSS selector string img[src] in DOM-query code, not an <img> tag"
+      }
+    ]
+  }
+}
