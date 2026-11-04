@@ -316,6 +316,29 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   voices().place (data-place spans + PLACE; Mac wording is the default, so a Mac is unchanged). Windows launcher:
   Flow Studio.cmd (CRLF kept by .gitattributes). Mac re-verified after the change: unzip of a real Flow ZIP, bin move
   plus three refusals, Mac wording, 9 voices listed, speech produced. The Windows branches have NOT run on a real PC.
+- LINUX (2026-11-04, on Kali 6.18, branch `linux-support`). Three things were still Mac/Windows-only after the
+  cross-platform pass. (1) CHROME_PATHS held one Linux entry (`/usr/bin/google-chrome`), so a box with Chromium, or
+  with Chrome installed anywhere else, died with "Google Chrome not found". It now also looks at google-chrome-stable,
+  /opt/google/chrome, /snap/bin, chromium, chromium-browser - Chromium LAST, because Flow's selectors were mapped
+  against real Chrome and Google's sign-in can refuse Chromium. platform.ts owns the wording (CHROME_HINT). Verified:
+  chromeExecutable() returns /usr/bin/chromium here, and captions' own
+  `chromium.launch({ executablePath: chromeExecutable() })` renders and screenshots with the exact args captions.ts
+  passes - no --no-sandbox needed as a normal user. (2) NARRATION: `speakLocally`/`localVoices` knew `say` and
+  System.Speech only, so engine "mac" silently produced no voices on Linux, which has none of its own. Added piper
+  (neural, `-m model -f out.wav`, line on STDIN, so it needs spawn - promisify(execFile) cannot write stdin; models are
+  .onnx files in ~/.flow-mcp/voices, FLOW_MCP_PIPER_VOICES) and espeak-ng (`-v <voice> -s 168 -w out.wav -f line.txt`;
+  the line goes through a FILE like the Windows branch, so a line starting with "-" is not read as a flag). piper wins
+  when a model is present. `espeak-ng --voices=en` is parsed for voice names, falling back to en-us/en-gb if the table
+  cannot be read. The raw file is .aiff only on a Mac now (IS_MAC, not !IS_WIN); every engine still goes through the
+  same ffmpeg loudnorm pass. localEngineLabel() names the engine for the panel and LINUX_VOICE_HINT says how to install
+  one; core.voices() returns it as place.local_hint, which the Voice tab prints in place of the macOS "System Settings"
+  sentence. Verified with stand-in piper/espeak binaries - all four paths: nothing installed -> one clear error naming
+  both options and the gemini route; espeak table parsed (5 voices); unreadable table -> the two fallbacks; piper models
+  listed and spoken through stdin - and in a headless panel on port 8799. (3) The whisper hint now says
+  `sudo apt install whisper.cpp` (Debian, Ubuntu and Kali package it, as they do piper), with FLOW_MCP_WHISPER for a
+  differently-named binary. Added `Flow Studio.sh` (eol=lf in .gitattributes). NOT tested on Linux: anything needing a
+  signed-in Flow - no Google account is signed in on this machine, and no real piper/espeak-ng binary was installed
+  (sudo needs a password), so both engines were only ever driven through stand-ins.
 - NEVER kill Claude Desktop's own flow-mcp process to load new code (did it 2026-10-01): Claude logs "Server
   disconnected" and does NOT restart it, so the app's flow connector stays dead until the user restarts Claude, and
   reconnect_session_connector cannot help (user-config servers are the user's to reconnect). Code sessions and the

@@ -693,7 +693,7 @@ function renderNarrate() {
     ? (VOICES.gemini_ready
         ? "Google's own text-to-speech — the same voices Flow uses, free on the AI Studio tier, any length, and no Flow credits."
         : `<b>Needs a free key.</b> Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and paste it below. Same voices as Flow, free, no length limit.`)
-    : `Spoken on ${PLACE.computer} — free, instant, any length. Quality depends on the installed voice: ${PLACE.platform === "win32" ? "add more English voices in <b>Settings → Time &amp; language → Speech</b> and they appear here" : "download a <b>Premium</b> English voice in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices and it appears here automatically"}. ${(VOICES.mac ?? []).length} voice(s) available.`;
+    : `Spoken on ${PLACE.computer} — free, instant, any length. Quality depends on the installed voice: ${PLACE.local_hint ?? (PLACE.platform === "win32" ? "add more English voices in <b>Settings → Time &amp; language → Speech</b> and they appear here" : "download a <b>Premium</b> English voice in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices and it appears here automatically")}. ${(VOICES.mac ?? []).length} voice(s) available.`;
   $("#n_keyWrap").hidden = mac;
   $("#n_keyStatus").innerHTML = VOICES.gemini_ready
     ? `A key is saved on ${PLACE.computer}. Paste a new one only to replace it.`

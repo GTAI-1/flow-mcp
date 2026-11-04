@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
+import { CHROME_HINT } from "./platform.js";
 
 export const FLOW_URL = "https://flow.google.com/";
 // Flow's buttons are found by their English names ("Start generation", "Download"...), so Flow has to show in English
@@ -24,6 +25,15 @@ const CHROME_PATHS = [
   process.env.FLOW_MCP_CHROME,
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   "/usr/bin/google-chrome",
+  // Linux: Google's .deb installs google-chrome-stable and keeps the real binary under /opt. Chromium comes last on
+  // purpose - it drives Flow the same way, but Google's sign-in can refuse it ("this browser may not be secure"), and
+  // every selector in flow.ts was mapped against real Chrome.
+  "/usr/bin/google-chrome-stable",
+  "/opt/google/chrome/google-chrome",
+  "/snap/bin/google-chrome",
+  "/usr/bin/chromium",
+  "/usr/bin/chromium-browser",
+  "/snap/bin/chromium",
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   // Windows also installs Chrome here: 32-bit builds, and per-user installs made without admin rights.
   "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
@@ -45,7 +55,7 @@ async function cdpUp(): Promise<boolean> {
 // session persists, while the user's everyday profile is never touched.
 export function chromeExecutable(): string {
   const chromePath = CHROME_PATHS.find((p) => existsSync(p));
-  if (!chromePath) throw new Error("Google Chrome not found. Set FLOW_MCP_CHROME to the Chrome executable path.");
+  if (!chromePath) throw new Error(`Google Chrome not found: ${CHROME_HINT}.`);
   return chromePath;
 }
 

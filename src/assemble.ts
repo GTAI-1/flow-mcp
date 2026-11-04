@@ -1,10 +1,10 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
-import { FFMPEG_HINT, IS_WIN, powershell, psQuote } from "./platform.js";
+import { FFMPEG_HINT, IS_LINUX, IS_MAC, IS_WIN, powershell, psQuote } from "./platform.js";
 
 const run = promisify(execFile);
 const FFMPEG = process.env.FLOW_MCP_FFMPEG ?? "ffmpeg";
@@ -72,10 +72,74 @@ export async function extractAudio(video: string, target: string): Promise<{ out
 }
 
 const SAY = process.env.FLOW_MCP_SAY ?? "say";
+// Linux ships no speech engine of its own, so there are two to look for: piper (neural, genuinely usable for
+// narration, needs a .onnx voice downloaded once) and espeak-ng (in every distro's repo, tiny, robotic). piper wins
+// when a voice model is there. Both are also available as `sudo apt install piper espeak-ng` on Debian, Ubuntu and Kali.
+const ESPEAK = process.env.FLOW_MCP_ESPEAK ?? "espeak-ng";
+const PIPER = process.env.FLOW_MCP_PIPER ?? "piper";
+const PIPER_VOICES = process.env.FLOW_MCP_PIPER_VOICES ?? join(process.env.FLOW_MCP_HOME ?? join(homedir(), ".flow-mcp"), "voices");
+const shortPath = (p: string) => (p.startsWith(homedir() + "/") ? "~" + p.slice(homedir().length) : p);
+export const LINUX_VOICE_HINT =
+  "espeak-ng is tiny but robotic (sudo apt install espeak-ng); piper sounds far better - sudo apt install piper, then put a .onnx voice and its .onnx.json from huggingface.co/rhasspy/piper-voices in " +
+  shortPath(PIPER_VOICES);
+
+// Present counts as "runs without ENOENT": a program that answers --help with a non-zero exit is still installed
+// (the same test captions.ts uses for whisper-cli).
+const installedBin = (bin: string, args = ["--help"]) =>
+  run(bin, args).then(
+    () => true,
+    (err: NodeJS.ErrnoException) => err.code !== "ENOENT",
+  );
+
+type LinuxEngine = { kind: "piper"; models: string[] } | { kind: "espeak" } | { kind: "none" };
+
+async function linuxEngine(): Promise<LinuxEngine> {
+  const models = existsSync(PIPER_VOICES) ? readdirSync(PIPER_VOICES).filter((f) => f.endsWith(".onnx")).sort() : [];
+  if (models.length && (await installedBin(PIPER))) return { kind: "piper", models };
+  if (await installedBin(ESPEAK)) return { kind: "espeak" };
+  return { kind: "none" };
+}
+
+// `espeak-ng --voices=en` prints a table: priority, language, age/gender, voice name, file. The voice name is what -v
+// takes. If the table cannot be read, en-us and en-gb are offered anyway: espeak-ng always ships both.
+async function espeakVoices(): Promise<{ name: string; description: string }[]> {
+  const { stdout } = await run(ESPEAK, ["--voices=en"]).catch(() => ({ stdout: "" }));
+  const seen = new Map<string, string>();
+  for (const line of stdout.split("\n")) {
+    const m = line.match(/^\s*\d+\s+(\S+)\s+\S+\s+(\S+)/);
+    if (m && !seen.has(m[2])) seen.set(m[2], `${m[1]} · espeak-ng, free`);
+  }
+  if (!seen.size) return [
+    { name: "en-us", description: "en-us · espeak-ng, free" },
+    { name: "en-gb", description: "en-gb · espeak-ng, free" },
+  ];
+  return [...seen].map(([name, description]) => ({ name, description }));
+}
+
+// piper takes the line on stdin, and promisify(execFile) cannot write stdin, so this one gets a spawn of its own.
+function runPiper(model: string, text: string, wav: string): Promise<void> {
+  return new Promise((ok, fail) => {
+    const child = spawn(PIPER, ["-m", model, "-f", wav], { stdio: ["pipe", "ignore", "pipe"] });
+    let err = "";
+    child.stderr.on("data", (c: Buffer) => (err += c.toString()));
+    child.on("error", fail);
+    child.on("close", (code) => (code === 0 ? ok() : fail(new Error(`piper exited ${code}: ${err.trim().split("\n").pop() ?? "no output"}`))));
+    child.stdin.end(text, "utf8");
+  });
+}
+
+// What the panel calls this computer's narration engine, so a Linux box never reads "macOS voice".
+export async function localEngineLabel(): Promise<string> {
+  if (IS_MAC) return "macOS voice";
+  if (IS_WIN) return "Windows voice";
+  const engine = await linuxEngine();
+  return engine.kind === "piper" ? "piper voice" : engine.kind === "espeak" ? "espeak-ng voice" : "computer voice";
+}
 
 // The voices this computer has installed. On a Mac that is `say` (Premium voices appear as soon as the user downloads
 // them in System Settings); on Windows it is the built-in speech engine, the voices under Settings > Time & language >
-// Speech. The Windows branch is written to the documented System.Speech API but has not been run on a real PC yet.
+// Speech; on Linux it is whichever of piper or espeak-ng is installed, since the system has no voice of its own.
+// The Windows branch is written to the documented System.Speech API but has not been run on a real PC yet.
 export async function localVoices(): Promise<{ name: string; description: string }[]> {
   if (IS_WIN) {
     try {
@@ -91,6 +155,12 @@ export async function localVoices(): Promise<{ name: string; description: string
       return [];
     }
   }
+  if (IS_LINUX) {
+    const engine = await linuxEngine();
+    if (engine.kind === "piper") return engine.models.map((f) => ({ name: basename(f, ".onnx"), description: "piper, free" }));
+    if (engine.kind === "espeak") return espeakVoices();
+    return [];
+  }
   const { stdout } = await run(SAY, ["-v", "?"], { maxBuffer: 4 * 1024 * 1024 }).catch(() => ({ stdout: "" }));
   return stdout
     .split("\n")
@@ -100,10 +170,12 @@ export async function localVoices(): Promise<{ name: string; description: string
     .filter((v) => !/^(Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Albert|Fred|Grandma|Grandpa|Junior|Kathy|Princess|Ralph|Rocko|Shelley|Sandy|Eddy|Flo|Reed|Rishi)/.test(v.name));
 }
 
-// Speaks a line with this computer's own voice. Free and instant, but only as good as the installed voice.
+// Speaks a line with this computer's own voice: `say` on a Mac, System.Speech on Windows, piper or espeak-ng on
+// Linux. Free and instant, but only as good as the installed voice. Every engine is normalised through the same
+// ffmpeg pass below, so the output is the same shape whatever spoke it.
 export async function speakLocally(text: string, voice: string, target: string): Promise<{ output: string; duration: number }> {
   const stem = target.replace(/\.\w+$/, "");
-  const raw = stem + (IS_WIN ? ".wav" : ".aiff");
+  const raw = stem + (IS_MAC ? ".aiff" : ".wav");
   if (IS_WIN) {
     // The line goes through a file, never the command line, so quotes or symbols in it cannot break the script.
     const lineFile = stem + ".line.txt";
@@ -115,6 +187,27 @@ export async function speakLocally(text: string, voice: string, target: string):
       );
     } finally {
       rmSync(lineFile, { force: true });
+    }
+  } else if (IS_LINUX) {
+    const engine = await linuxEngine();
+    if (engine.kind === "none") {
+      throw new Error(
+        `No speech engine is installed on this computer, so there is no voice to speak with. ${LINUX_VOICE_HINT}. ` +
+          `Or use engine "gemini", which needs only a free Google AI Studio key.`,
+      );
+    }
+    if (engine.kind === "piper") {
+      const model = engine.models.find((f) => basename(f, ".onnx").toLowerCase() === voice.toLowerCase()) ?? engine.models[0];
+      await runPiper(join(PIPER_VOICES, model), text, raw);
+    } else {
+      // The line goes through a file, as on Windows: a prompt that starts with a dash would otherwise look like a flag.
+      const lineFile = stem + ".line.txt";
+      writeFileSync(lineFile, text, "utf8");
+      try {
+        await run(ESPEAK, ["-v", voice, "-s", "168", "-w", raw, "-f", lineFile]);
+      } finally {
+        rmSync(lineFile, { force: true });
+      }
     }
   } else {
     await run(SAY, ["-v", voice, "-r", "168", "-o", raw, text]);

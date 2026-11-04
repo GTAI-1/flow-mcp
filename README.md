@@ -21,13 +21,13 @@ New here? [GETTING-STARTED.md](GETTING-STARTED.md) takes you from nothing to you
 
 | | |
 |---|---|
-| **macOS or Windows 10/11** | Developed and tested on macOS. Windows is supported (Chrome, the computer's own voices, the Recycle Bin and the panel launcher all have Windows versions), but it hasn't been run on a real PC yet, so please report anything that breaks |
+| **macOS, Windows 10/11 or Linux** | Developed and tested on macOS. Windows is supported (Chrome, the computer's own voices, the Recycle Bin and the panel launcher all have Windows versions) but has not been run on a real PC yet. Linux is supported too: Chrome and Chromium are found where distributions put them, deletes go to the freedesktop Trash, the panel starts with `Flow Studio.sh`, and narration speaks through piper or espeak-ng, since Linux has no voice of its own. Please report anything that breaks |
 | **Node.js 22 or newer** | `node --version` |
-| **Google Chrome** | Any recent version |
+| **Google Chrome** | Any recent version. On Linux, Chromium is used if Chrome is not installed (`FLOW_MCP_CHROME` picks a specific build), but real Chrome is what Flow was mapped against and what Google's sign-in trusts |
 | **A Google account** | Free. Flow gives every account 50 credits a day; a paid Google AI plan adds more and unlocks 1080p downloads. Developed on a Pro plan |
-| **FFmpeg** *(optional)* | Mac: `brew install ffmpeg` · Windows: `winget install Gyan.FFmpeg`. Needed only to join clips, mix music or record narration |
-| **A Google AI Studio key** *(optional, free)* | Only for the Google narration voices. See below |
-| **whisper.cpp** *(optional, free)* | Only for captions: it hears the words, on your computer. Mac: `brew install whisper-cpp` · Windows: `whisper-cli.exe` from [the whisper.cpp releases](https://github.com/ggml-org/whisper.cpp/releases), on your PATH. The speech model it needs downloads by itself the first time you caption a video: 148 MB for English, 574 MB for any other language |
+| **FFmpeg** *(optional)* | Mac: `brew install ffmpeg` · Windows: `winget install Gyan.FFmpeg` · Linux: `sudo apt install ffmpeg`. Needed only to join clips, mix music or record narration |
+| **A Google AI Studio key** *(optional, free)* | Only for the Google narration voices. See below. On Linux it is the easiest narration route, since there are no system voices to fall back on |
+| **whisper.cpp** *(optional, free)* | Only for captions: it hears the words, on your computer. Mac: `brew install whisper-cpp` · Windows: `whisper-cli.exe` from [the whisper.cpp releases](https://github.com/ggml-org/whisper.cpp/releases), on your PATH · Linux: `sudo apt install whisper.cpp` (Debian, Ubuntu and Kali package it; `FLOW_MCP_WHISPER` points at it if your distribution names the binary differently). The speech model it needs downloads by itself the first time you caption a video: 148 MB for English, 574 MB for any other language |
 
 A display must stay awake: the Chrome window is really being driven, so the machine cannot be
 headless or asleep mid-run.
@@ -142,7 +142,7 @@ The same features, without an AI assistant in the loop:
 npm run studio     # then open http://127.0.0.1:8787
 ```
 
-or double-click **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows).
+or double-click **Flow Studio.command** (Mac), **Flow Studio.cmd** (Windows) or **Flow Studio.sh** (Linux).
 
 Eight tabs, in the order you would use them:
 
@@ -219,7 +219,11 @@ Output lands in `~/flow-mcp-out/<project>/scene-NN.ext`.
 ### Narration with Google's voices (optional)
 
 `flow_narrate` with `engine: "mac"` uses your computer's own voices and works out of the box: macOS voices on a
-Mac, the built-in speech voices on Windows. For Google's voices (the same ones Flow offers), get a free key from
+Mac, the built-in speech voices on Windows. **Linux has no voice of its own**, so install one: `sudo apt install
+piper` and drop a `.onnx` voice and its `.onnx.json` from
+[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) into `~/.flow-mcp/voices` (neural, genuinely
+usable for narration), or `sudo apt install espeak-ng` (tiny, robotic, fine for timing a cut). `flow_voices` lists
+whatever it found and says how to install one when it finds nothing. For Google's voices (the same ones Flow offers), get a free key from
 [Google AI Studio](https://aistudio.google.com/apikey) and paste it into **Flow Studio → Voice → Google AI Studio
 key → Save key**. It's checked with Google before it's saved, and stored only on your computer. Or set
 `GEMINI_API_KEY`. Either way, never paste the key into a chat; it would end up in the conversation history.
@@ -237,7 +241,9 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
   language setting is never changed, and prompts can be written in any language.
 - Environment variables: `GEMINI_API_KEY`, `FLOW_MCP_PORT` (8787), `FLOW_MCP_OUTPUT`,
   `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`, `FLOW_MCP_PAUSE_MIN_S`,
-  `FLOW_MCP_PAUSE_MAX_S`.
+  `FLOW_MCP_PAUSE_MAX_S`. Helper programs, if they are not on your PATH: `FLOW_MCP_FFMPEG`,
+  `FLOW_MCP_FFPROBE`, `FLOW_MCP_WHISPER`, and on Linux `FLOW_MCP_PIPER`, `FLOW_MCP_PIPER_VOICES`
+  (default `~/.flow-mcp/voices`), `FLOW_MCP_ESPEAK`.
 
 ## If something goes wrong
 

@@ -27,7 +27,7 @@ credits, so a free account makes a few clips a day. A paid Google AI plan adds m
 
 Prices and limits change; check each company's own page.
 
-**Your computer:** a Mac, or a Windows 10/11 PC. It can't run in a cloud workspace or on a phone, because
+**Your computer:** a Mac, a Windows 10/11 PC, or a Linux desktop. It can't run in a cloud workspace or on a phone, because
 it controls a Chrome window on the computer it's installed on. Keep the computer awake while it's making
 something.
 
@@ -166,7 +166,7 @@ Nothing needs to run all the time.
 | | Starts | Stops |
 |---|---|---|
 | **The Flow tools in your assistant** | By themselves, when the assistant app opens | When you quit the app |
-| **Flow Studio, the control panel** | While your assistant is open: go to **http://127.0.0.1:8787** in your browser. Without one: double-click **Flow Studio.command** (Mac) or **Flow Studio.cmd** (Windows) in the `flow-mcp` folder, and it opens the panel for you | When you quit the assistant, or close the Flow Studio window you started |
+| **Flow Studio, the control panel** | While your assistant is open: go to **http://127.0.0.1:8787** in your browser. Without one: double-click **Flow Studio.command** (Mac), **Flow Studio.cmd** (Windows) or **Flow Studio.sh** (Linux) in the `flow-mcp` folder, and it opens the panel for you | When you quit the assistant, or close the Flow Studio window you started |
 | **The Flow Chrome window** | `npm run login`, or by itself when the tool needs Flow | Close it any time; keep it open while something is being made |
 
 So Flow Studio is only running while your assistant is open, or while its own window is. If the panel says

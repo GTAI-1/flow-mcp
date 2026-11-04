@@ -2,13 +2,13 @@ import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
-import { assemble, localVoices, speakLocally, voiceTrack } from "./assemble.js";
+import { assemble, localEngineLabel, localVoices, LINUX_VOICE_HINT, speakLocally, voiceTrack } from "./assemble.js";
 import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemini.js";
 import { extractLastFrame } from "./chain.js";
 import { burnCaptions, captionedName, captionSetup, previewCaptions, transcribe } from "./captions.js";
 import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
-import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
+import { BIN, COMPUTER, IS_LINUX, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
 export const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out");
@@ -180,10 +180,14 @@ export const shapes = {
       .enum(["gemini", "mac"])
       .default("gemini")
       .describe(
-        "'gemini' uses Google AI Studio's text-to-speech - the same voices Flow has, free on the AI Studio tier, no length limit, needs a key in ~/.flow-mcp/gemini-key. 'mac' uses a voice installed on this computer (macOS voices on a Mac, the built-in speech voices on Windows): free, instant, no key.",
+        "'gemini' uses Google AI Studio's text-to-speech - the same voices Flow has, free on the AI Studio tier, no length limit, needs a key in ~/.flow-mcp/gemini-key. 'mac' uses a voice installed on this computer (macOS voices on a Mac, the built-in speech voices on Windows, piper or espeak-ng on Linux): free, instant, no key. Call flow_voices first: it lists what this computer actually has, and says how to install one if it has none.",
       ),
     text: z.string().min(1).max(400).describe("The line to speak. About 20 words fits 8 s, 30 words fits 12 s; anything longer needs a longer take."),
-    voice: z.string().min(1).default("Charon").describe("Voice name from flow_voices, e.g. Charon (informative), Aoede (breezy), Gacrux (mature) for Google; Zoe or Samantha for macOS."),
+    voice: z
+      .string()
+      .min(1)
+      .default("Charon")
+      .describe("Voice name from flow_voices, e.g. Charon (informative), Aoede (breezy), Gacrux (mature) for Google; Zoe or Samantha for macOS; en-us or a piper model name on Linux."),
     style: z.string().max(200).optional().describe("Delivery note for the 'gemini' engine, e.g. 'slowly and warmly, like a documentary narrator'."),
   },
   edit: {
@@ -650,8 +654,15 @@ export class LocalCore implements Core {
   }
 
   async voices() {
-    // The panel words itself from these, so a PC never reads "this Mac".
-    const place = { computer: COMPUTER, bin: BIN, local_engine: IS_MAC ? "macOS voice" : IS_WIN ? "Windows voice" : "System voice", platform: process.platform };
+    // The panel words itself from these, so a PC never reads "this Mac", and a Linux box names the engine it found.
+    const place = {
+      computer: COMPUTER,
+      bin: BIN,
+      local_engine: await localEngineLabel(),
+      // Only Linux needs telling how to get a voice at all; mac and Windows keep their own wording in the panel.
+      local_hint: IS_LINUX ? LINUX_VOICE_HINT : undefined,
+      platform: process.platform,
+    };
     return { gemini: GEMINI_VOICES, gemini_ready: Boolean(geminiKey()), mac: await localVoices(), place };
   }
 

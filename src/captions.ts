@@ -156,7 +156,7 @@ const WHISPER_HINT = IS_MAC
   ? "brew install whisper-cpp"
   : IS_WIN
     ? "download whisper-cli from github.com/ggml-org/whisper.cpp/releases and put it on your PATH (or set FLOW_MCP_WHISPER)"
-    : "install whisper.cpp so whisper-cli is on your PATH";
+    : "sudo apt install whisper.cpp (Debian, Ubuntu and Kali package it), or build whisper.cpp yourself so whisper-cli is on your PATH; if your package names the binary differently, point FLOW_MCP_WHISPER at it";
 
 // What the panel needs to know before offering captions, and the fix for whatever is missing.
 export async function captionSetup(): Promise<{
