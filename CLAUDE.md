@@ -337,8 +337,24 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   listed and spoken through stdin - and in a headless panel on port 8799. (3) The whisper hint now says
   `sudo apt install whisper.cpp` (Debian, Ubuntu and Kali package it, as they do piper), with FLOW_MCP_WHISPER for a
   differently-named binary. Added `Flow Studio.sh` (eol=lf in .gitattributes). NOT tested on Linux: anything needing a
-  signed-in Flow - no Google account is signed in on this machine, and no real piper/espeak-ng binary was installed
-  (sudo needs a password), so both engines were only ever driven through stand-ins.
+  signed-in Flow - no Google account is signed in on this machine.
+- LINUX, WITH THE REAL BINARIES (2026-11-04, same day, after the user installed espeak-ng, piper and whisper.cpp).
+  The stand-ins had hidden two things, both now fixed and checked live:
+  (1) `apt install piper` IS NOT THE TEXT-TO-SPEECH PIPER. On Debian, Ubuntu and Kali that package is a GTK tool for
+  configuring gaming mice; `piper --help` prints GTK options. The old code only checked that the binary existed, so
+  with .onnx models present it would have spawned a GUI that never answers. piperSpeaks() now reads --help once per
+  process and accepts it only if it looks like the TTS (--model / onnx / -m FILE) and not like the GUI (gapplication,
+  --help-gtk, gaming); anything else falls through to espeak-ng. The real one is `pipx install piper-tts`, or
+  FLOW_MCP_PIPER. (2) espeak-ng's `--voices=en` VOICE NAME COLUMN IS NOT WHAT -v TAKES: `-v English_(Received_
+  Pronunciation)` answers "the specified espeak-ng voice does not exist". -v takes the LANGUAGE code (column 2);
+  the voice name is only a label, so it is now the description. Rows under mb/ (MBROLA, voice data not installed,
+  fails at speaking time) and !v/ ("variant Storm", a modifier like en-us+Storm) are dropped. Result on 1.52.0:
+  9 voices, and every one of them was checked to actually speak. Verified after the fix, all on this machine:
+  espeak-ng narration (en-gb-x-rp, 4.3 s, AAC 48k stereo through the usual loudnorm pass), the GUI piper correctly
+  ignored while .onnx files sat in the voices folder, whisper.cpp (/usr/bin/whisper-cli, Kali's whisper.cpp package)
+  downloading ggml-base.en.bin by itself and transcribing with word times, caption_preview, and flow_captions burning
+  Bold pop capitals with the spoken word highlighted - headless Chromium drawing the overlay with the exact args
+  captions.ts passes. Still untested on Linux: everything that needs a signed-in Flow.
 - NEVER kill Claude Desktop's own flow-mcp process to load new code (did it 2026-10-01): Claude logs "Server
   disconnected" and does NOT restart it, so the app's flow connector stays dead until the user restarts Claude, and
   reconnect_session_connector cannot help (user-config servers are the user's to reconnect). Code sessions and the

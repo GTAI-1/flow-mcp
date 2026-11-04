@@ -21,7 +21,7 @@ New here? [GETTING-STARTED.md](GETTING-STARTED.md) takes you from nothing to you
 
 | | |
 |---|---|
-| **macOS, Windows 10/11 or Linux** | Developed and tested on macOS. Windows is supported (Chrome, the computer's own voices, the Recycle Bin and the panel launcher all have Windows versions) but has not been run on a real PC yet. Linux is supported too: Chrome and Chromium are found where distributions put them, deletes go to the freedesktop Trash, the panel starts with `Flow Studio.sh`, and narration speaks through piper or espeak-ng, since Linux has no voice of its own. Please report anything that breaks |
+| **macOS, Windows 10/11 or Linux** | Developed and tested on macOS. Windows is supported (Chrome, the computer's own voices, the Recycle Bin and the panel launcher all have Windows versions) but has not been run on a real PC yet. Linux is supported too: Chrome and Chromium are found where distributions put them, deletes go to the freedesktop Trash, the panel starts with `Flow Studio.sh`, and narration speaks through piper or espeak-ng, since Linux has no voice of its own. Verified end to end on Kali: espeak-ng narration, whisper.cpp transcription and burnt-in captions. Please report anything that breaks |
 | **Node.js 22 or newer** | `node --version` |
 | **Google Chrome** | Any recent version. On Linux, Chromium is used if Chrome is not installed (`FLOW_MCP_CHROME` picks a specific build), but real Chrome is what Flow was mapped against and what Google's sign-in trusts |
 | **A Google account** | Free. Flow gives every account 50 credits a day; a paid Google AI plan adds more and unlocks 1080p downloads. Developed on a Pro plan |
@@ -220,9 +220,11 @@ Output lands in `~/flow-mcp-out/<project>/scene-NN.ext`.
 
 `flow_narrate` with `engine: "mac"` uses your computer's own voices and works out of the box: macOS voices on a
 Mac, the built-in speech voices on Windows. **Linux has no voice of its own**, so install one: `sudo apt install
-piper` and drop a `.onnx` voice and its `.onnx.json` from
-[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) into `~/.flow-mcp/voices` (neural, genuinely
-usable for narration), or `sudo apt install espeak-ng` (tiny, robotic, fine for timing a cut). `flow_voices` lists
+espeak-ng` (tiny, robotic, fine for timing a cut), or for a voice you would actually put in a film, `pipx install
+piper-tts` and drop a `.onnx` voice with its `.onnx.json` from
+[rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) into `~/.flow-mcp/voices`. **Careful:** the
+`piper` in Debian, Ubuntu and Kali is a gaming-mouse configuration tool, not the speech program — flow-mcp checks
+and ignores it, so set `FLOW_MCP_PIPER` to the real one if both are installed. `flow_voices` lists
 whatever it found and says how to install one when it finds nothing. For Google's voices (the same ones Flow offers), get a free key from
 [Google AI Studio](https://aistudio.google.com/apikey) and paste it into **Flow Studio → Voice → Google AI Studio
 key → Save key**. It's checked with Google before it's saved, and stored only on your computer. Or set

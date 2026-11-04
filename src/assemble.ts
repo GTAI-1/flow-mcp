@@ -80,7 +80,7 @@ const PIPER = process.env.FLOW_MCP_PIPER ?? "piper";
 const PIPER_VOICES = process.env.FLOW_MCP_PIPER_VOICES ?? join(process.env.FLOW_MCP_HOME ?? join(homedir(), ".flow-mcp"), "voices");
 const shortPath = (p: string) => (p.startsWith(homedir() + "/") ? "~" + p.slice(homedir().length) : p);
 export const LINUX_VOICE_HINT =
-  "espeak-ng is tiny but robotic (sudo apt install espeak-ng); piper sounds far better - sudo apt install piper, then put a .onnx voice and its .onnx.json from huggingface.co/rhasspy/piper-voices in " +
+  "espeak-ng is tiny but robotic (sudo apt install espeak-ng); piper sounds far better - pipx install piper-tts (NOT apt's `piper`, which is a gaming-mouse tool), then put a .onnx voice and its .onnx.json from huggingface.co/rhasspy/piper-voices in " +
   shortPath(PIPER_VOICES);
 
 // Present counts as "runs without ENOENT": a program that answers --help with a non-zero exit is still installed
@@ -93,21 +93,47 @@ const installedBin = (bin: string, args = ["--help"]) =>
 
 type LinuxEngine = { kind: "piper"; models: string[] } | { kind: "espeak" } | { kind: "none" };
 
+// Debian, Ubuntu and Kali all ship a package called `piper` that is a GTK tool for configuring gaming mice, not the
+// text-to-speech program (checked 2026-11-04: `piper --help` there prints GTK options). Spawning that instead of a
+// voice would hang a narration on a window that never opens, so the name is never trusted: its --help has to look
+// like the TTS. Checked once per process - the GUI is slow to start.
+let piperIsTts: Promise<boolean> | undefined;
+function piperSpeaks(): Promise<boolean> {
+  piperIsTts ??= run(PIPER, ["--help"], { timeout: 8000 }).then(
+    ({ stdout, stderr }) => {
+      const help = `${stdout}${stderr}`.toLowerCase();
+      return /gapplication|--help-gtk|gaming/.test(help) ? false : /--model|onnx|-m\s+file/.test(help);
+    },
+    (err: NodeJS.ErrnoException & { stdout?: string; stderr?: string }) => {
+      if (err.code === "ENOENT") return false;
+      const help = `${err.stdout ?? ""}${err.stderr ?? ""}`.toLowerCase();
+      return /gapplication|--help-gtk|gaming/.test(help) ? false : /--model|onnx|-m\s+file/.test(help);
+    },
+  );
+  return piperIsTts;
+}
+
 async function linuxEngine(): Promise<LinuxEngine> {
   const models = existsSync(PIPER_VOICES) ? readdirSync(PIPER_VOICES).filter((f) => f.endsWith(".onnx")).sort() : [];
-  if (models.length && (await installedBin(PIPER))) return { kind: "piper", models };
+  if (models.length && (await piperSpeaks())) return { kind: "piper", models };
   if (await installedBin(ESPEAK)) return { kind: "espeak" };
   return { kind: "none" };
 }
 
-// `espeak-ng --voices=en` prints a table: priority, language, age/gender, voice name, file. The voice name is what -v
-// takes. If the table cannot be read, en-us and en-gb are offered anyway: espeak-ng always ships both.
+// `espeak-ng --voices=en` prints a table: priority, language, age/gender, voice name, file. -v takes the LANGUAGE
+// code (column 2), not the voice name: `-v English_(Received_Pronunciation)` answers "the specified espeak-ng voice
+// does not exist" (checked on 1.52.0). Rows whose file sits under mb/ are MBROLA voices, which need voice data that
+// is not installed with espeak-ng and fail at speaking time, so they are left out, as are variant rows (!v/). If the table cannot be read,
+// en-us and en-gb are offered anyway: espeak-ng always ships both.
 async function espeakVoices(): Promise<{ name: string; description: string }[]> {
   const { stdout } = await run(ESPEAK, ["--voices=en"]).catch(() => ({ stdout: "" }));
   const seen = new Map<string, string>();
   for (const line of stdout.split("\n")) {
-    const m = line.match(/^\s*\d+\s+(\S+)\s+\S+\s+(\S+)/);
-    if (m && !seen.has(m[2])) seen.set(m[2], `${m[1]} · espeak-ng, free`);
+    const m = line.match(/^\s*\d+\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/);
+    // mb/ = MBROLA (voice data not installed, fails at speaking time); !v/ = a variant row ("variant Storm"), which
+    // is a modifier like en-us+Storm, not a voice -v accepts on its own.
+    if (!m || m[4].startsWith("mb/") || m[4].startsWith("!v/") || m[1] === "variant" || seen.has(m[1])) continue;
+    seen.set(m[1], `${m[3].replace(/_/g, " ")} · espeak-ng, free`);
   }
   if (!seen.size) return [
     { name: "en-us", description: "en-us · espeak-ng, free" },
@@ -204,7 +230,9 @@ export async function speakLocally(text: string, voice: string, target: string):
       const lineFile = stem + ".line.txt";
       writeFileSync(lineFile, text, "utf8");
       try {
-        await run(ESPEAK, ["-v", voice, "-s", "168", "-w", raw, "-f", lineFile]);
+        await run(ESPEAK, ["-v", voice, "-s", "168", "-w", raw, "-f", lineFile]).catch((err: Error) => {
+          throw new Error(`espeak-ng could not speak with voice "${voice}": ${err.message.split("\n").pop()?.trim()}. Pick one of the voices flow_voices lists.`);
+        });
       } finally {
         rmSync(lineFile, { force: true });
       }
