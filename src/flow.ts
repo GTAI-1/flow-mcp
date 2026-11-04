@@ -775,8 +775,14 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const s = job.params;
 
   await ensureProjectGrid(page);
+  // Flow can be sitting on its agent session panel - left by an agent batch, or by the user's own agent session, and
+  // it survives a reload. That panel replaces the composer, so the Agent chip is not on the page at all, and reading
+  // aria-pressed on it used to sit out Playwright's 30 s default and fail the job before anything was even quoted
+  // (seen live on Linux, 2026-11-04, on a free still). Close it first, then ask the chip with a short timeout:
+  // "no chip" means "not in agent mode", which is exactly what this job wants.
+  await closeAgentSession(page);
   const agent = page.getByRole("button", { name: "Agent", exact: true });
-  if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
+  if ((await agent.getAttribute("aria-pressed", { timeout: 5000 }).catch(() => null)) === "true") await setAgentMode(page, false);
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
 
@@ -1353,17 +1359,28 @@ async function setAgentSettings(page: Page, confirm: "Always" | "Never", imageAs
 
 // "Reuse prompt" on an agent-made tile opens the agent's session panel, which hides the normal composer.
 async function closeAgentSession(page: Page): Promise<void> {
-  const panel = page.getByRole("button", { name: "Start new session" });
-  if (await panel.isVisible().catch(() => false)) {
-    await page.getByRole("button", { name: "Close", exact: true }).click();
+  // The panel is `flow-agent-panel`, the same element the agent SETTINGS panel uses; the session one is the variant
+  // with "Start new session" and "Close". Either way it sits where the composer goes and takes the Agent chip and
+  // "Settings trigger" off the page with it, so both are closed here. Checking the element and not only the button
+  // matters: Flow can restore the session panel on its own when a project is reopened.
+  const showing = (await page.locator("flow-agent-panel").count().catch(() => 0)) > 0;
+  const session = await page.getByRole("button", { name: "Start new session" }).isVisible().catch(() => false);
+  if (showing || session) {
+    await page.getByRole("button", { name: "Close", exact: true }).first().click({ timeout: 8000 }).catch(() => {});
     await pause(page, 1000);
+    await closeAgentSettings(page);
   }
   const clear = page.getByRole("button", { name: "Clear prompt" });
-  if (await clear.isVisible().catch(() => false)) await clear.click();
+  if (await clear.isVisible().catch(() => false)) await clear.click().catch(() => {});
   else {
-    await page.locator(".ProseMirror").first().click();
-    await page.keyboard.press("ControlOrMeta+a");
-    await page.keyboard.press("Delete");
+    // No composer to clear is not a failure here: the caller checks for what it needs next and says so properly.
+    await page.locator(".ProseMirror").first().click({ timeout: 5000 }).then(
+      async () => {
+        await page.keyboard.press("ControlOrMeta+a");
+        await page.keyboard.press("Delete");
+      },
+      () => {},
+    );
   }
   await pause(page, 400);
 }

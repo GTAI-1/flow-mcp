@@ -355,6 +355,26 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   downloading ggml-base.en.bin by itself and transcribing with word times, caption_preview, and flow_captions burning
   Bold pop capitals with the spoken word highlighted - headless Chromium drawing the overlay with the exact args
   captions.ts passes. Still untested on Linux: everything that needs a signed-in Flow.
+- THE AGENT SESSION PANEL KILLS THE NEXT JOB (live on Linux, 2026-11-04, the first free still on this machine).
+  flow_generate failed with "locator.getAttribute: Timeout 30000ms exceeded ... getByRole('button', { name: 'Agent',
+  exact: true })" and made nothing (no quote read, so nothing was spent). Cause: Flow was sitting on its agent SESSION
+  panel (Open session history / Start new session / Close / Develop a storyboard / Rename my assets / Build a visual
+  moodboard), which replaces the composer - with it open the Agent chip is not on the page AT ALL (counted live: 0)
+  and `Settings trigger` is hidden, while `flow-agent-panel` is present. The panel survives a reload and a project
+  reopen, so a session left in agent mode (the user's own, or an agent batch) poisons every later job. runGeneration's
+  line 778 read aria-pressed on the missing chip and sat out Playwright's 30 s default. Fixes: runGeneration now calls
+  closeAgentSession FIRST, then asks the chip with a 5 s timeout and treats "no chip" as "not in agent mode" (and
+  routes a real toggle-off through setAgentMode, which verifies the flip); closeAgentSession recognises the panel by
+  the `flow-agent-panel` element as well as the "Start new session" button, clicks `Close` (.first(), tolerant),
+  follows with closeAgentSettings for the `Back` variant, and no longer throws when there is no composer to clear.
+  This is the same class as the 2026-10-02 flow_character failure, which was only patched at the cleanup end.
+- LINUX, FLOW SIDE (2026-11-04, the same machine, real Google Chrome, PRO account, 1050 credits): after that fix, a
+  free Nano Banana still ran end to end - composer, settings, grid scan, tile menu, 1K original download - landing
+  ~/flow-mcp-out/LinuxCheck/scene-01.jpeg, 0 credits, balance 1050 before and after, and the image is the prompt.
+  flow_status reads plan and credits. Narration through the REAL piper (pipx piper-tts 1.8.0, en_US-lessac-medium,
+  61 MB): "piper voice" in the panel, 4.1 s take, transcribed back clean. piper 1.8.0 takes -m/-f with the line on
+  stdin, as the code assumed, and its --help passes piperSpeaks(). The whole Linux path is now exercised except paid
+  video.
 - NEVER kill Claude Desktop's own flow-mcp process to load new code (did it 2026-10-01): Claude logs "Server
   disconnected" and does NOT restart it, so the app's flow connector stays dead until the user restarts Claude, and
   reconnect_session_connector cannot help (user-config servers are the user's to reconnect). Code sessions and the
