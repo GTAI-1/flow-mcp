@@ -565,12 +565,19 @@ async function waitForDownloadedFile(page: Page, before: Set<string>, timeoutMs:
   throw new Error("Flow started the download but no file arrived in either the tool's folder or ~/Downloads.");
 }
 
-// Flow reveals a tile's controls on a genuine pointer move, so the mouse is driven to the tile itself.
+// Flow reveals a tile's controls on a genuine pointer move, so the mouse is driven to the tile itself. It has to be a
+// real MOVE: Chrome emits no pointermove when the pointer is asked to go where it already is, so a second attempt on
+// the same tile hovered NOTHING, the toolbar never appeared, and the right-click fallback raised Chrome's own context
+// menu over the <video> instead. That is how a finished paid clip failed to download three times running on
+// 2026-11-04 while the same tile downloaded fine minutes later. The pointer is parked away from the tile first and
+// then walked in over several steps, so every call is a movement the page can see.
 async function hoverTile(page: Page, tile: Locator, settleMs = 900): Promise<void> {
   await tile.scrollIntoViewIfNeeded();
   const box = await tile.boundingBox();
   if (box) {
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.move(4, 4);
+    await pause(page, 120);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 12 });
     await pause(page, settleMs);
   } else {
     await tile.hover();
@@ -653,11 +660,15 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
       const before = downloadsNow();
       // Flow only shows a tile's toolbar for a real pointer move over it - Playwright's hover() does not trigger it.
       // The toolbar's "More options" beats a right-click, which can land on the <video> and raise Chrome's own menu.
-      await hoverTile(page, tile, 250);
+      // 250 ms is the bulk-download pace; a tile that has only just finished rendering gets more room on each retry.
+      await hoverTile(page, tile, attempt === 0 ? 250 : attempt === 1 ? 900 : 1500);
       const more = tile.getByRole("button", { name: "More options" });
       // isVisible() answers at once whatever timeout it is given, so wait for the button itself.
-      if (await more.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false)) await more.click();
-      else await tile.click({ button: "right" });
+      if (await more.waitFor({ state: "visible", timeout: attempt ? 6000 : 3000 }).then(() => true, () => false)) await more.click();
+      // Right-click is the last resort and never for a video: on a <video> it raises Chrome's OWN context menu, which
+      // is browser UI the page cannot close, so it swallows the attempts that follow instead of failing cleanly.
+      else if (attempt === 2 && (await tile.locator("video").count().catch(() => 1)) === 0) await tile.click({ button: "right" });
+      else throw new Error("The tile's toolbar never appeared, so its menu could not be opened.");
       const download = page.getByRole("menuitem", { name: "Download", exact: true });
       if (!(await download.isVisible({ timeout: 8000 }).catch(() => false))) {
         // Saying what Flow actually offered turns "locator timed out" into something that explains itself next time.

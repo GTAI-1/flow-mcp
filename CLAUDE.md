@@ -375,6 +375,20 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   61 MB): "piper voice" in the panel, 4.1 s take, transcribed back clean. piper 1.8.0 takes -m/-f with the line on
   stdin, as the code assumed, and its --help passes piperSpeaks(). The whole Linux path is now exercised except paid
   video.
+- A RETRY THAT HOVERED NOTHING (2026-11-04, cost the download of a paid clip, not the clip itself). The first paid
+  video on this machine generated and was charged (4 credits, quote read and accepted), then failed with "Flow's tile
+  menu did not open" on all three downloadTile attempts; renameTile had already failed silently for the same reason,
+  so the clip kept Flow's own title. flow_download pulled the same tile down minutes later with no trouble -
+  the file was never lost. Cause: Chrome emits NO pointermove when the pointer is told to go where it already is.
+  hoverTile moved straight to the tile's centre, so attempt 1 (250 ms after the tile finished rendering, while it was
+  still re-mounting) hovered a tile that was not ready, and attempts 2 and 3 moved the mouse to the coordinates it was
+  already on - no event, no toolbar, ever. Each then fell through to the right-click fallback, which on a video tile
+  raises CHROME'S OWN context menu: browser UI the page cannot close, so it sat over the grid swallowing what came
+  next. hoverTile now parks the pointer at (4,4), pauses, and walks into the tile with { steps: 12 }, so every call is
+  a movement the page can see; downloadTile gives each retry more dwell (250 / 900 / 1500 ms) and a longer wait for
+  More options, and right-click is now the LAST attempt only and never on a tile holding a <video> - otherwise it
+  fails with a sentence that says the toolbar never appeared. Verified free: a still rendered, renamed to
+  LinuxCheck-scene-02 in Flow and downloaded, in the same run, right after rendering.
 - NEVER kill Claude Desktop's own flow-mcp process to load new code (did it 2026-10-01): Claude logs "Server
   disconnected" and does NOT restart it, so the app's flow connector stays dead until the user restarts Claude, and
   reconnect_session_connector cannot help (user-config servers are the user's to reconnect). Code sessions and the
