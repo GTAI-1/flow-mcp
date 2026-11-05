@@ -1138,7 +1138,9 @@ function findCollection(all: FlowCollection[], path: string): FlowCollection {
 // Opens one collection's own page and scans its grid. Items carry the collection's path.
 async function scanCollection(page: Page, root: string, collection: FlowCollection, stopAt?: (assets: FlowAsset[]) => boolean): Promise<FlowAsset[]> {
   await page.goto(inEnglish(`${root}/collection/${collection.id}`), { waitUntil: "domcontentloaded" });
-  await page.waitForSelector(".page-container", { timeout: 20_000 }).catch(() => {});
+  await page.waitForSelector(".page-container", { timeout: 20_000 }).catch(() => {
+    throw new Error(`The Library collection "${collection.path}" did not load (${page.url()}). Try again.`);
+  });
   await pause(page, 2500);
   return (await scanGrid(page, stopAt, { allMedia: false })).map((a) => ({ ...a, path: collection.path }));
 }
@@ -1193,8 +1195,9 @@ export async function listAssets({ recursive = false, collection }: { recursive?
 
 // "Places/Place B/Some title" -> the deepest collection the name starts with, and the title left over.
 function splitLibraryRef(tree: FlowCollection[], ref: string): { collection: FlowCollection; title: string } | undefined {
-  const parts = ref.split("/");
-  for (let i = parts.length - 1; i >= 1; i--) {
+  const parts = ref.replace(/\/+$/, "").split("/");
+  // The whole ref may itself be a collection (title ""), so it is tried first.
+  for (let i = parts.length; i >= 1; i--) {
     const want = normPath(parts.slice(0, i).join("/"));
     const collection = tree.find((c) => normPath(c.path) === want);
     if (collection) return { collection, title: parts.slice(i).join("/").trim() };
@@ -1231,6 +1234,7 @@ export async function downloadAsset(name: string, targetStem: string, quality: D
     const root = projectRoot(page);
     const ref = splitLibraryRef(await readLibraryTree(page), name);
     if (ref) {
+      if (!ref.title) throw new Error(`"${ref.collection.path}" is a collection. Name an item in it, such as "${ref.collection.path}/<title>", or list it with flow_assets.`);
       try {
         const want = ref.title.toLowerCase();
         const hit = (a: FlowAsset) => a.name.toLowerCase().startsWith(want);
