@@ -147,7 +147,7 @@ server.registerTool(
   {
     title: "List project media",
     description:
-      "List the images and videos in the open Flow project (title and kind). Titles can be used as 'asset:<title>' in flow_generate or with flow_download. Media filed in the project's Library (collections, and collections inside them) is not in that list: pass recursive: true to walk the whole Library, or collection: '<path>' for one collection; items then carry their `path` and a `ref` for flow_download.",
+      "List the images, videos, scenes and characters in the open Flow project (title and kind). Titles can be used as 'asset:<title>' in flow_generate or with flow_download. Media filed in the project's Library (collections, and collections inside them) is not in that list: pass recursive: true to walk the whole Library, or collection: '<path>' for one collection; items then carry their `path` and a `ref` for flow_download.",
     inputSchema: shapes.assets,
     annotations: { readOnlyHint: true, openWorldHint: true },
   },

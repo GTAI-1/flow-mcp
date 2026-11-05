@@ -1216,7 +1216,8 @@ async function downloadCharacterTile(page: Page, asset: FlowAsset, targetStem: s
   try {
     const portrait = await savePortrait(page, asset.name);
     const target = `${targetStem}${extname(portrait)}`;
-    renameSync(portrait, target);
+    // Copy, not rename: the portrait stays in the _cast cache for later use.
+    copyFileSync(portrait, target);
     return [target];
   } finally {
     await leaveCharacterEditor(page);
