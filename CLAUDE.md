@@ -510,3 +510,25 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
 - CAPTIONS WORKFLOW (the user's rule, 2026-10-18): transcribe first, show the words with likely mishearings fixed,
   get the user's OK, THEN make the video once. The playbook and the flow_captions description say so too.
 
+- LIBRARY COLLECTIONS (2026-11-04, issue #26). A project's Library groups media into collections, nested at least four
+  levels deep, and everything filed there was invisible: flow_assets listed each top-level collection as an "image"
+  (and nothing inside it), flow_characters said [] while a collection held characters, and flow_download could not
+  reach any of it - listAssets/downloadAsset always went back to All media first. Mapped live: the side nav's tree is
+  `ul[aria-label="Collections"]` > li > `div.nested-list-row[data-item-id][data-depth]`; the item id is the collection
+  id and its page is /project/<id>/collection/<item id>; a row with children has `.expandable` and
+  `button.expand-toggle-button[aria-expanded]` ("Expand <name>"), and children are only in the DOM once expanded. The
+  whole tree only exists while the Library section is open (header button "Toggle library"). A collection's page is
+  the same `.page-container` virtual grid; sub-collections are `flow-collection-tile` (no id on the tile), characters
+  `flow-character-tile`. A character tile's menu has no Download (Add to prompt, Favorite, Copy, Rename, Move out of
+  collection, Move to trash), so its portrait is saved from its editor via savePortrait.
+  readLibraryTree() opens the Library and every collapsed branch, reads id/name/depth into paths ("Places/Harbour"),
+  then folds everything back (branches in reverse, then the section). TRAP: one click on "Toggle library" right after
+  the last collapse was sometimes swallowed while the tree re-rendered and the Library stayed open; it now checks and
+  clicks again. scanGrid(..., { allMedia: false }) scans a collection's page in place; kinds now include collection
+  and character. flow_assets { recursive | collection }, flow_characters { include_library } and flow_download by
+  "<collection path>/<title>" (ref) are built on these. Verified live, 0 credits, on a Library of 21 collections four
+  deep: the tree from the Library both open and closed (left as found, 0 branches expanded); recursive listing 41
+  entries in ~170 s; one collection, with kind filter; a character portrait and an image four levels down by ref,
+  through the MCP server over stdio; include_library answered still_working and came back through flow_wait. Not done:
+  `asset:<path>` references in flow_generate, and media from ANOTHER project (the picker seems to offer a source
+  project; not mapped).
