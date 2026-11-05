@@ -146,7 +146,8 @@ server.registerTool(
   "flow_assets",
   {
     title: "List project media",
-    description: "List the images and videos in the open Flow project (title and kind). Titles can be used as 'asset:<title>' in flow_generate or with flow_download.",
+    description:
+      "List the images and videos in the open Flow project (title and kind). Titles can be used as 'asset:<title>' in flow_generate or with flow_download. Media filed in the project's Library (collections, and collections inside them) is not in that list: pass recursive: true to walk the whole Library, or collection: '<path>' for one collection; items then carry their `path` and a `ref` for flow_download.",
     inputSchema: shapes.assets,
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
@@ -158,7 +159,7 @@ server.registerTool(
   {
     title: "Download existing project media",
     description:
-      "Download media that already exists in the Flow project, without regenerating it (no credits, including 1080p/2K upscales). Matches by the start of the title.",
+      "Download media that already exists in the Flow project, without regenerating it (no credits, including 1080p/2K upscales). Matches by the start of the title. For an item in a Library collection pass its ref from flow_assets, '<collection path>/<title>'; a character's portrait is saved from its own editor.",
     inputSchema: shapes.download,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
@@ -241,11 +242,12 @@ server.registerTool(
   "flow_characters",
   {
     title: "List characters",
-    description: "List the reusable characters in the open Flow project. Each can be used in a scene as 'asset:<name>'.",
+    description:
+      "List the reusable characters in the open Flow project. Each can be used in a scene as 'asset:<name>'. include_library: true also lists characters filed in Library collections, with a `ref` for flow_download.",
     inputSchema: shapes.characters,
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
-  () => reply(patient("flow_characters", core.characters())),
+  (args) => reply(patient("flow_characters", core.characters(args))),
 );
 
 server.registerTool(

@@ -192,15 +192,15 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | `flow_wait` | Wait for jobs, or for the task id of a slow call; returns file paths and results. Answers within about 40 s, so call again until `finished` is true |
 | `flow_cancel` | Cancel a job that has not started |
 | `flow_retry` | Re-queue failed jobs with the same settings and file names (a failed tile is first retried inside Flow with its own free Retry button: `retries`, default 1) |
-| `flow_assets` | List images and videos already in the Flow project (usable as `asset:<title>`) |
-| `flow_download` | Download existing project media without regenerating. Free, including the 1080p / 2K upscale. A scene comes down as one stitched film |
+| `flow_assets` | List images and videos already in the Flow project (usable as `asset:<title>`). `recursive: true` also walks the project's Library (collections, and collections inside them); `collection: "<path>"` lists one collection. Library items carry their `path` and a `ref` for `flow_download` |
+| `flow_download` | Download existing project media without regenerating. Free, including the 1080p / 2K upscale. A scene comes down as one stitched film. An item in a Library collection is fetched by its `ref`, e.g. `Cast/Hero` or `Places/Harbour/Pier at dusk`; a character comes down as its portrait |
 | `flow_trash` | Move an image, video or scene in the Flow project to Flow's Trash, where it can be restored. Exact title only; refuses if two items share it; never deletes permanently |
 | `flow_agent_images` | Fast image batch: hands up to 50 scenes to Flow's own Agent mode, rendered in parallel (20 images in ~204 s), 0 credits. Each image is matched back to its scene by its stored prompt, so file numbers are right in any finish order. Scenes the agent drops are re-asked of it (up to 2 rounds), then re-run one by one. `references` attaches characters, places and objects once in the agent's composer (like its + button), and `scene_references` says which scenes use which, so a whole story stays on-model; scenes made one by one keep their references |
 | `flow_edit` | Video-to-video edit of a clip already in the project (relight, weather, remove objects). Flow shows no quote first; about 20 credits for a 4 s clip |
 | `flow_continue` | Start a clip from the last frame of an existing one **with a character or your avatar still attached**. The composer allows a start frame or attached characters, never both, so this drives Flow's agent mode, which does both. No quote beforehand |
 | `flow_character` | Create a reusable character from a description (Flow draws the portrait) or an image, with a personality and a stock voice; use it as `asset:<name>` |
 | `flow_character_edit` | Restyle an existing character in place (free) and save the new portrait; name, personality and voice are kept, so every scene referencing it updates. Pass `look` with the updated description; with only a name it re-saves the current portrait |
-| `flow_characters` | List the project's characters |
+| `flow_characters` | List the project's characters. `include_library: true` adds characters filed in Library collections, with a `ref` for `flow_download` |
 | `flow_techniques` | 39 film-technique prompt presets (camera moves, product shots, transitions, image commands); pass an id as a scene's `technique` |
 | `flow_narrate` | Free narration audio, any length: `gemini` (Google AI Studio text-to-speech, with the same voices Flow has, plus a `style` note) or `mac` (a voice installed on this computer, no key needed) |
 | `flow_voices` | Narrator voices available, and whether a Google key is set up |

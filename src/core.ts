@@ -6,7 +6,22 @@ import { assemble, localVoices, speakLocally, voiceTrack } from "./assemble.js";
 import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemini.js";
 import { extractLastFrame } from "./chain.js";
 import { burnCaptions, captionedName, captionSetup, previewCaptions, transcribe } from "./captions.js";
-import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
+import {
+  characterLook,
+  createCharacter,
+  downloadAsset,
+  trashAsset,
+  editCharacter,
+  getFlowState,
+  listAssets,
+  listCharacters,
+  refOf,
+  rememberCharacter,
+  runAgentBatch,
+  runContinue,
+  runEdit,
+  runGeneration,
+} from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
 import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
@@ -104,10 +119,27 @@ export const shapes = {
   },
   cancel: { job_id: z.string() },
   retry: { job_ids: z.array(z.string()).optional().describe("Jobs to re-queue. Default: every failed job.") },
-  assets: { kind: z.enum(["image", "video", "scene"]).optional() },
+  assets: {
+    kind: z.enum(["image", "video", "scene", "character", "collection"]).optional(),
+    recursive: z
+      .boolean()
+      .default(false)
+      .describe("Also walk every Library collection (folders, and folders inside them). Each item then carries its `path` and a `ref` to pass to flow_download."),
+    collection: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("List one Library collection instead of All media: its path from the top, e.g. 'Places/Place B', or just its name when that is unique."),
+  },
   download: {
     project: z.string().min(1).describe("Local folder name under the output root."),
-    assets: z.array(z.string().min(1)).min(1).max(30).describe("Titles (or title prefixes) from flow_assets, in the order they should be numbered."),
+    assets: z
+      .array(z.string().min(1))
+      .min(1)
+      .max(30)
+      .describe(
+        "Titles (or title prefixes) from flow_assets, in the order they should be numbered. For an item inside a Library collection pass its `ref`, '<collection path>/<title>', e.g. 'Cast/Hero'.",
+      ),
     quality: z.enum(["original", "upscaled"]).default("original"),
   },
   assemble: {
@@ -224,7 +256,12 @@ export const shapes = {
   set_key: { key: z.string().min(1).max(200) },
   discard: { path: z.string().min(1).describe("A saved film, still, narration or whole project folder inside the films folder, to move to this computer's bin (Mac Trash, Windows Recycle Bin).") },
   outputs: {},
-  characters: {},
+  characters: {
+    include_library: z
+      .boolean()
+      .default(false)
+      .describe("Also list characters filed in Library collections (slower: walks every collection). Those carry a `path` and a `ref` for flow_download."),
+  },
   character_edit: {
     name: z.string().min(1).describe("Character to change, as listed by flow_characters."),
     change: z
@@ -294,7 +331,7 @@ export interface Core {
   voices(): Promise<unknown>;
   narrate(a: Args<"narrate">): Promise<unknown>;
   character(a: Args<"character">): Promise<unknown>;
-  characters(): Promise<unknown>;
+  characters(a: Args<"characters">): Promise<unknown>;
   character_edit(a: Args<"character_edit">): Promise<unknown>;
   edit(a: Args<"edit">): Promise<unknown>;
   trash(a: Args<"trash">): Promise<unknown>;
@@ -452,9 +489,12 @@ export class LocalCore implements Core {
     return { jobs: jobs.map(jobView) };
   }
 
-  async assets({ kind }: Args<"assets">) {
+  async assets({ kind, recursive, collection }: Args<"assets">) {
     if (this.queue.busy) throw new Error(BUSY);
-    return (await listAssets()).filter((a) => !kind || a.kind === kind).map(({ name, kind }) => ({ name, kind }));
+    const library = recursive || Boolean(collection);
+    return (await listAssets({ recursive, collection }))
+      .filter((a) => !kind || a.kind === kind)
+      .map((a) => (library ? { name: a.name, kind: a.kind, ...(a.path ? { path: a.path } : {}), ref: refOf(a) } : { name: a.name, kind: a.kind }));
   }
 
   async download({ project, assets, quality }: Args<"download">) {
@@ -639,9 +679,14 @@ export class LocalCore implements Core {
     return { ...out, use_as: `asset:${name}` };
   }
 
-  async characters() {
+  async characters({ include_library }: Args<"characters">) {
     if (this.queue.busy) throw new Error(BUSY);
-    return (await listCharacters()).map((name) => ({ name, use_as: `asset:${name}` }));
+    const own = (await listCharacters()).map((name) => ({ name, use_as: `asset:${name}` }));
+    if (!include_library) return own;
+    // Characters filed in Library collections. Whether Flow's picker offers them to `asset:<name>` is not mapped yet,
+    // so they come with the ref flow_download takes, not a use_as.
+    const filed = (await listAssets({ recursive: true })).filter((a) => a.kind === "character");
+    return [...own, ...filed.map((a) => ({ name: a.name, path: a.path, ref: refOf(a) }))];
   }
 
   // Panel only: deliberately NOT registered as an MCP tool, so a key typed into Flow Studio never reaches Claude.

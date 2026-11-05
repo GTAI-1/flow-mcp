@@ -847,15 +847,18 @@ export async function runGeneration(job: Job): Promise<string[]> {
 
 export interface FlowAsset {
   name: string;
-  kind: "image" | "video" | "scene";
+  kind: "image" | "video" | "scene" | "character" | "collection";
   id?: string;
+  // The Library collection the item sits in ("Places/Place B"); absent for the project's own All media grid.
+  path?: string;
 }
 
 // Walks the virtualised grid from the top and collects every tile it passes. Recycled tiles sometimes have no
 // media id yet, so entries are keyed by title and the id is filled in from whichever pass saw it.
-async function scanGrid(page: Page, stopAt?: (assets: FlowAsset[]) => boolean): Promise<FlowAsset[]> {
+// `allMedia: false` scans whatever grid is on screen (a Library collection's page) instead of switching to All media.
+async function scanGrid(page: Page, stopAt?: (assets: FlowAsset[]) => boolean, { allMedia = true } = {}): Promise<FlowAsset[]> {
   await dismissOverlays(page);
-  await showAllMedia(page);
+  if (allMedia) await showAllMedia(page);
   await pause(page, 600);
   await scrollToTop(page);
   const seen = new Map<string, FlowAsset>();
@@ -865,8 +868,17 @@ async function scanGrid(page: Page, stopAt?: (assets: FlowAsset[]) => boolean): 
         [...document.querySelectorAll("flow-grid-tile-container")].map((t) => ({
           name: t.getAttribute("aria-label") ?? "",
           // A scene (several clips on one timeline) is its own tile type; lumping it in with images made it look
-          // like a still in the Library and download as a ZIP of loose clips.
-          kind: t.querySelector("flow-scene-tile") ? ("scene" as const) : t.querySelector("flow-video-tile") ? ("video" as const) : ("image" as const),
+          // like a still in the Library and download as a ZIP of loose clips. Library collections and the characters
+          // filed in them have their own tile types too (mapped 2026-11-04); both used to be reported as images.
+          kind: t.querySelector("flow-collection-tile")
+            ? ("collection" as const)
+            : t.querySelector("flow-character-tile")
+              ? ("character" as const)
+              : t.querySelector("flow-scene-tile")
+                ? ("scene" as const)
+                : t.querySelector("flow-video-tile")
+                  ? ("video" as const)
+                  : ("image" as const),
           id: (eval(js) as (t: Element) => string | undefined)(t),
         })),
       TILE_ID_JS,
@@ -1010,27 +1022,236 @@ export async function editCharacter(name: string, change?: string, job?: Job): P
   return { name, portrait, note };
 }
 
-export async function listAssets(): Promise<FlowAsset[]> {
+// ---- Library (nested collections) ----
+// Mapped live 2026-11-04. The side nav's Library is a tree, `ul[aria-label="Collections"]` > li > `div.nested-list-row`,
+// with data-item-id (the collection id; the collection opens at /project/<id>/collection/<item id>), data-depth (0 at
+// the top), and on a row with children `.expandable` plus `button.expand-toggle-button[aria-expanded]` ("Expand
+// <name>"). Children only exist in the DOM once their parent is expanded, and the whole tree only while the Library
+// section is open (its header button is "Toggle library"). A collection's page is the same virtualised grid as All
+// media, with `flow-collection-tile` tiles for sub-collections and `flow-character-tile` for characters filed there.
+export interface FlowCollection {
+  id: string;
+  name: string;
+  depth: number;
+  // Names from the top of the Library down, joined with "/": "Places/Place B".
+  path: string;
+}
+
+const LIBRARY_TREE = 'ul[aria-label="Collections"]';
+const normPath = (path: string) =>
+  path
+    .split("/")
+    .map((p) => p.trim().toLowerCase())
+    .filter(Boolean)
+    .join("/");
+const parentPath = (path: string) => path.split("/").slice(0, -1).join("/");
+export const refOf = (a: { name: string; path?: string }) => (a.path ? `${a.path}/${a.name}` : a.name);
+
+function projectRoot(page: Page): string {
+  const root = page.url().match(/^https:\/\/[^/]+\/project\/[0-9a-f-]{36}/)?.[0];
+  if (!root) throw new Error("No Flow project is open.");
+  return root;
+}
+
+// Opens the Library section and every collapsed branch, reads the whole tree, then folds the menu back the way the
+// user had it: branches in reverse order (children before their parents), then the Library section itself.
+async function readLibraryTree(page: Page): Promise<FlowCollection[]> {
+  const tree = page.locator(LIBRARY_TREE);
+  const toggle = page.getByRole("button", { name: "Toggle library", exact: true });
+  let openedLibrary = false;
+  if (!(await tree.count().catch(() => 0))) {
+    // No Library section (a project without collections) or the menu is hidden: nothing to walk.
+    if (!(await toggle.isVisible().catch(() => false))) return [];
+    await toggle.click({ timeout: 5000 });
+    await leaveSideMenu(page);
+    openedLibrary = true;
+    if (!(await tree.waitFor({ state: "attached", timeout: 5000 }).then(() => true, () => false))) {
+      await toggle.click({ timeout: 5000 }).catch(() => {});
+      await leaveSideMenu(page);
+      return [];
+    }
+  }
+  const row = (id: string) => tree.locator(`div.nested-list-row[data-item-id="${id}"] button.expand-toggle-button`);
+  const expanded: string[] = [];
+  try {
+    for (let i = 0; i < 500; i++) {
+      const id = await page.evaluate(
+        (sel) => document.querySelector(sel)?.closest(".nested-list-row")?.getAttribute("data-item-id") ?? null,
+        `${LIBRARY_TREE} button.expand-toggle-button[aria-expanded="false"]`,
+      );
+      // A branch that did not open on the first click would come back here forever; stop rather than spin.
+      if (!id || expanded.includes(id)) break;
+      await row(id).click({ timeout: 5000 });
+      await leaveSideMenu(page);
+      expanded.push(id);
+      await pause(page, 450);
+    }
+    const rows = await page.evaluate(
+      (sel) =>
+        [...document.querySelectorAll(`${sel} div.nested-list-row`)].map((r) => ({
+          id: r.getAttribute("data-item-id") ?? "",
+          depth: Number(r.getAttribute("data-depth") ?? 0),
+          name: (r.querySelector(".item-label")?.textContent ?? "").replace(/\s+/g, " ").trim(),
+        })),
+      LIBRARY_TREE,
+    );
+    // Rows come in document order (a parent before its children), so a stack of names indexed by depth gives each path.
+    const stack: string[] = [];
+    return rows
+      .filter((r) => r.id && r.name)
+      .map((r) => {
+        stack.length = r.depth;
+        stack.push(r.name);
+        return { ...r, path: stack.join("/") };
+      });
+  } finally {
+    for (const id of [...expanded].reverse()) {
+      await row(id).click({ timeout: 3000 }).catch(() => {});
+      await pause(page, 200);
+    }
+    // One click on the toggle right after the last collapse was sometimes swallowed while the tree re-rendered, and the
+    // Library stayed open (2026-11-04). Check that it really closed, and click again if not.
+    for (let i = 0; openedLibrary && i < 3 && (await tree.count().catch(() => 0)); i++) {
+      await pause(page, 400);
+      await toggle.click({ timeout: 3000 }).catch(() => {});
+      await pause(page, 600);
+    }
+    await leaveSideMenu(page);
+  }
+}
+
+function findCollection(all: FlowCollection[], path: string): FlowCollection {
+  const want = normPath(path);
+  const byPath = all.find((c) => normPath(c.path) === want);
+  if (byPath) return byPath;
+  // A bare name is fine as long as only one collection carries it.
+  const byName = all.filter((c) => c.name.toLowerCase() === want);
+  if (byName.length === 1) return byName[0];
+  const known = all.map((c) => c.path);
+  throw new Error(
+    byName.length > 1
+      ? `Several collections are called "${path}": ${byName.map((c) => c.path).join(", ")}. Pass the full path.`
+      : `No Library collection "${path}". ${known.length ? `Collections: ${known.slice(0, 40).join(", ")}${known.length > 40 ? ", ..." : ""}` : "This project's Library is empty."}`,
+  );
+}
+
+// Opens one collection's own page and scans its grid. Items carry the collection's path.
+async function scanCollection(page: Page, root: string, collection: FlowCollection, stopAt?: (assets: FlowAsset[]) => boolean): Promise<FlowAsset[]> {
+  await page.goto(inEnglish(`${root}/collection/${collection.id}`), { waitUntil: "domcontentloaded" });
+  await page.waitForSelector(".page-container", { timeout: 20_000 }).catch(() => {});
+  await pause(page, 2500);
+  return (await scanGrid(page, stopAt, { allMedia: false })).map((a) => ({ ...a, path: collection.path }));
+}
+
+// Every Library collection of the open project, top to bottom.
+export async function listCollections(): Promise<FlowCollection[]> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  await ensureProjectGrid(page);
+  return readLibraryTree(page);
+}
+
+// `recursive` walks All media and then every Library collection; `collection` lists just one collection (by path, or
+// by name when that is unique). Without either, the project's All media grid only - the behaviour before collections.
+export async function listAssets({ recursive = false, collection }: { recursive?: boolean; collection?: string } = {}): Promise<FlowAsset[]> {
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
   // From a scene, clip or character view the grid is not on screen, and the scan found nothing at all (2026-10-12:
   // a scene open in Flow listed as "no scenes"). Go back to the project's All media first.
   await ensureProjectGrid(page);
-  const assets = await scanGrid(page);
-  await scrollToTop(page);
-  return assets;
+  if (!recursive && !collection) {
+    const assets = await scanGrid(page);
+    await scrollToTop(page);
+    return assets;
+  }
+  const root = projectRoot(page);
+  const tree = await readLibraryTree(page);
+  try {
+    if (collection) {
+      const target = findCollection(tree, collection);
+      const items = await scanCollection(page, root, target);
+      // Sub-collection tiles carry no id of their own; take it from the tree, as a recursive walk does.
+      return items.map((a) => {
+        if (a.kind !== "collection") return a;
+        const sub = tree.find((c) => c.name === a.name && parentPath(c.path) === target.path);
+        return { name: a.name, kind: "collection" as const, id: sub?.id, path: target.path };
+      });
+    }
+    // Collections are listed from the tree (which has their ids and full paths), not from their tiles.
+    const out: FlowAsset[] = (await scanGrid(page)).filter((a) => a.kind !== "collection");
+    for (const c of tree) {
+      out.push({ name: c.name, kind: "collection", id: c.id, ...(c.depth ? { path: parentPath(c.path) } : {}) });
+      out.push(...(await scanCollection(page, root, c)).filter((a) => a.kind !== "collection"));
+    }
+    return out;
+  } finally {
+    await ensureProjectGrid(page).catch(() => {});
+  }
 }
 
-// Downloads media that already exists in the project, matched by (the start of) its title.
+// "Places/Place B/Some title" -> the deepest collection the name starts with, and the title left over.
+function splitLibraryRef(tree: FlowCollection[], ref: string): { collection: FlowCollection; title: string } | undefined {
+  const parts = ref.split("/");
+  for (let i = parts.length - 1; i >= 1; i--) {
+    const want = normPath(parts.slice(0, i).join("/"));
+    const collection = tree.find((c) => normPath(c.path) === want);
+    if (collection) return { collection, title: parts.slice(i).join("/").trim() };
+  }
+  return undefined;
+}
+
+// A character tile's menu has no Download (Add to prompt, Favorite, Copy, Rename, Move out of collection, Move to
+// trash - mapped 2026-11-04), so its portrait comes from the character's own editor, the way flow_character_edit saves it.
+async function downloadCharacterTile(page: Page, asset: FlowAsset, targetStem: string): Promise<string[]> {
+  const card = tileOf(page, asset);
+  await card.scrollIntoViewIfNeeded();
+  await card.locator("flow-character-tile").first().click({ timeout: 10_000 });
+  await page.waitForURL(/\/character\/[0-9a-f-]{36}/, { timeout: 20_000 });
+  await pause(page, 2000);
+  try {
+    const portrait = await savePortrait(page, asset.name);
+    const target = `${targetStem}${extname(portrait)}`;
+    renameSync(portrait, target);
+    return [target];
+  } finally {
+    await leaveCharacterEditor(page);
+  }
+}
+
+// Downloads media that already exists in the project, matched by (the start of) its title. A name of the form
+// "<collection path>/<title>" is looked up inside that Library collection instead.
 export async function downloadAsset(name: string, targetStem: string, quality: DownloadQuality): Promise<string[]> {
   const state = await getFlowState();
   if (!state.signedIn || !state.inProject) throw new Error(state.hint);
   const page = await getFlowPage();
   await ensureProjectGrid(page);
+  if (name.includes("/")) {
+    const root = projectRoot(page);
+    const ref = splitLibraryRef(await readLibraryTree(page), name);
+    if (ref) {
+      try {
+        const want = ref.title.toLowerCase();
+        const hit = (a: FlowAsset) => a.name.toLowerCase().startsWith(want);
+        const found = (await scanCollection(page, root, ref.collection, (assets) => assets.some(hit))).find(hit);
+        if (!found) throw new Error(`No item whose title starts with "${ref.title}" in the Library collection "${ref.collection.path}". Use flow_assets with collection: "${ref.collection.path}" to list it.`);
+        if (found.kind === "collection") throw new Error(`"${refOf(found)}" is a collection. Download the items in it by their own paths.`);
+        if (found.kind === "character") return await downloadCharacterTile(page, found, targetStem);
+        if (found.kind === "scene") return await downloadScene(page, found, targetStem);
+        return await downloadTile(page, tileOf(page, found), targetStem, quality);
+      } finally {
+        await ensureProjectGrid(page).catch(() => {});
+      }
+    }
+    // No collection matches the start of the name: it is just a title with a slash in it.
+  }
   const matches = (a: FlowAsset) => a.name.toLowerCase().startsWith(name.toLowerCase());
   const found = (await scanGrid(page, (assets) => assets.some(matches))).find(matches);
-  if (!found) throw new Error(`No asset whose title starts with "${name}". Use flow_assets to list titles.`);
+  if (!found) throw new Error(`No asset whose title starts with "${name}". Use flow_assets to list titles (recursive: true includes the Library).`);
+  if (found.kind === "collection")
+    throw new Error(`"${found.name}" is a Library collection. List it with flow_assets (collection: "${found.name}") and download its items as "${found.name}/<title>".`);
+  if (found.kind === "character") return downloadCharacterTile(page, found, targetStem);
   if (found.kind === "scene") return downloadScene(page, found, targetStem);
   return downloadTile(page, tileOf(page, found), targetStem, quality);
 }
