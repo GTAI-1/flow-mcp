@@ -903,7 +903,11 @@ async function runAgentFirstGeneration(job: Job, page: Page): Promise<string[]> 
       : `Generate exactly ${variants} still image${variants === 1 ? "" : "s"} using the selected image model in ${aspectRatio} aspect ratio. Images only; do not make video. Do not ask questions; generate now. `;
     await typePrompt(page, `${directive}${s.prompt}`);
     const start = page.getByRole("button", { name: "Start generation" });
-    if (!(await start.isEnabled())) throw new Error("Flow's agent did not accept the prompt (Start generation stayed disabled).");
+    for (let attempt = 0; attempt < 12 && !(await start.isEnabled().catch(() => false)); attempt++) await pause(page, 500);
+    if (!(await start.isEnabled().catch(() => false))) {
+      const entered = (await page.locator(".ProseMirror").first().innerText().catch(() => "")).trim();
+      throw new Error(`Flow's agent did not enable Start generation after the prompt was entered${entered ? "" : " (the prompt box stayed empty)"}. Nothing was generated.`);
+    }
     await scrollToTop(page);
     await start.click();
     const fresh = await waitForNewMedia(page, before, variants, type === "image" ? IMAGE_TIMEOUT_MS : VIDEO_TIMEOUT_MS, job, type);
