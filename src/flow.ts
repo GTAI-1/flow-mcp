@@ -1,4 +1,4 @@
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
@@ -35,7 +35,9 @@ export async function getFlowState(detailed = false): Promise<FlowState> {
   else if (detailed) {
     state.plan = await page.getByRole("button", { name: "Account details" }).innerText().then((t) => t.trim().split("\n")[0], () => undefined);
     state.credits_remaining = await readCredits(page).catch(() => undefined);
-    state.composer = await settingsTrigger(page).innerText().then((t) => t.replace(/\s+/g, " ").trim(), () => undefined);
+    state.composer = (await isAgentFirstUi(page))
+      ? "Agent-first composer"
+      : await settingsTrigger(page).innerText().then((t) => t.replace(/\s+/g, " ").trim(), () => undefined);
   }
   return state;
 }
@@ -43,6 +45,7 @@ export async function getFlowState(detailed = false): Promise<FlowState> {
 // Menus close on Escape; the account panel does not and needs its own close button.
 async function dismissOverlays(page: Page): Promise<void> {
   await leaveSideMenu(page);
+  await closeAgentSettings(page);
   await page.keyboard.press("Escape");
   const closePanel = page.getByRole("button", { name: "Close account panel" });
   if (await closePanel.isVisible().catch(() => false)) await closePanel.click({ timeout: 5000 }).catch(() => {});
@@ -60,20 +63,54 @@ async function clearBackdrops(page: Page): Promise<void> {
   }
 }
 
-// The agent's own image model, set to the newest Nano Banana like single images. Best effort: a batch never fails over it.
-async function pickAgentImageModel(page: Page): Promise<void> {
-  const button = page.locator("flow-agent-panel").getByRole("button", { name: "Image generation default model" });
-  if (!(await button.isVisible().catch(() => false))) return;
+// Pick one of the defaults in the agent settings panel. Image jobs default to the newest Nano Banana;
+// video jobs keep Flow's selected default unless the caller names a model.
+async function pickAgentModel(page: Page, kind: "image" | "video", requested?: string, required = false): Promise<void> {
+  const label = kind === "image" ? "Image generation default model" : "Video generation default model";
+  const button = page.locator("flow-agent-panel").getByRole("button", { name: label });
+  if (!(await button.isVisible().catch(() => false))) {
+    if (required) throw new Error(`Flow's ${kind} model selector is not visible in Agent settings.`);
+    return;
+  }
+  const shown = (await button.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+  const latest = kind === "image" && (!requested || LEGACY_IMAGE_MODEL.test(requested));
+  if ((!requested && kind === "video") || (requested && !latest && shown.toLowerCase().includes(requested.toLowerCase()))) return;
   await button.click({ timeout: 5000 }).catch(() => {});
   const items = page.getByRole("menuitem");
   if (!(await items.first().isVisible().catch(() => false))) await items.first().waitFor({ state: "visible", timeout: 4000 }).catch(() => {});
   const names = (await items.allInnerTexts().catch(() => [] as string[])).map((t) => t.replace(/\s+/g, " ").trim());
-  const index = newestNanoBanana(names);
-  const shown = (await button.innerText().catch(() => "")).replace(/\s+/g, " ");
-  if (index >= 0 && !shown.includes(names[index])) await items.nth(index).click({ timeout: 4000 }).catch(() => {});
-  else await page.keyboard.press("Escape");
+  const index = latest ? newestNanoBanana(names) : names.findIndex((n) => n.toLowerCase().includes((requested ?? "").toLowerCase()));
+  if (index < 0) {
+    await page.keyboard.press("Escape");
+    await clearBackdrops(page);
+    throw new Error(`Flow does not offer the requested ${kind} model "${requested}". Available here: ${names.join(", ")}`);
+  }
+  if (shown.toLowerCase().includes(names[index].toLowerCase())) await page.keyboard.press("Escape");
+  else await items.nth(index).click({ timeout: 4000 });
   await pause(page, 400);
   await clearBackdrops(page);
+}
+
+async function openAgentSettings(page: Page): Promise<void> {
+  const heading = page.getByRole("heading", { name: "Agent settings", exact: true });
+  if (await heading.isVisible().catch(() => false)) return;
+  const promptSettings = page.locator("flow-creative-agent-prompt-box").getByRole("button", { name: "Settings", exact: true });
+  const fallback = page.locator("flow-base-prompt-box").getByRole("button", { name: "Settings", exact: true });
+  const button = (await promptSettings.isVisible().catch(() => false)) ? promptSettings : fallback;
+  if (!(await button.isVisible().catch(() => false))) throw new Error("Flow's agent settings button is not visible.");
+  await clearBackdrops(page);
+  await button.click({ timeout: 5000 });
+  await heading.waitFor({ state: "visible", timeout: 8000 });
+}
+
+async function readAgentDefaultModel(page: Page, kind: "image" | "video"): Promise<string> {
+  await openAgentSettings(page);
+  const label = kind === "image" ? "Image generation default model" : "Video generation default model";
+  const button = page.locator("flow-agent-panel").getByRole("button", { name: label });
+  const model = (await button.innerText().catch(() => "")).replace(/\s+/g, " ").replace(/arrow_drop_down/g, "").trim();
+  await closeAgentSettings(page);
+  if (!model) throw new Error(`Could not read Flow's ${kind} default model.`);
+  return model;
 }
 
 // The agent settings panel replaces the composer, hiding the Agent button; Back closes it without saving.
@@ -103,6 +140,13 @@ async function readCredits(page: Page): Promise<number | undefined> {
 }
 
 const settingsTrigger = (page: Page) => page.getByRole("button", { name: "Settings trigger" });
+
+// Google's agent-first Flow layout replaced the generation popover with defaults in the always-on agent panel.
+async function isAgentFirstUi(page: Page): Promise<boolean> {
+  const panel = page.locator("flow-creative-agent-prompt-box");
+  const classicSettings = page.locator("button.settings-trigger-button");
+  return (await panel.isVisible().catch(() => false)) && !(await classicSettings.isVisible().catch(() => false));
+}
 
 // Every finished tile carries its media id in data-media-id; some thumbnails also have it in the URL, but Flow
 // serves signed /asb/ links with no uuid, so the attribute comes first and the URL is only a fallback.
@@ -600,6 +644,17 @@ function extensionOf(file: string): string {
   return ".bin";
 }
 
+// Download folders can be on a different Windows volume from Chrome's temp folder; rename then fails with EXDEV.
+function moveFile(source: string, destination: string): void {
+  try {
+    renameSync(source, destination);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+    copyFileSync(source, destination);
+    unlinkSync(source);
+  }
+}
+
 // Unpacks a multi-take ZIP into <stem>.mp4, <stem>-v2.mp4, ... - the same names a multi-variant generation gets - so
 // every take is usable instead of one unplayable archive. The ZIP is kept beside them, renamed, in case it is wanted.
 function unpackTakes(zip: string, targetStem: string): string[] {
@@ -608,10 +663,10 @@ function unpackTakes(zip: string, targetStem: string): string[] {
   const out: string[] = [];
   for (const [i, path] of takes.entries()) {
     const dest = `${targetStem}${i ? `-v${i + 1}` : ""}${extensionOf(path)}`;
-    renameSync(path, dest);
+    moveFile(path, dest);
     out.push(dest);
   }
-  renameSync(zip, `${targetStem}-takes.zip`);
+  moveFile(zip, `${targetStem}-takes.zip`);
   if (!out.length) throw new Error("Flow sent a ZIP with nothing usable inside it.");
   return out;
 }
@@ -679,7 +734,7 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
       if (kind === ".zip") saved = unpackTakes(file, targetStem);
       else {
         const target = `${targetStem}${kind}`;
-        renameSync(file, target);
+        moveFile(file, target);
         saved = [target];
       }
       await page.keyboard.press("Escape");
@@ -767,6 +822,114 @@ async function ensureProjectGrid(page: Page): Promise<void> {
   await scrollToTop(page);
 }
 
+// Agent-first Flow removed the generation popover, so use its saved model/aspect/output defaults and
+// quote against Google's published per-generation rates before allowing the agent to spend.
+function estimateAgentCredits(model: string, duration: number, resolution: string | undefined, variants: number, type: "image" | "video"): number {
+  if (type === "image") return 0;
+  if (resolution && resolution !== "720p") {
+    throw new Error("Flow's agent-first settings do not expose a resolution selector; only the default 720p output is supported here.");
+  }
+  const name = model.toLowerCase();
+  let perGeneration: number;
+  if (name.includes("omni") && name.includes("1.2")) perGeneration = duration * 3;
+  else if (name.includes("omni") && name.includes("1.1")) {
+    const rate: Record<number, number> = { 4: 7, 6: 10, 8: 12, 10: 15 };
+    perGeneration = rate[duration] ?? NaN;
+  } else if (name.includes("veo 3.1") && name.includes("lite")) perGeneration = duration === 8 ? 10 : NaN;
+  else if (name.includes("veo 3.1") && name.includes("fast")) perGeneration = duration === 8 ? 20 : NaN;
+  else if (name.includes("veo 3.1") && name.includes("quality")) perGeneration = duration === 8 ? 100 : NaN;
+  else throw new Error(`Cannot safely estimate credits for Flow's agent-first video model "${model}".`);
+  if (!Number.isFinite(perGeneration)) throw new Error(`Flow's agent-first UI cannot request a ${duration}s clip with "${model}".`);
+  return perGeneration * variants;
+}
+
+async function saveFreshGeneration(page: Page, job: Job, fresh: string[]): Promise<string[]> {
+  const s = job.params;
+  mkdirSync(s.output_dir, { recursive: true });
+  const files: string[] = [];
+  for (const [i, id] of fresh.entries()) {
+    const label = fresh.length > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem;
+    const newTitle = `${basename(s.output_dir)}-${label}`;
+    const renamed = await renameTile(page, mediaTile(page, id), newTitle).catch(() => false);
+    if (renamed) job.note = [job.note, `renamed in Flow to ${newTitle}`].filter(Boolean).join(" · ");
+    await pause(page, 800);
+    const stem = join(s.output_dir, label);
+    const handle = renamed && id.startsWith("title:") ? `title:${newTitle}` : id;
+    files.push(...(await downloadMedia(page, handle, stem, s.download_quality)));
+    await pause(page, 1500);
+  }
+  return files;
+}
+
+async function runAgentFirstGeneration(job: Job, page: Page): Promise<string[]> {
+  const s = job.params;
+  const type = s.type ?? "video";
+  if (s.first_frame || s.last_frame) {
+    throw new Error("Flow's agent-first composer does not expose first/last-frame inputs yet. Use reference_images for this generation.");
+  }
+  const duration = s.duration ?? 8;
+  const variants = s.variants ?? 1;
+  const model = type === "video" ? (s.model ?? (await readAgentDefaultModel(page, "video"))) : s.model ?? "latest";
+  const aspectRatio = s.aspect_ratio ?? "16:9";
+  const estimate = estimateAgentCredits(model, duration, s.resolution, variants, type);
+  job.credits = estimate;
+  if (estimate > s.max_credits) {
+    throw new Error(`Flow's agent-first UI is estimated at ${estimate} credits for this scene, above max_credits=${s.max_credits}. Nothing was started.`);
+  }
+
+  const balanceBefore = type === "video" ? await readCredits(page).catch(() => undefined) : undefined;
+  const before = await mediaIds(page);
+  try {
+    await setAgentSettings(page, "Never", {
+      aspectRatio,
+      aspectType: type,
+      variants,
+      strictModel: true,
+      imageModel: type === "image" ? model : undefined,
+      videoModel: type === "video" ? model : undefined,
+    });
+    const clear = page.getByRole("button", { name: "Clear prompt" });
+    if (await clear.isVisible().catch(() => false)) await clear.click();
+    for (const [i, ref] of (s.reference_images ?? []).entries()) {
+      const name = await uploadAsset(page, job, ref, `ref${i + 1}`);
+      await attachAsset(page, page.getByRole("button", { name: "Add ingredients to the prompt box" }), name);
+    }
+    const wanted = (s.reference_images ?? []).length;
+    if (wanted && (await page.getByRole("button", { name: "Ingredient" }).count()) < wanted) {
+      throw new Error("Flow did not attach every reference image to the agent prompt.");
+    }
+    const directive = type === "video"
+      ? `Generate exactly ${variants} ${duration}-second 720p video${variants === 1 ? "" : "s"} using the selected ${model} model in ${aspectRatio} aspect ratio. Use the attached references for the product's appearance. Videos only; do not make still images. Do not ask questions; generate now. `
+      : `Generate exactly ${variants} still image${variants === 1 ? "" : "s"} using the selected image model in ${aspectRatio} aspect ratio. Images only; do not make video. Do not ask questions; generate now. `;
+    await typePrompt(page, `${directive}${s.prompt}`);
+    const start = page.getByRole("button", { name: "Start generation" });
+    for (let attempt = 0; attempt < 12 && !(await start.isEnabled().catch(() => false)); attempt++) await pause(page, 500);
+    if (!(await start.isEnabled().catch(() => false))) {
+      const entered = (await page.locator(".ProseMirror").first().innerText().catch(() => "")).trim();
+      throw new Error(`Flow's agent did not enable Start generation after the prompt was entered${entered ? "" : " (the prompt box stayed empty)"}. Nothing was generated.`);
+    }
+    await scrollToTop(page);
+    await start.click();
+    const fresh = await waitForNewMedia(page, before, variants, type === "image" ? IMAGE_TIMEOUT_MS : VIDEO_TIMEOUT_MS, job, type);
+    job.progress = undefined;
+    if (balanceBefore !== undefined) {
+      const balanceAfter = await readCredits(page).catch(() => undefined);
+      if (balanceAfter !== undefined) {
+        const actual = balanceBefore - balanceAfter;
+        if (actual > 0) {
+          job.credits = actual;
+          if (actual !== estimate) job.note = [job.note, `Flow charged ${actual} credits; the agent-first estimate was ${estimate}`].filter(Boolean).join(" · ");
+        }
+      }
+    }
+    return await saveFreshGeneration(page, job, fresh);
+  } finally {
+    await ensureProjectGrid(page).catch(() => {});
+    await closeAgentSession(page).catch(() => {});
+    await setAgentSettings(page, "Always").catch(() => {});
+  }
+}
+
 // Drives one generation in the Flow tab and returns the downloaded file paths.
 export async function runGeneration(job: Job): Promise<string[]> {
   const state = await getFlowState();
@@ -775,8 +938,9 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const s = job.params;
 
   await ensureProjectGrid(page);
+  if (await isAgentFirstUi(page)) return runAgentFirstGeneration(job, page);
   const agent = page.getByRole("button", { name: "Agent", exact: true });
-  if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
+  if ((await agent.count().catch(() => 0)) && (await agent.getAttribute("aria-pressed")) === "true") await agent.click();
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
 
@@ -822,27 +986,7 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const variants = s.variants ?? 1;
   const fresh = await waitForNewMedia(page, before, variants, s.type === "image" ? IMAGE_TIMEOUT_MS : VIDEO_TIMEOUT_MS, job, s.type === "image" ? "image" : "video");
   job.progress = undefined;
-
-  mkdirSync(s.output_dir, { recursive: true });
-  const files: string[] = [];
-  for (const [i, id] of fresh.entries()) {
-    const label = fresh.length > 1 ? `${s.file_stem}-v${i + 1}` : s.file_stem;
-    // Flow names clips itself and reuses those names, so two takes of one scene come back identically titled and
-    // neither can be found by name afterwards. Renaming each finished tile to the scene's own file stem makes every
-    // later lookup - download, continue, assemble - unambiguous. Best effort: a failed rename must not lose the clip.
-    const newTitle = `${basename(s.output_dir)}-${label}`;
-    const renamed = await renameTile(page, mediaTile(page, id), newTitle).catch(() => false);
-    if (renamed) job.note = [job.note, `renamed in Flow to ${newTitle}`].filter(Boolean).join(" · ");
-    await pause(page, 800);
-    const stem = join(s.output_dir, label);
-    // A video at rest has no media id, so it is tracked by its title - which the rename just changed. Looking for the
-    // old title failed every such download after 30 s ("locator.waitFor: Timeout 30000ms exceeded ... aria-label=
-    // <the prompt>", reported by a user, 2026-10-15) while the clip sat finished and renamed in Flow.
-    const handle = renamed && id.startsWith("title:") ? `title:${newTitle}` : id;
-    files.push(...(await downloadMedia(page, handle, stem, s.download_quality)));
-    await pause(page, 1500);
-  }
-  return files;
+  return saveFreshGeneration(page, job, fresh);
 }
 
 export interface FlowAsset {
@@ -942,7 +1086,7 @@ async function savePortrait(page: Page, name: string): Promise<string> {
   if (!pressed) throw new Error("Flow never showed the portrait's Download image button");
   const file = await waitForDownloadedFile(page, before, 90_000);
   const portrait = join(dir, `${name.replace(/[^\w.-]+/g, "_")}${extensionOf(file)}`);
-  renameSync(file, portrait);
+  moveFile(file, portrait);
   return portrait;
 }
 
@@ -1109,7 +1253,7 @@ async function downloadScene(page: Page, scene: FlowAsset, targetStem: string): 
   await page.getByRole("button", { name: "Download scene", exact: true }).click();
   const file = await waitForDownloadedFile(page, before, 600_000);
   const target = `${targetStem}${extensionOf(file)}`;
-  renameSync(file, target);
+  moveFile(file, target);
   await page.getByRole("button", { name: "Back button to go to previous page" }).click().catch(() => {});
   await pause(page, 2000);
   await ensureProjectGrid(page).catch(() => {});
@@ -1310,6 +1454,8 @@ export async function runEdit(job: Job): Promise<string[]> {
 // confirms the toggle actually landed rather than assuming the click worked.
 async function setAgentMode(page: Page, on: boolean): Promise<void> {
   const agent = page.getByRole("button", { name: "Agent", exact: true });
+  // In Flow's agent-first UI there is no toggle: the agent panel is the only composer.
+  if (!(await agent.count().catch(() => 0))) return;
   // Playwright says why a click did not land ("<div ...> intercepts pointer events", "element is not visible"); keep
   // that, so a failure names what was in the way instead of guessing.
   let why = "";
@@ -1328,20 +1474,34 @@ async function setAgentMode(page: Page, on: boolean): Promise<void> {
   }
 }
 
-// "Never" lets the agent generate without asking; it is switched back to "Always" as soon as the batch ends.
-async function setAgentSettings(page: Page, confirm: "Always" | "Never", imageAspect?: string): Promise<void> {
-  // Scoped to the prompt box: Flow added a second "Settings" button to the top bar ("View settings", seen 2026-10-13),
-  // and an unscoped lookup matched both and failed every agent batch.
-  await clearBackdrops(page);
-  await page.locator("flow-base-prompt-box").getByRole("button", { name: "Settings", exact: true }).click();
+type AgentSettings = {
+  aspectRatio?: string;
+  aspectType?: "image" | "video";
+  variants?: number;
+  imageModel?: string;
+  videoModel?: string;
+  strictModel?: boolean;
+};
+
+// "Never" lets the agent generate without asking; callers restore "Always" when the job ends.
+async function setAgentSettings(page: Page, confirm: "Always" | "Never", options: AgentSettings = {}): Promise<void> {
+  await openAgentSettings(page);
   try {
-    await page.getByRole("heading", { name: "Agent settings" }).waitFor({ state: "visible", timeout: 8000 });
     await page.getByRole("radio", { name: new RegExp(`^${confirm}`) }).click();
-    if (imageAspect) {
-      await page.getByRole("radio", { name: imageAspect, exact: true }).first().click();
-      await page.getByRole("radio", { name: "x1", exact: true }).first().click();
-      await pickAgentImageModel(page);
+    if (options.aspectRatio) {
+      const matching = page.getByRole("radio", { name: options.aspectRatio, exact: true });
+      const target = options.aspectType === "video" ? matching.last() : matching.first();
+      if (!(await target.isVisible().catch(() => false))) throw new Error(`Flow has no ${options.aspectRatio} ${options.aspectType ?? "image"} aspect option in Agent settings.`);
+      if (!(await target.isChecked())) await target.click();
     }
+    if (options.variants) {
+      const matching = page.getByRole("radio", { name: `x${options.variants}`, exact: true });
+      const target = options.aspectType === "video" ? matching.last() : matching.first();
+      if (!(await target.isVisible().catch(() => false))) throw new Error(`Flow has no x${options.variants} output option in Agent settings.`);
+      if (!(await target.isChecked())) await target.click();
+    }
+    if (options.imageModel) await pickAgentModel(page, "image", options.imageModel, options.strictModel);
+    if (options.videoModel) await pickAgentModel(page, "video", options.videoModel, options.strictModel);
     await pause(page, 300);
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await pause(page, 1200);
@@ -1603,7 +1763,7 @@ export async function runContinue(job: Job): Promise<string[]> {
     }
 
     // 4. Agent mode asks for confirmation unless told not to, which would stall an unattended run.
-    await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9");
+    await setAgentSettings(page, "Never", { aspectRatio: s.aspect_ratio ?? "16:9", aspectType: "video" });
     // Agent mode treats both chips as ingredients and decides what to do with them. Attaching the saved frame is not
     // enough - without being told, the agent reads it as a style reference and stages a fresh shot. It has to be told
     // in words that the frame IS the opening frame. (Cost 15 credits to learn on 2026-09-20.)
@@ -1696,7 +1856,7 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
     step(job, "switching Agent mode on");
     await setAgentMode(page, true);
     step(job, "setting the agent to generate without asking");
-    await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9");
+    await setAgentSettings(page, "Never", { aspectRatio: s.aspect_ratio ?? "16:9", aspectType: "image", variants: 1, imageModel: "latest" });
     for (let round = 0; round < 3; round++) {
       const todo = scenes.map((_, i) => i).filter((i) => !done.has(i));
       if (!todo.length) break;

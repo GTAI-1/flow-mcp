@@ -22,20 +22,20 @@ const sceneSchema = z.object({
   model: z
     .string()
     .optional()
-    .describe("Model label as shown in Flow, e.g. 'Omni 1.1 Flash', 'Veo 3.1 - Fast', 'Veo 3.1 - Quality', 'Nano Banana Pro'. Images default to the newest Nano Banana (2.1 today); video omitted keeps Flow's current model."),
+    .describe("Model label as shown in Flow, e.g. 'Omni 1.2 Flash', 'Omni 1.1 Flash', 'Veo 3.1 - Fast', 'Veo 3.1 - Quality', 'Nano Banana Pro'. Images default to the newest Nano Banana (2.1 today); video omitted keeps Flow's current model."),
   aspect_ratio: z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]).optional().describe("Video supports 16:9 and 9:16 only."),
   duration: z.union([z.literal(4), z.literal(6), z.literal(8), z.literal(10)]).optional().describe("Video length in seconds. Omni models only; Veo 3.1 clips are fixed at 8s."),
-  resolution: z.enum(["360p", "720p"]).optional().describe("Video resolution. Omni models only."),
-  max_credits: z.number().int().min(0).default(25).describe("Safety cap: the scene is skipped (nothing spent) if Flow quotes more credits than this."),
+  resolution: z.enum(["360p", "720p"]).optional().describe("Video resolution. Omni models only. In Flow's agent-first UI, only its default 720p output is currently available."),
+  max_credits: z.number().int().min(0).default(25).describe("Safety cap: the scene is skipped if Flow's live quote (classic UI) or published-rate estimate (agent-first UI) exceeds this."),
   variants: z.number().int().min(1).max(4).optional().describe("Outputs per prompt (each one spends credits). Default 1."),
-  first_frame: z.string().optional().describe("First frame: absolute image path, or 'asset:<title>' for an image already in the Flow project."),
-  last_frame: z.string().optional().describe("Last frame: absolute image path, or 'asset:<title>'."),
+  first_frame: z.string().optional().describe("First frame: absolute image path, or 'asset:<title>' for an image already in the Flow project. Exact frame inputs are currently supported only in Flow's classic composer; use reference_images in the agent-first UI."),
+  last_frame: z.string().optional().describe("Last frame: absolute image path, or 'asset:<title>'. Exact frame inputs are currently supported only in Flow's classic composer; use reference_images in the agent-first UI."),
   reference_images: z
     .array(z.string())
     .max(3)
     .optional()
     .describe(
-      "Reference media: absolute image paths, or 'asset:<title>' for media or characters already in the Flow project. Flow's COMPOSER takes references OR first/last frames on a video scene, never both, so with frames set these are skipped and the job says so. Flow itself can do both via agent mode (save the last frame, Animate it, then add the character).",
+      "Reference media: absolute image paths, or 'asset:<title>' for media or characters already in the Flow project. The agent-first UI supports references; exact first/last-frame inputs remain available in the classic composer only.",
     ),
   download_quality: z.enum(["original", "upscaled"]).optional().describe("'upscaled' fetches 1080p video / 2K image (free, slower). Default original."),
   retries: z.number().int().min(0).max(3).default(1).describe("Automatic retries when Flow itself reports the generation failed."),
@@ -47,7 +47,7 @@ const sceneSchema = z.object({
   chain_previous: z
     .boolean()
     .optional()
-    .describe("Continue the previous scene in this call: its last frame becomes this scene's first frame. Not valid on the first scene or together with first_frame."),
+    .describe("Continue the previous scene in this call: its last frame becomes this scene's first frame. Not valid on the first scene or together with first_frame. Exact frame chaining is currently supported only in Flow's classic composer."),
 });
 
 // Raw shapes double as MCP input schemas and, wrapped in z.object, as HTTP body validators.
