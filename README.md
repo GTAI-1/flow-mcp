@@ -188,7 +188,7 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | Tool | Purpose |
 |---|---|
 | `flow_status` | Session state (signed in, project open, plan, credits left), queue, pacing, prompt playbook |
-| `flow_generate` | Queue scenes: prompt, image or video, model, aspect, duration, resolution, variants, first/last frame, reference images, `max_credits` cap |
+| `flow_generate` | Queue scenes with model, aspect, duration, variants and references. The classic composer checks Flow's live quote; the agent-first UI checks its published credit-rate estimate against `max_credits` before generating. Exact first/last-frame inputs remain supported in the classic composer. |
 | `flow_wait` | Wait for jobs, or for the task id of a slow call; returns file paths and results. Answers within about 40 s, so call again until `finished` is true |
 | `flow_cancel` | Cancel a job that has not started |
 | `flow_retry` | Re-queue failed jobs with the same settings and file names (a failed tile is first retried inside Flow with its own free Retry button: `retries`, default 1) |
