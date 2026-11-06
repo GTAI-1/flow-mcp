@@ -1,4 +1,4 @@
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
@@ -644,6 +644,17 @@ function extensionOf(file: string): string {
   return ".bin";
 }
 
+// Download folders can be on a different Windows volume from Chrome's temp folder; rename then fails with EXDEV.
+function moveFile(source: string, destination: string): void {
+  try {
+    renameSync(source, destination);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+    copyFileSync(source, destination);
+    unlinkSync(source);
+  }
+}
+
 // Unpacks a multi-take ZIP into <stem>.mp4, <stem>-v2.mp4, ... - the same names a multi-variant generation gets - so
 // every take is usable instead of one unplayable archive. The ZIP is kept beside them, renamed, in case it is wanted.
 function unpackTakes(zip: string, targetStem: string): string[] {
@@ -652,10 +663,10 @@ function unpackTakes(zip: string, targetStem: string): string[] {
   const out: string[] = [];
   for (const [i, path] of takes.entries()) {
     const dest = `${targetStem}${i ? `-v${i + 1}` : ""}${extensionOf(path)}`;
-    renameSync(path, dest);
+    moveFile(path, dest);
     out.push(dest);
   }
-  renameSync(zip, `${targetStem}-takes.zip`);
+  moveFile(zip, `${targetStem}-takes.zip`);
   if (!out.length) throw new Error("Flow sent a ZIP with nothing usable inside it.");
   return out;
 }
@@ -723,7 +734,7 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
       if (kind === ".zip") saved = unpackTakes(file, targetStem);
       else {
         const target = `${targetStem}${kind}`;
-        renameSync(file, target);
+        moveFile(file, target);
         saved = [target];
       }
       await page.keyboard.press("Escape");
@@ -1071,7 +1082,7 @@ async function savePortrait(page: Page, name: string): Promise<string> {
   if (!pressed) throw new Error("Flow never showed the portrait's Download image button");
   const file = await waitForDownloadedFile(page, before, 90_000);
   const portrait = join(dir, `${name.replace(/[^\w.-]+/g, "_")}${extensionOf(file)}`);
-  renameSync(file, portrait);
+  moveFile(file, portrait);
   return portrait;
 }
 
@@ -1238,7 +1249,7 @@ async function downloadScene(page: Page, scene: FlowAsset, targetStem: string): 
   await page.getByRole("button", { name: "Download scene", exact: true }).click();
   const file = await waitForDownloadedFile(page, before, 600_000);
   const target = `${targetStem}${extensionOf(file)}`;
-  renameSync(file, target);
+  moveFile(file, target);
   await page.getByRole("button", { name: "Back button to go to previous page" }).click().catch(() => {});
   await pause(page, 2000);
   await ensureProjectGrid(page).catch(() => {});
