@@ -18,7 +18,9 @@
     "flow-mcp": "dist/index.js"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "kokoro-js": "^1.2.1",
     "playwright-core": "^1.63.0",
     "zod": "^4.6.5"
   },

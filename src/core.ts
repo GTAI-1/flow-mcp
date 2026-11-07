@@ -2,13 +2,15 @@ import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
-import { assemble, localVoices, speakLocally, voiceTrack } from "./assemble.js";
+import { assemble, voiceTrack } from "./assemble.js";
 import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemini.js";
-import { extractLastFrame } from "./chain.js";
+import { KOKORO_DEFAULT_VOICE, KOKORO_MB, KOKORO_VOICES, kokoroReady, speakWithKokoro } from "./kokoro.js";
+import { extractFirstFrame, extractFrameAt, extractLastFrame } from "./chain.js";
 import { burnCaptions, captionedName, captionSetup, previewCaptions, transcribe } from "./captions.js";
-import { characterLook, createCharacter, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
+import { presenter } from "./presenter.js";
+import { characterLook, createCharacter, createProject, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, forgetCharacter, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
-import { BIN, COMPUTER, IS_MAC, IS_WIN, moveToBin } from "./platform.js";
+import { BIN, COMPUTER, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
 export const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-mcp-out");
@@ -28,8 +30,19 @@ const sceneSchema = z.object({
   resolution: z.enum(["360p", "720p"]).optional().describe("Video resolution. Omni models only."),
   max_credits: z.number().int().min(0).default(25).describe("Safety cap: the scene is skipped (nothing spent) if Flow quotes more credits than this."),
   variants: z.number().int().min(1).max(4).optional().describe("Outputs per prompt (each one spends credits). Default 1."),
-  first_frame: z.string().optional().describe("First frame: absolute image path, or 'asset:<title>' for an image already in the Flow project."),
-  last_frame: z.string().optional().describe("Last frame: absolute image path, or 'asset:<title>'."),
+  first_frame: z
+    .string()
+    .optional()
+    .describe("First frame: absolute image path, 'asset:<title>' for an image already in the Flow project, or the absolute path of a finished clip (.mp4) to start exactly on its last frame - chain_previous across separate calls."),
+  first_frame_at: z
+    .number()
+    .min(0)
+    .optional()
+    .describe("When first_frame is a clip: start from the frame at this second instead of its last frame, e.g. right where the speech ends, so dead time at the end of a take is skipped. Cut that clip at the same second in flow_assemble's `trims` and the join stays invisible."),
+  last_frame: z
+    .string()
+    .optional()
+    .describe("Last frame: absolute image path, 'asset:<title>', or the absolute path of a finished clip (.mp4) to end exactly where that clip begins. With first_frame set to the clip before, this redoes a middle clip and keeps both cuts invisible."),
   reference_images: z
     .array(z.string())
     .max(3)
@@ -40,6 +53,15 @@ const sceneSchema = z.object({
   download_quality: z.enum(["original", "upscaled"]).optional().describe("'upscaled' fetches 1080p video / 2K image (free, slower). Default original."),
   retries: z.number().int().min(0).max(3).default(1).describe("Automatic retries when Flow itself reports the generation failed."),
   technique: z.string().optional().describe("Id from flow_techniques (e.g. 'orbit-360'); its exact phrase is appended to the prompt. One per scene."),
+  on_screen_text: z
+    .boolean()
+    .optional()
+    .describe("Video only: true when words SHOULD appear in the picture (a sign, a title card). By default every video prompt forbids subtitles and on-screen text, because Omni otherwise burns in its own garbled captions."),
+  outfit: z
+    .string()
+    .max(300)
+    .optional()
+    .describe("What a referenced character wears in this scene when it differs from their saved look, e.g. 'a plain cream crewneck sweatshirt'. The character lock then keeps face, hair and build but takes the clothes from here."),
   reference_previous: z
     .boolean()
     .optional()
@@ -84,6 +106,11 @@ const captionFields = {
     .optional()
     .describe("Lowercase only: names to keep capitalised even where they start a sentence (e.g. [\"Juno\"]). Names in the middle of a sentence are found by themselves."),
   text: z.string().max(50_000).optional().describe("Corrected words, to fix anything misheard. Timings are kept for every word that still matches; a line break starts a new caption."),
+  words: z
+    .array(z.object({ text: z.string().min(1), start: z.number().min(0), end: z.number().min(0) }))
+    .max(5000)
+    .optional()
+    .describe("Word timings to use instead of hearing the whole video, e.g. from flow_transcribe on each clip of a joined film, shifted by where each clip starts in it. Use it when the film's own sound (music, a train, crowd) throws the timing off. text still corrects the words on top."),
   language: z
     .string()
     .default("auto")
@@ -115,6 +142,9 @@ export const shapes = {
     clips: z.array(z.string()).optional().describe("Absolute clip paths in play order. Default: every scene-NN.mp4 in the project folder (first variant of each)."),
     music: z.string().optional().describe("Absolute path to a music file; looped and trimmed to the film length."),
     music_volume: z.number().min(0).max(1).default(0.25),
+    end_hold: z.object({ seconds: z.number().min(0).max(10), fade: z.number().min(0).max(10).optional() }).optional().describe("Hold the last frame this many seconds at the end, fading to black over its last `fade` seconds."),
+    music_curve: z.array(z.object({ at: z.number().min(0), volume: z.number().min(0).max(2) })).optional().describe("Music level over the film on top of music_volume: {at: seconds, volume}, straight lines between points. Fade in, drop for a quiet moment, rise for the ending."),
+    duck_music: z.boolean().optional().describe("Pull the music down automatically while the voiceover speaks, and let it back up in the gaps."),
     clip_volume: z
       .number()
       .min(0)
@@ -139,6 +169,71 @@ export const shapes = {
       ),
     output_name: z.string().default("final"),
     hold_last_frame: z.boolean().default(true).describe("Freeze the final frame so a longer voiceover is not cut off."),
+    trims: z
+      .array(
+        z
+          .object({
+            from: z.number().min(0).optional(),
+            to: z.number().min(0).optional(),
+            volume: z.number().min(0).max(2).optional().describe("This clip's own sound level, 1 = as made. Lower a take whose background noise is louder than the clip before it, so the room does not jump at the cut."),
+            fade_in: z.number().min(0).max(2).optional().describe("Seconds to fade this clip's sound in (trimmed edges always get 0.015 s so a cut never clicks)."),
+            fade_out: z.number().min(0).max(2).optional().describe("Seconds to fade this clip's sound out."),
+            soften_in: z.number().min(0).max(3).optional().describe("For a clip that continues the one before from its last frame: if it starts noticeably sharper than that clip ends (a visible 'skip' at the join), it opens equally soft and sharpens over this many seconds (1 is good). Measured automatically; does nothing when the two already match."),
+            saturation: z.number().min(0.5).max(2).optional().describe("Scales this clip's colour (1 = as is). For a clip animated from the last frame of the one before, which can come back paler, so the join shows: measure both sides and match."),
+            crop: z
+              .object({
+                x: z.number().min(0).max(1).optional().describe("Left edge, as a fraction of the width. Default: centred."),
+                y: z.number().min(0).max(1).optional().describe("Top edge, as a fraction of the height. Default: centred."),
+                w: z.number().min(0.1).max(1).describe("Width kept, as a fraction (0.8 = a 1.25x punch-in)."),
+                h: z.number().min(0.1).max(1).optional().describe("Height kept; defaults to w, which keeps the frame's shape."),
+              })
+              .optional()
+              .describe("Punch in on part of this clip, e.g. {x: 0, y: 0, w: 0.78} drops the bottom and right edges to hide something the model put in a corner."),
+          })
+          .nullable(),
+      )
+      .optional()
+      .describe("One entry per clip, in play order: the seconds of that clip to keep, e.g. [{from: 0.6}, null, {to: 8.4}] cuts a dead start off clip 1 and an awkward pause off the end of clip 3 (null keeps a clip whole). The same clip may be listed twice with two windows to cut a repeated or fluffed line out of its middle. Use flow_transcribe's word times to find the cut points, and never cut inside a stray sound at the start of a take."),
+    end_card: z
+      .object({
+        text: z.string().min(1).max(120).describe("The words, e.g. 'Link in bio' or 'Desk lamp · link below'. A line break starts a new line."),
+        seconds: z.number().min(1).max(10).optional().describe("How long it shows. Default 2.5."),
+      })
+      .optional()
+      .describe("A closing card: big centred words over the film's own last frame, blurred and darkened. Free, made on this computer."),
+    inserts: z
+      .array(
+        z.object({
+          clip: z.string().min(1).describe("Absolute path of the cutaway clip, e.g. a product close-up."),
+          over: z.number().int().min(1).describe("Which clip it covers, counting from 1 in play order."),
+          at: z.number().min(0).describe("Where it starts, in seconds into that clip's kept part (after its trim)."),
+          seconds: z.number().min(0.2).optional().describe("How long it shows. Default: as long as the cutaway lasts, or to the end of the covered clip."),
+          from: z.number().min(0).optional().describe("Start inside the cutaway clip. Default 0."),
+          volume: z.number().min(0).max(1).optional().describe("The cutaway's own sound under the covered clip's sound. Default 0.3."),
+          crop: z
+            .object({ x: z.number().min(0).max(1).optional(), y: z.number().min(0).max(1).optional(), w: z.number().min(0.1).max(1), h: z.number().min(0.1).max(1).optional() })
+            .optional()
+            .describe("Crop the cutaway like a clip's `trims` crop (fractions), e.g. to take a vertical picture out of a 16:9 export."),
+        }),
+      )
+      .optional()
+      .describe("B-roll cutaways: show another clip's picture over part of a clip while that clip's own sound keeps playing - the person keeps talking over the product shot and the picture cuts back to them mid-take, in sync and at the same loudness. Better than voice_lines when the line comes from one of the film's own clips."),
+    size: z
+      .string()
+      .regex(/^\d{2,4}x\d{2,4}$/)
+      .optional()
+      .describe("Film size as WIDTHxHEIGHT, e.g. '1080x1920' for a phone-ready vertical master. Default: the biggest clip, after any crop."),
+    loudness: z
+      .number()
+      .min(-30)
+      .max(-9)
+      .optional()
+      .describe("Level the finished film's sound to this loudness in LUFS. Flow's takes come out near -24, which is quiet on a phone; social video sits around -14."),
+    remove_watermark: z
+      .boolean()
+      .optional()
+      .describe("Paint out the sparkle mark Google's video models put in the bottom-right corner, found automatically and filled from the pixels around it (no crop). The invisible SynthID mark stays, and platforms still expect an AI-content label."),
+    watermark_margin: z.number().min(0).max(40).optional().describe("With remove_watermark: grow the mask by this many pixels and make it a diamond. Use about 10 after a long Extend chain, where the mark has been redrawn thicker. Look at the corner afterwards."),
   },
   transcribe: {
     video: z.string().min(1).describe("Absolute path of a video or audio file on this computer."),
@@ -146,6 +241,44 @@ export const shapes = {
     words: z.boolean().default(true).describe("Include every word with its start and end time in seconds."),
   },
   caption_preview: captionFields,
+  presenter: {
+    project: z.string().min(1).describe("Films folder to save into."),
+    presenter: z.string().min(1).describe("Absolute path of the talking recording (an avatar video, say). Its sound plays throughout."),
+    segments: z
+      .array(
+        z.object({
+          from: z.number().min(0).describe("Start in the recording, in seconds."),
+          to: z.number().min(0).describe("End in the recording, in seconds."),
+          layout: z.enum(["full", "corner"]).describe("full: the presenter fills the frame. corner: a circle in the corner over `background`."),
+          zoom: z
+            .object({ from: z.number().min(1).max(3).optional(), to: z.number().min(1).max(3).optional(), x: z.number().min(0).max(1).optional(), y: z.number().min(0).max(1).optional() })
+            .optional()
+            .describe("Full layout only. A slow move from `from` to `to`, where 1 is the whole frame; x and y are the point to zoom toward, as fractions of the frame (default 0.5, 0.45)."),
+          background: z
+            .object({
+              clip: z.string().min(1),
+              from: z.number().min(0).optional(),
+              retime: z.array(z.object({ from: z.number().min(0), to: z.number().min(0), speed: z.number().min(0.1).max(8) })).optional().describe("Parts of the clip to play faster or slower, so its action lands on the presenter's words. Times are in the original clip; `from` above is measured after this."),
+            })
+            .optional()
+            .describe("Corner layout only: the clip behind the presenter, and where in it to start."),
+          shrink: z.number().min(0.1).max(3).optional().describe("Corner layout only: animate from full frame into the circle over this many seconds at the start of the stretch."),
+        }),
+      )
+      .min(1)
+      .describe("The film in order. Each stretch is cut in as listed."),
+    corner: z
+      .object({
+        position: z.enum(["bottom-right", "bottom-left", "top-right", "top-left"]).optional(),
+        size: z.number().min(0.15).max(0.7).optional().describe("Circle diameter as a fraction of the frame's height. Default 0.36: readable on a phone."),
+        face: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1), w: z.number().min(0.1).max(1) }).optional().describe("The square of the recording to show in the circle: centre x, centre y, width, as fractions of the recording."),
+        margin: z.number().min(0).max(0.2).optional(),
+        ring_color: z.string().optional(),
+      })
+      .optional(),
+    size: z.string().regex(/^\d{2,4}x\d{2,4}$/).optional().describe("Film size. Default 1920x1080."),
+    output_name: z.string().optional(),
+  },
   captions: {
     ...captionFields,
     project: z.string().optional().describe("Films folder to save into. Default: the video's own folder when it is already in the films folder, otherwise 'Captions'."),
@@ -177,14 +310,19 @@ export const shapes = {
   narrate: {
     project: z.string().min(1).describe("Folder for the narration audio."),
     engine: z
-      .enum(["gemini", "mac"])
-      .default("gemini")
+      .enum(["kokoro", "gemini"])
+      .default("kokoro")
       .describe(
-        "'gemini' uses Google AI Studio's text-to-speech - the same voices Flow has, free on the AI Studio tier, no length limit, needs a key in ~/.flow-mcp/gemini-key. 'mac' uses a voice installed on this computer (macOS voices on a Mac, the built-in speech voices on Windows): free, instant, no key.",
+        "'kokoro' (the default) is Kokoro, a free voice that runs on this computer: no key, no quota, any length; the first take downloads its model once (326 MB). 'gemini' uses Google AI Studio's text-to-speech - the same voices Flow has, free on the AI Studio tier but with a daily limit, needs a key in ~/.flow-mcp/gemini-key; when that limit is used up the take is recorded with Kokoro instead and the result says so.",
       ),
-    text: z.string().min(1).max(400).describe("The line to speak. About 20 words fits 8 s, 30 words fits 12 s; anything longer needs a longer take."),
-    voice: z.string().min(1).default("Charon").describe("Voice name from flow_voices, e.g. Charon (informative), Aoede (breezy), Gacrux (mature) for Google; Zoe or Samantha for macOS."),
-    style: z.string().max(200).optional().describe("Delivery note for the 'gemini' engine, e.g. 'slowly and warmly, like a documentary narrator'."),
+    text: z.string().min(1).max(3000).describe("The line to speak. About 2.5 words per second: 25 words fit 10 s, 75 words fit 30 s. Record a whole narration in one take."),
+    voice: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Voice name from flow_voices for the chosen engine. Defaults: am_michael for Kokoro (try af_heart, af_bella, bf_emma), Charon for Google (Aoede, Gacrux...)."),
+    speed: z.number().min(0.5).max(2).optional().describe("Kokoro only: speaking speed, 1 = normal. 0.9 is a calmer narrator pace."),
+    style: z.string().max(200).optional().describe("Delivery note for the 'gemini' engine, e.g. 'slowly and warmly'. Keep it to a few words: long notes make the model ramble."),
   },
   edit: {
     project: z.string().min(1).describe("Local folder for the edited clip."),
@@ -244,6 +382,9 @@ export const shapes = {
         "The character's whole description AFTER the change, e.g. the old one with 'navy coat' swapped for 'red coat'. Scenes quote it word for word to hold the design, so a stale colour in it fights the new portrait. Without it, the change is added to the end of the old description.",
       ),
   },
+  new_project: {
+    title: z.string().max(80).optional().describe("Name for the new project, e.g. 'Desk lamp UGC ad'. Default: Flow's own date-and-time name."),
+  },
   character: {
     name: z.string().min(1).max(60).describe("Character name; scenes then reference it as 'asset:<name>' in reference_images."),
     describe: z
@@ -257,6 +398,11 @@ export const shapes = {
       .optional()
       .describe("Existing picture instead of `describe`: absolute path, or 'asset:<title>' of an image already in the Flow project."),
     aspect_ratio: z.enum(["3:4", "1:1", "9:16", "16:9", "4:3"]).optional().describe("Frame for the drawn portrait when using `describe`. Default 3:4."),
+    look: z
+      .string()
+      .max(1200)
+      .optional()
+      .describe("With `image`: the person in the picture in words (face, hair, clothes). Every scene's character lock quotes it word for word, so describe only what the picture shows. Without it, an older description saved under the same name is dropped."),
     personality: z.string().max(500).optional().describe("How the character acts; Flow uses it when crafting scenes."),
     voice: z.string().optional().describe("Flow voice name, e.g. 'Charon' (male, informative) or 'Aoede' (female, breezy)."),
   },
@@ -293,6 +439,7 @@ export interface Core {
   techniques(a: Args<"techniques">): Promise<unknown>;
   voices(): Promise<unknown>;
   narrate(a: Args<"narrate">): Promise<unknown>;
+  new_project(a: Args<"new_project">): Promise<unknown>;
   character(a: Args<"character">): Promise<unknown>;
   characters(): Promise<unknown>;
   character_edit(a: Args<"character_edit">): Promise<unknown>;
@@ -306,6 +453,7 @@ export interface Core {
   transcribe(a: Args<"transcribe">): Promise<unknown>;
   caption_preview(a: Args<"caption_preview">): Promise<unknown>;
   captions(a: Args<"captions">): Promise<unknown>;
+  presenter(a: Args<"presenter">): Promise<unknown>;
   caption_setup(): Promise<unknown>;
 }
 
@@ -338,6 +486,15 @@ export class LocalCore implements Core {
       if (!still) throw new Error(`reference_previous: the previous scene (${reference_from}) produced no image.`);
       job.params.reference_images = [still, ...(job.params.reference_images ?? [])].slice(0, 3);
     }
+    // A clip given as the first frame means "carry on from where it ends", so a clip made in an earlier call can be
+    // continued after the user has looked at it.
+    const ff = job.params.first_frame;
+    if (ff && !ff.startsWith("asset:") && /\.(mp4|webm|mov)$/i.test(ff))
+      job.params.first_frame = job.params.first_frame_at !== undefined ? await extractFrameAt(ff, job.params.first_frame_at) : await extractLastFrame(ff);
+    // And a clip given as the last frame means "end where it begins": with both, a middle clip can be redone without
+    // touching the clips on either side.
+    const lf = job.params.last_frame;
+    if (lf && !lf.startsWith("asset:") && /\.(mp4|webm|mov)$/i.test(lf)) job.params.last_frame = await extractFirstFrame(lf);
     if (chain_from) {
       const clip = this.queue.get(chain_from)?.files.find((f) => /\.(mp4|webm|mov)$/i.test(f));
       if (!clip) throw new Error(`chain_previous: the previous scene (${chain_from}) produced no video, so this scene was skipped.`);
@@ -370,7 +527,7 @@ export class LocalCore implements Core {
     const queued = this.queue.list().filter((j) => j.params.output_dir === output_dir).map((j) => Number(j.params.file_stem.match(/\d+/)?.[0] ?? 0));
     const offset = Math.max(0, ...onDisk, ...queued);
     const jobs: Job[] = [];
-    for (const [i, { chain_previous, reference_previous, technique, ...scene }] of scenes.entries()) {
+    for (const [i, { chain_previous, reference_previous, technique, outfit, on_screen_text, ...scene }] of scenes.entries()) {
       const phrase = technique ? techniqueById(technique)!.phrase : "";
       // A referenced character must come out identical, not merely similar, so the scene says so explicitly. The
       // wording stays medium-neutral: the same lock has to serve a flat cartoon character and a photoreal avatar.
@@ -378,10 +535,20 @@ export class LocalCore implements Core {
         .filter((r) => r.startsWith("asset:"))
         .map((r) => r.slice(6).trim())
         .filter((n) => characterLook(n) !== undefined || /^[\w .'-]{1,60}$/.test(n));
+      // With an outfit the lock still pins face, hair and build, but the clothes come from the scene: otherwise the
+      // saved look (Skye's denim shirt) fights a costume the prompt asks for.
       const lock = cast.length
-        ? ` CHARACTER LOCK — ${cast.join(" and ")} must match the reference image exactly, as if copying it: same head shape and size, same face, same eyes, same hair, same skin, same build and proportions, same clothing items in the same colours, same hands, and the same rendering style and level of realism as the reference. Never redesign, restyle, re-proportion, re-age or re-colour them, and never swap an item for a similar one.${cast
+        ? ` CHARACTER LOCK — ${cast.join(" and ")} must match the reference image exactly, as if copying it: same head shape and size, same face, same eyes, same hair, same skin, same build and proportions,${outfit ? "" : " same clothing items in the same colours,"} same hands, and the same rendering style and level of realism as the reference. Never redesign, ${outfit ? "" : "restyle, "}re-proportion, re-age or re-colour them${outfit ? "" : ", and never swap an item for a similar one"}.${cast
             .map((n) => (characterLook(n) ? ` ${n} is exactly: ${characterLook(n)}.` : ""))
-            .join("")}`
+            .join("")}${outfit ? ` WARDROBE IN THIS SCENE: ${outfit.trim().replace(/\.$/, "")}. This replaces any clothing in the reference image or the description above, and stays identical for the whole scene.` : ""}`
+        : "";
+      // Omni burns its own subtitles into talking clips now and then, garbled ("thyel", "voch"), even when the prompt
+      // says "no captions" near the end (protein soda clip 1, 15 credits). Every video therefore opens AND closes on it,
+      // unless the scene really wants words in the picture. Captions are added afterwards by flow_captions.
+      const noText = scene.type !== "image" && !on_screen_text;
+      const textFirst = noText ? "NO SUBTITLES, NO CAPTIONS, NO TEXT OF ANY KIND ON SCREEN. " : "";
+      const textLast = noText
+        ? " NO TEXT ON SCREEN: never add subtitles, captions, titles, speech transcripts, words or letters anywhere in the picture, at any moment; any speech is heard only, never written."
         : "";
       const inherit = reference_previous
         ? " Match the previous image exactly for the subject's appearance, colour palette, lighting and rendering style; this is the same scene a moment later."
@@ -389,7 +556,7 @@ export class LocalCore implements Core {
       jobs.push(
         this.queue.add({
           ...scene,
-          prompt: `${scene.prompt.trim().replace(/\.?$/, ".")}${phrase ? ` ${phrase}` : ""}${lock}${inherit}`,
+          prompt: `${textFirst}${scene.prompt.trim().replace(/\.?$/, ".")}${phrase ? ` ${phrase}` : ""}${lock}${inherit}${textLast}`,
           chain_from: chain_previous ? jobs[i - 1].id : undefined,
           reference_from: reference_previous ? jobs[i - 1].id : undefined,
           output_dir,
@@ -484,34 +651,11 @@ export class LocalCore implements Core {
     return { ...film, voice: track };
   }
 
-  // Captions never touch Flow or its queue: whisper.cpp hears the words, a headless Chrome of its own draws them.
-  async transcribe({ video, language, words }: Args<"transcribe">) {
-    const t = await transcribe(video, language);
-    return {
-      text: t.text,
-      word_count: t.words.length,
-      language: t.language,
-      model: t.model,
-      ...(words ? { words: t.words.map((w) => ({ text: w.text, start: Number(w.start.toFixed(2)), end: Number(w.end.toFixed(2)) })) } : {}),
-    };
-  }
-
-  async caption_preview(a: Args<"caption_preview">) {
-    return previewCaptions(a.video, a);
-  }
-
-  async captions({ project, ...a }: Args<"captions">) {
-    // Save next to the video when it is already one of the user's films, otherwise in a Captions folder.
-    const rel = relative(OUTPUT_ROOT, dirname(a.video));
-    const inFilms = rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
-    const dir = project ? projectDir(project) : inFilms ? dirname(a.video) : projectDir("Captions");
-    mkdirSync(dir, { recursive: true });
-    return burnCaptions(a.video, a, captionedName(dir, a.video));
-  }
-
-  async caption_setup() {
-    return captionSetup();
-  }
+  transcribe = transcribeHere;
+  caption_preview = captionPreviewHere;
+  captions = captionsHere;
+  presenter = presenterHere;
+  caption_setup = captionSetupHere;
 
   // Everything already downloaded, newest project first, so the panel can show past work after a restart.
   async outputs() {
@@ -621,11 +765,22 @@ export class LocalCore implements Core {
     return trashAsset(name);
   }
 
+  async new_project({ title }: Args<"new_project">) {
+    if (this.queue.busy) throw new Error(BUSY);
+    const made = await createProject(title);
+    return { ...made, note: "The Flow window now has this empty project open; every generation goes into it. Characters belong to a project, so make them again here." };
+  }
+
   async character(a: Args<"character">) {
     if (this.queue.busy) throw new Error(BUSY);
     if (!a.image && !a.describe) throw new Error("Pass either `describe` (Flow draws the portrait) or `image`.");
     const made = await createCharacter(a);
+    // Every scene quotes the saved description in its character lock, so a character made from a picture must not
+    // inherit an older description saved under the same name: it described someone else (a "Maya" with a ponytail and
+    // a mustard sweater, when the new picture showed loose hair and a grey tee).
     if (a.describe) rememberCharacter(a.name, a.describe);
+    else if (a.look) rememberCharacter(a.name, a.look);
+    else forgetCharacter(a.name);
     return { ...made, use_as: `asset:${a.name}` };
   }
 
@@ -649,21 +804,77 @@ export class LocalCore implements Core {
     return saveGeminiKey(key);
   }
 
-  async voices() {
-    // The panel words itself from these, so a PC never reads "this Mac".
-    const place = { computer: COMPUTER, bin: BIN, local_engine: IS_MAC ? "macOS voice" : IS_WIN ? "Windows voice" : "System voice", platform: process.platform };
-    return { gemini: GEMINI_VOICES, gemini_ready: Boolean(geminiKey()), mac: await localVoices(), place };
-  }
-
-  async narrate({ project, text, voice, engine, style }: Args<"narrate">) {
-    const output_dir = projectDir(project);
-    mkdirSync(output_dir, { recursive: true });
-    const target = join(output_dir, `${this.nextStem(output_dir, "narration")}.m4a`);
-    const spoken = engine === "mac" ? await speakLocally(text.trim(), voice, target) : await speakWithGemini(text.trim(), voice, target, style);
-    return { output_dir, credits: 0, engine, voice, ...spoken };
-  }
+  voices = voicesHere;
+  narrate = narrateHere;
 
   async techniques({ category }: Args<"techniques">) {
     return TECHNIQUES.filter((t) => !category || t.category === category);
   }
+}
+
+// Narration never touches Chrome, so it runs in whichever process gets the call. A client then never depends on the
+// owner's code: Claude Desktop's own flow-mcp process can be a release behind until the user restarts the app.
+export async function voicesHere() {
+  // The panel words itself from these, so a PC never reads "this Mac".
+  const place = { computer: COMPUTER, bin: BIN, platform: process.platform };
+  return { kokoro: KOKORO_VOICES, kokoro_ready: kokoroReady(), kokoro_mb: KOKORO_MB, gemini: GEMINI_VOICES, gemini_ready: Boolean(geminiKey()), place };
+}
+
+export async function narrateHere({ project, text, voice, engine, speed, style }: Args<"narrate">) {
+  const output_dir = projectDir(project);
+  mkdirSync(output_dir, { recursive: true });
+  const taken = readdirSync(output_dir).map((f) => Number(f.match(/^narration-(\d+)/)?.[1] ?? 0));
+  const target = join(output_dir, `narration-${String(Math.max(0, ...taken) + 1).padStart(2, "0")}.m4a`);
+  const line = text.trim();
+  if (engine === "kokoro") {
+    const v = voice ?? KOKORO_DEFAULT_VOICE;
+    return { output_dir, credits: 0, engine, voice: v, ...(await speakWithKokoro(line, v, target, speed)) };
+  }
+  const v = voice ?? "Charon";
+  try {
+    return { output_dir, credits: 0, engine, voice: v, ...(await speakWithGemini(line, v, target, style)) };
+  } catch (err) {
+    // The free AI Studio tier has a daily limit. Running out of it should not stop the film: Kokoro records the line
+    // now, and the note says how to get the Google voice back once the limit resets.
+    if (!/\b429\b|quota|RESOURCE_EXHAUSTED|rate limit/i.test(String((err as Error).message))) throw err;
+    const spoken = await speakWithKokoro(line, KOKORO_DEFAULT_VOICE, target);
+    return {
+      output_dir, credits: 0, engine: "kokoro", voice: KOKORO_DEFAULT_VOICE, fell_back_from: "gemini", ...spoken,
+      note: `Google AI Studio's daily limit is used up, so this take was recorded with Kokoro (${KOKORO_DEFAULT_VOICE}) instead. Record it again with ${v} once the limit resets.`,
+    };
+  }
+}
+
+// Captions never touch Flow or its queue: whisper.cpp hears the words, a headless Chrome of its own draws them. So,
+// like narration, they run in whichever process gets the call and never wait for the owner to be restarted.
+export async function transcribeHere({ video, language, words }: Args<"transcribe">) {
+  const t = await transcribe(video, language);
+  return {
+    text: t.text,
+    word_count: t.words.length,
+    language: t.language,
+    model: t.model,
+    ...(words ? { words: t.words.map((w) => ({ text: w.text, start: Number(w.start.toFixed(2)), end: Number(w.end.toFixed(2)) })) } : {}),
+  };
+}
+
+export async function presenterHere({ project, ...a }: Args<"presenter">) {
+  return presenter({ ...a, dir: projectDir(project) });
+}
+
+export async function captionPreviewHere(a: Args<"caption_preview">) {
+  return previewCaptions(a.video, a);
+}
+
+export async function captionsHere({ project, ...a }: Args<"captions">) {
+  // Save next to the video when it is already one of the user's films, otherwise in a Captions folder.
+  const rel = relative(OUTPUT_ROOT, dirname(a.video));
+  const inFilms = rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+  const dir = project ? projectDir(project) : inFilms ? dirname(a.video) : projectDir("Captions");
+  mkdirSync(dir, { recursive: true });
+  return burnCaptions(a.video, a, captionedName(dir, a.video));
+}
+
+export async function captionSetupHere() {
+  return captionSetup();
 }

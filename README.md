@@ -21,7 +21,7 @@ New here? [GETTING-STARTED.md](GETTING-STARTED.md) takes you from nothing to you
 
 | | |
 |---|---|
-| **macOS or Windows 10/11** | Developed and tested on macOS. Windows is supported (Chrome, the computer's own voices, the Recycle Bin and the panel launcher all have Windows versions), but it hasn't been run on a real PC yet, so please report anything that breaks |
+| **macOS or Windows 10/11** | Developed and tested on macOS. Windows is supported (Chrome, the Recycle Bin and the panel launcher all have Windows versions), but it hasn't been run on a real PC yet, so please report anything that breaks |
 | **Node.js 22 or newer** | `node --version` |
 | **Google Chrome** | Any recent version |
 | **A Google account** | Free. Flow gives every account 50 credits a day; a paid Google AI plan adds more and unlocks 1080p downloads. Developed on a Pro plan |
@@ -150,7 +150,8 @@ Eight tabs, in the order you would use them:
 - **Frames**: free stills, with *match previous frame* to keep a set on-model.
 - **Shots**: paid clips, with first/last frames, chaining, a live credit estimate, and a card that
   continues a finished clip from its own last frame.
-- **Voice**: free narration in Google's voices or your computer's own. Your saved narrations are listed
+- **Voice**: free narration with Kokoro (the default: 28 voices, runs on your computer, no key) or Google's
+  voices. Your saved narrations are listed
   here to play or delete, and there's a field for your Google AI Studio key (checked with Google, stored
   only on your computer; never paste it into a chat).
 - **Restyle**: change a clip you already have.
@@ -202,8 +203,8 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | `flow_character_edit` | Restyle an existing character in place (free) and save the new portrait; name, personality and voice are kept, so every scene referencing it updates. Pass `look` with the updated description; with only a name it re-saves the current portrait |
 | `flow_characters` | List the project's characters |
 | `flow_techniques` | 39 film-technique prompt presets (camera moves, product shots, transitions, image commands); pass an id as a scene's `technique` |
-| `flow_narrate` | Free narration audio, any length: `gemini` (Google AI Studio text-to-speech, with the same voices Flow has, plus a `style` note) or `mac` (a voice installed on this computer, no key needed) |
-| `flow_voices` | Narrator voices available, and whether a Google key is set up |
+| `flow_narrate` | Free narration audio, any length: `kokoro` (the default, a voice that runs on your computer, 28 voices and a `speed`), or `gemini` (Google AI Studio text-to-speech, with the same voices Flow has, plus a `style` note; falls back to Kokoro when the daily limit is used up) |
+| `flow_voices` | Narrator voices available, whether Kokoro's model is downloaded yet, and whether a Google key is set up |
 | `flow_captions` | Burn spoken-word captions into any video, landscape or vertical, in one of five styles, at any height and size, in normal, capital or lowercase letters, in about 100 languages; returns the transcript so a misheard word can be fixed and the call repeated (local whisper.cpp, Chrome and FFmpeg, no credits) |
 | `flow_transcribe` | Hear the words in any video or audio on your computer, with each word's start and end time (local whisper.cpp, free) |
 | `flow_assemble` | Join clips into one MP4 (a project's clips, or any you list, in order) with optional music and voiceover, and separate volume for the clips' own sound. A voiceover can also be built line by line (`voice_lines`), each line cut from a take and placed at its own moment, for narration timed to on-screen titles (local FFmpeg, no credits) |
@@ -216,10 +217,15 @@ Flow's agent mode and does both.
 
 Output lands in `~/flow-mcp-out/<project>/scene-NN.ext`.
 
-### Narration with Google's voices (optional)
+### Narration voices
 
-`flow_narrate` with `engine: "mac"` uses your computer's own voices and works out of the box: macOS voices on a
-Mac, the built-in speech voices on Windows. For Google's voices (the same ones Flow offers), get a free key from
+`flow_narrate` uses **Kokoro** by default: a free voice that runs on your own computer, with no key, no daily
+limit and no length cap. Pick any of its 28 English voices (American and British) and a speed. The first take
+downloads its model once (326 MB, about a minute); after that a take records in a couple of seconds.
+
+#### Google's voices (optional)
+
+For Google's voices (the same ones Flow offers), get a free key from
 [Google AI Studio](https://aistudio.google.com/apikey) and paste it into **Flow Studio → Voice → Google AI Studio
 key → Save key**. It's checked with Google before it's saved, and stored only on your computer. Or set
 `GEMINI_API_KEY`. Either way, never paste the key into a chat; it would end up in the conversation history.

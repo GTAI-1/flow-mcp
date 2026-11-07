@@ -238,6 +238,17 @@ server.registerTool(
 );
 
 server.registerTool(
+  "flow_new_project",
+  {
+    title: "Start a new Flow project",
+    description: "Create a new, empty Google Flow project and open it in the Flow window, optionally with a name - for starting a film or ad from scratch. Free. Characters belong to a project, so make them again in the new one.",
+    inputSchema: shapes.new_project,
+    annotations: { openWorldHint: true },
+  },
+  (args) => reply(patient("flow_new_project", core.new_project(args))),
+);
+
+server.registerTool(
   "flow_characters",
   {
     title: "List characters",
@@ -263,9 +274,9 @@ server.registerTool(
 server.registerTool(
   "flow_narrate",
   {
-    title: "Record narration in a Flow voice",
+    title: "Record narration",
     description:
-      "Record narration as an .m4a, free and instantly. `engine: \"gemini\"` uses Google AI Studio's text-to-speech (the same voices Flow has, needs a free key in ~/.flow-mcp/gemini-key, and takes a `style` note like 'warmly, like a documentary narrator'); `engine: \"mac\"` uses a voice installed on this computer (macOS, or Windows' built-in speech voices). Neither costs credits or caps the length. flow_assemble can lay the result over a film.",
+      "Record narration as an .m4a, free. The default `engine: \"kokoro\"` is Kokoro, a voice that runs on this computer: no key, no daily limit, any length, 28 English voices (flow_voices lists them; default am_michael) and a `speed`. The first Kokoro take downloads its model once (326 MB, about a minute). `engine: \"gemini\"` uses Google AI Studio's text-to-speech (the same voices Flow has, a free key in ~/.flow-mcp/gemini-key, a daily limit, takes a short `style` note); if that limit is used up the line is recorded with Kokoro and the result says so. Neither costs credits. Record a whole narration in one take; flow_assemble can lay it over a film.",
     inputSchema: shapes.narrate,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
@@ -276,7 +287,7 @@ server.registerTool(
   "flow_voices",
   {
     title: "List Flow voices",
-    description: "Narrator voices available for flow_narrate: Google AI Studio's (with whether a key is set up) and the English voices installed on this computer.",
+    description: "Narrator voices available for flow_narrate: Kokoro's (free, on this computer, with whether its model is downloaded yet) and Google AI Studio's (with whether a key is set up).",
     inputSchema: shapes.voices,
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
   },
@@ -317,6 +328,18 @@ server.registerTool(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   (args) => reply(patient("flow_captions", core.captions(args))),
+);
+
+server.registerTool(
+  "flow_presenter",
+  {
+    title: "Talking presenter over footage",
+    description:
+      "Build an explainer from one recording of a talking presenter (an avatar video, say): each stretch shows them full frame, with an optional slow zoom, or in a circle in a corner over another clip. Their sound plays throughout. Local and free. Add music, loudness and watermark removal afterwards with flow_assemble.",
+    inputSchema: shapes.presenter,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  (args) => reply(patient("flow_presenter", core.presenter(args))),
 );
 
 await server.connect(new StdioServerTransport());

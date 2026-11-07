@@ -16,3 +16,29 @@ export async function extractLastFrame(video: string): Promise<string> {
   }
   return out;
 }
+
+// Saves the first frame of a clip, so a new clip can be made to end exactly where that one begins (redoing a middle
+// clip with both of its cuts kept invisible).
+export async function extractFirstFrame(video: string): Promise<string> {
+  const out = video.replace(/\.\w+$/, "") + "-firstframe.jpg";
+  try {
+    await run(FFMPEG, ["-y", "-i", video, "-frames:v", "1", "-q:v", "2", out]);
+  } catch (err) {
+    const reason = (err as NodeJS.ErrnoException).code === "ENOENT" ? `ffmpeg is not installed (${FFMPEG_HINT})` : String(err);
+    throw new Error(`last_frame needs ffmpeg to grab that clip's first frame: ${reason}`);
+  }
+  return out;
+}
+
+// Saves the frame at a chosen second of a clip - where the speech ends, say - so the next clip can start from there
+// instead of from dead time at the end. flow_assemble's `trims` then cuts the earlier clip at the same second.
+export async function extractFrameAt(video: string, seconds: number): Promise<string> {
+  const out = `${video.replace(/\.\w+$/, "")}-frame-${seconds.toFixed(2)}s.jpg`;
+  try {
+    await run(FFMPEG, ["-y", "-ss", seconds.toFixed(3), "-i", video, "-frames:v", "1", "-q:v", "2", out]);
+  } catch (err) {
+    const reason = (err as NodeJS.ErrnoException).code === "ENOENT" ? `ffmpeg is not installed (${FFMPEG_HINT})` : String(err);
+    throw new Error(`first_frame_at needs ffmpeg to grab that frame: ${reason}`);
+  }
+  return out;
+}

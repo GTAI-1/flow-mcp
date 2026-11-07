@@ -289,7 +289,7 @@ audio{width:100%;margin-top:8px;filter:invert(1) hue-rotate(180deg)}
       <section class="panel" data-panel="narrate">
         <div class="step">Step 4</div>
         <h2>Voice</h2>
-        <p class="lede">Record narration for free, at any length. <b>Google AI Studio</b> gives you the same voices Flow uses and takes a delivery note; <b data-place="local_engine">macOS voice</b> speaks with a voice installed on <span data-place="computer">this Mac</span> and needs no key. Neither spends credits.</p>
+        <p class="lede">Record narration for free, at any length. <b>Kokoro</b> runs on <span data-place="computer">this Mac</span>: no key, no daily limit, 28 voices. <b>Google AI Studio</b> gives you the same voices Flow uses and takes a delivery note. Neither spends credits.</p>
         <div class="card">
           <label class="f">Project folder</label><input type="text" id="n_project" placeholder="MyFilm">
           <label class="f">Line to speak</label><textarea id="n_text" style="min-height:100px" placeholder="Sometimes the obstacles in your life aren't there to block you…"></textarea>
@@ -303,6 +303,7 @@ audio{width:100%;margin-top:8px;filter:invert(1) hue-rotate(180deg)}
           <div class="grid2">
             <div><label class="f">Voice</label><select id="n_voice"></select></div>
           </div>
+          <div id="n_speedWrap"><label class="f" for="n_speed">Speed <span id="n_speedOut" style="text-transform:none;letter-spacing:0"></span></label><input type="range" id="n_speed" min="70" max="130" step="5" value="100"></div>
           <div id="n_styleWrap"><label class="f">Delivery (optional)</label><input type="text" id="n_style" placeholder="slowly and warmly, like a documentary narrator"></div>
           <p class="empty" id="n_fit" style="margin-top:10px"></p>
           <div class="rowbtns"><button class="btn" id="n_go">Record take</button></div>
@@ -455,13 +456,14 @@ const DEFAULTS = {
   tab: "cast",
   frames: { project: "MyFilm", aspect: "16:9", variants: 1, engine: "exact", scenes: [blank()] },
   shots: { project: "MyFilm", model: "Omni 1.1 Flash", aspect: "16:9", duration: 8, resolution: "720p", variants: 1, quality: "original", max: 25, scenes: [blank()] },
-  narrate: { project: "MyFilm", engine: "gemini", geminiVoice: "Charon", macVoice: "Zoe (Premium)", text: "", style: "" },
+  narrate: { project: "MyFilm", engine: "kokoro", kokoroVoice: "am_michael", speed: 100, geminiVoice: "Charon", text: "", style: "" },
   cut: { project: "MyFilm", music: null, voiceover: null, hold: true, clips: [] },
   captions: { video: null, style: "bold", position: "bottom", size: 100, colors: {}, text: "" },
 };
 const S = Object.assign(structuredClone(DEFAULTS), JSON.parse(localStorage.getItem("flow-studio-v2") || "{}"));
 const save = () => localStorage.setItem("flow-studio-v2", JSON.stringify(S));
-let TECH = [], VOICES = { gemini: [], mac: [] }, CAST = [], LIB = [], GAL = [], castImage = null, pickTarget = null, busy = false;
+if (!["kokoro", "gemini"].includes(S.narrate.engine)) S.narrate.engine = "kokoro"; // the computer-voice engine is gone
+let TECH = [], VOICES = { kokoro: [], gemini: [] }, CAST = [], LIB = [], GAL = [], castImage = null, pickTarget = null, busy = false;
 
 /* ---------- tabs ---------- */
 function showTab(name) {
@@ -478,6 +480,9 @@ function showTab(name) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 $("#tabs").addEventListener("click", (e) => { const b = e.target.closest("button[data-tab]"); if (b) showTab(b.dataset.tab); });
+// A link can open a tab directly, e.g. http://127.0.0.1:8787/#captions.
+const hashTab = () => { const t = location.hash.slice(1); return $(`#tabs button[data-tab="${CSS.escape(t)}"]`) ? t : null; };
+addEventListener("hashchange", () => { const t = hashTab(); if (t) showTab(t); });
 
 /* ---------- segmented controls ---------- */
 const SEGS = {
@@ -491,7 +496,7 @@ const SEGS = {
   s_variants: { get: () => S.shots.variants, set: (v) => (S.shots.variants = +v), opts: [1, 2, 3, 4] },
   cap_pos: { get: () => (typeof S.captions.position === "string" ? S.captions.position : ""), set: (v) => { S.captions.position = v; capPreviewSoon(); }, opts: ["bottom", "middle", "top"], labels: { bottom: "Bottom", middle: "Middle", top: "Top" } },
   cap_letters: { get: () => capLetters(S.captions.style), set: (v) => { (S.captions.letters ??= {})[S.captions.style] = v; capPreviewSoon(); }, opts: ["as_said", "capitals", "lowercase"], labels: { as_said: "Normal", capitals: "CAPS", lowercase: "lower" } },
-  n_engine: { get: () => S.narrate.engine, set: (v) => (S.narrate.engine = v), opts: ["gemini", "mac"], labels: { gemini: "Google AI Studio", get mac() { return PLACE.local_engine; } } },
+  n_engine: { get: () => S.narrate.engine, set: (v) => (S.narrate.engine = v), opts: ["kokoro", "gemini"], labels: { kokoro: "Kokoro", gemini: "Google AI Studio" } },
 };
 function renderSegs() {
   for (const [key, cfg] of Object.entries(SEGS)) {
@@ -683,38 +688,51 @@ document.addEventListener("click", (e) => {
 });
 
 /* ---------- narrate ---------- */
+// Each engine keeps its own voice choice, so switching engines and back never loses the pick.
+const VOICE_KEY = { kokoro: "kokoroVoice", gemini: "geminiVoice" };
+const pickedVoice = () => S.narrate[VOICE_KEY[S.narrate.engine]] ?? (S.narrate.engine === "kokoro" ? "am_michael" : undefined);
 function renderNarrate() {
-  const mac = S.narrate.engine === "mac";
-  const list = (mac ? VOICES.mac : VOICES.gemini) ?? [];
-  const picked = mac ? S.narrate.macVoice : S.narrate.geminiVoice;
-  $("#n_voice").innerHTML = list.map((v) => `<option value="${v.name}" ${v.name === picked ? "selected" : ""}>${v.name} — ${v.description}</option>`).join("") || `<option value="">No voices found</option>`;
-  $("#n_styleWrap").style.display = mac ? "none" : "";
-  $("#n_engineNote").innerHTML = !mac
-    ? (VOICES.gemini_ready
-        ? "Google's own text-to-speech — the same voices Flow uses, free on the AI Studio tier, any length, and no Flow credits."
-        : `<b>Needs a free key.</b> Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and paste it below. Same voices as Flow, free, no length limit.`)
-    : `Spoken on ${PLACE.computer} — free, instant, any length. Quality depends on the installed voice: ${PLACE.platform === "win32" ? "add more English voices in <b>Settings → Time &amp; language → Speech</b> and they appear here" : "download a <b>Premium</b> English voice in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices and it appears here automatically"}. ${(VOICES.mac ?? []).length} voice(s) available.`;
-  $("#n_keyWrap").hidden = mac;
+  const eng = S.narrate.engine, kokoro = eng === "kokoro";
+  const list = (VOICES[eng] ?? []);
+  const picked = pickedVoice();
+  $("#n_voice").innerHTML = list.map((v) => `<option value="${v.name}" ${v.name === picked ? "selected" : ""}>${v.label ?? v.name} — ${v.description}</option>`).join("") || `<option value="">No voices found</option>`;
+  $("#n_styleWrap").style.display = eng === "gemini" ? "" : "none";
+  $("#n_speedWrap").style.display = kokoro ? "" : "none";
+  $("#n_speed").value = S.narrate.speed ?? 100;
+  $("#n_speedOut").textContent = `${((S.narrate.speed ?? 100) / 100).toFixed(2)}×`;
+  $("#n_engineNote").innerHTML = kokoro
+    ? `A free voice that runs on ${PLACE.computer}: no key, no daily limit, any length. ` +
+      (VOICES.kokoro_ready ? "Ready." : `The first take downloads it once (${VOICES.kokoro_mb ?? 326} MB, about a minute).`)
+    : VOICES.gemini_ready
+    ? "Google's own text-to-speech — the same voices Flow uses, free on the AI Studio tier with a daily limit, and no Flow credits. If the limit runs out, the take is recorded with Kokoro."
+    : `<b>Needs a free key.</b> Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and paste it below. Same voices as Flow, free, no length limit.`;
+  $("#n_keyWrap").hidden = eng !== "gemini";
   $("#n_keyStatus").innerHTML = VOICES.gemini_ready
     ? `A key is saved on ${PLACE.computer}. Paste a new one only to replace it.`
     : `Paste it here, not into a chat — it's saved only on ${PLACE.computer} and checked with Google first.`;
   const words = $("#n_text").value.trim().split(/\s+/).filter(Boolean).length;
-  const secs = Math.ceil(words / 2.5);
+  const secs = Math.ceil(words / 2.5 / (kokoro ? (S.narrate.speed ?? 100) / 100 : 1));
   $("#n_fit").textContent = words ? `${words} words ≈ ${secs}s of speech. No length limit, no credits.` : "";
 }
 $("#n_text").addEventListener("input", () => { S.narrate.text = $("#n_text").value; save(); renderNarrate(); });
-$("#n_voice").addEventListener("change", () => { S.narrate[S.narrate.engine === "mac" ? "macVoice" : "geminiVoice"] = $("#n_voice").value; save(); });
+$("#n_voice").addEventListener("change", () => { S.narrate[VOICE_KEY[S.narrate.engine]] = $("#n_voice").value; save(); });
+$("#n_speed").addEventListener("input", () => { S.narrate.speed = +$("#n_speed").value; save(); renderNarrate(); });
 $("#n_style").addEventListener("input", () => { S.narrate.style = $("#n_style").value; save(); });
 $("#n_go").onclick = async () => {
   if (!guard()) return;
   const text = $("#n_text").value.trim(); if (!text) return toast("Write the line first.", true);
-  const eng = S.narrate.engine, mac = eng === "mac";
-  const voice = mac ? S.narrate.macVoice : S.narrate.geminiVoice;
-  const b = $("#n_go"); b.disabled = true; b.textContent = "Recording…";
+  const eng = S.narrate.engine;
+  const voice = pickedVoice() || undefined;
+  const b = $("#n_go"); b.disabled = true; b.textContent = eng === "kokoro" && !VOICES.kokoro_ready ? "Getting Kokoro (one time only)…" : "Recording…";
   try {
-    const out = await api("narrate", { project: $("#n_project").value.trim() || S.narrate.project, text, voice, engine: eng, style: mac ? undefined : $("#n_style").value.trim() || undefined });
+    const out = await api("narrate", {
+      project: $("#n_project").value.trim() || S.narrate.project, text, voice, engine: eng,
+      speed: eng === "kokoro" ? (S.narrate.speed ?? 100) / 100 : undefined,
+      style: eng === "gemini" ? $("#n_style").value.trim() || undefined : undefined,
+    });
+    if (eng === "kokoro") VOICES.kokoro_ready = true;
     {
-      $("#n_out").innerHTML = `<audio controls src="${media(out.output)}&t=${Date.now()}"></audio><p class="empty" style="margin-top:8px">${out.duration.toFixed(1)}s · free · ${esc(out.output)}</p>
+      $("#n_out").innerHTML = `<audio controls src="${media(out.output)}&t=${Date.now()}"></audio>${out.note ? `<p class="empty" style="margin-top:8px;color:var(--warn)">${esc(out.note)}</p>` : ""}<p class="empty" style="margin-top:8px">${out.duration.toFixed(1)}s · ${esc(out.voice)} · free · ${esc(out.output)}</p>
         <div class="rowbtns"><button class="btn small" data-usevo="${esc(out.output)}">Use in Cut</button></div>`;
       loadGallery();
     }
@@ -1037,7 +1055,7 @@ function estimate() {
   } else {
     const narrateCost = "Free";
     $("#estNum").textContent = { cast: "Free", narrate: narrateCost, restyle: "≈ 20 credits", cut: "Free", library: "Free" }[tab] ?? "";
-    $("#estSub").textContent = { cast: "characters cost nothing", narrate: S.narrate.engine === "mac" ? `spoken on ${PLACE.computer}` : "Google AI Studio, free", restyle: "use Restyle clip", cut: "use Assemble film", library: "downloads cost nothing" }[tab] ?? "";
+    $("#estSub").textContent = { cast: "characters cost nothing", narrate: S.narrate.engine === "gemini" ? "Google AI Studio, free" : `Kokoro, on ${PLACE.computer}`, restyle: "use Restyle clip", cut: "use Assemble film", library: "downloads cost nothing" }[tab] ?? "";
     btn.disabled = true;
   }
 }
@@ -1081,7 +1099,7 @@ async function loadGallery(prefer) {
 const GALLERY_KINDS = { cast: ["image"], frames: ["image"], shots: ["video", "image"], restyle: ["video"], cut: ["video"], captions: ["video"] };
 // How to name this computer and its bin. Starts with the Mac wording and is replaced by what the server reports, so a
 // PC says "this PC" and "the Recycle Bin".
-let PLACE = { computer: "this Mac", bin: "the Mac's Trash", binShort: "Mac Trash", local_engine: "macOS voice", platform: "darwin" };
+let PLACE = { computer: "this Mac", bin: "the Mac's Trash", binShort: "Mac Trash", platform: "darwin" };
 function applyPlace(p) {
   if (!p) return;
   PLACE = { ...PLACE, ...p, binShort: p.platform === "win32" ? "Recycle Bin" : p.platform === "darwin" ? "Mac Trash" : "Trash" };
@@ -1187,10 +1205,10 @@ for (const [id, path] of [["f_project", "frames"], ["s_project", "shots"], ["n_p
     $("#status").innerHTML = `<span class="pill"><i class="tally down"></i>Not connected</span>`;
     renderAll(); showTab(S.tab); return;
   }
-  try { [TECH, VOICES] = await Promise.all([api("techniques"), api("voices")]); } catch { VOICES = { gemini: [], mac: [] }; }
+  try { [TECH, VOICES] = await Promise.all([api("techniques"), api("voices")]); } catch { VOICES = { kokoro: [], gemini: [] }; }
   applyPlace(VOICES.place);
   loadCast().then((c) => { CAST = c; renderCast(); }).catch(() => {});
-  renderAll(); showTab(S.tab); poll(true); loadGallery();
+  renderAll(); showTab(hashTab() ?? S.tab); poll(true); loadGallery();
 })();
 </script>
 </body>

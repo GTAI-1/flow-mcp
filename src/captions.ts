@@ -34,6 +34,9 @@ const SPEECH_MODELS = {
   // Only names the spoken language, for "auto": right on all 8 test languages in 0.2 s, so an English speaker who never
   // picks a language is not sent the 574 MB model.
   detect: { file: "ggml-base-q5_1.bin", mb: 60, purpose: "that recognises the language" },
+  // Silero voice-activity detection (0.9 MB): finds where people actually speak, so each stretch can be heard on its
+  // own (see speechSpans). Lives in ggml-org's own collection, not whisper.cpp's.
+  vad: { file: "ggml-silero-v5.1.2.bin", mb: 0.8, purpose: "that finds where the speech is", base: "https://huggingface.co/ggml-org/whisper-vad/resolve/main" },
 } as const;
 type SpeechModel = keyof typeof SPEECH_MODELS;
 const MODEL_BASE = (process.env.FLOW_MCP_MODEL_BASE ?? "https://huggingface.co/ggerganov/whisper.cpp/resolve/main").replace(/\/+$/, "");
@@ -85,6 +88,10 @@ export interface CaptionOptions {
   lead?: number;
   text?: string;
   language?: string;
+  // Word timings measured elsewhere, used instead of hearing the whole film. A film joined from separate takes is
+  // better timed from each take heard on its own: heard whole, Last Train's train noise stretched "second date" over
+  // 7 s and squeezed "Go. You'll miss" onto one instant, while each clip on its own was timed right.
+  words?: Word[];
 }
 
 // The languages the panel offers, by their own names. whisper.cpp knows about 100; any other code works through the MCP.
@@ -135,6 +142,7 @@ const PREFERENCE: Record<SpeechModel, string[]> = {
   other: ["ggml-large-v3-turbo.bin", "ggml-large-v3-turbo-q5_0.bin", "ggml-large-v3.bin", "ggml-medium.bin", "ggml-small.bin"],
   // Any multilingual model can name the language; the fastest goes first.
   detect: ["ggml-base-q5_1.bin", "ggml-base.bin", "ggml-small-q5_1.bin", "ggml-small.bin", "ggml-large-v3-turbo-q5_0.bin", "ggml-large-v3-turbo.bin", "ggml-medium.bin", "ggml-large-v3.bin"],
+  vad: ["ggml-silero-v5.1.2.bin"],
 };
 const installed = (kind: SpeechModel): string | undefined => PREFERENCE[kind].flatMap((name) => MODEL_DIRS.map((d) => join(d, name))).find((p) => existsSync(p));
 
@@ -175,8 +183,8 @@ export async function captionSetup(): Promise<{
   const forced = Boolean(process.env.FLOW_MCP_WHISPER_MODEL);
   // The models are not a precondition: each downloads itself the first time it is needed. The panel uses these to say
   // how big the wait will be.
-  const models = { english: forced || Boolean(installed("english")), other: forced || Boolean(installed("other")), detect: forced || Boolean(installed("detect")) };
-  const download_mb = { english: SPEECH_MODELS.english.mb, other: SPEECH_MODELS.other.mb, detect: SPEECH_MODELS.detect.mb };
+  const models = { english: forced || Boolean(installed("english")), other: forced || Boolean(installed("other")), detect: forced || Boolean(installed("detect")), vad: Boolean(installed("vad")) };
+  const download_mb = { english: SPEECH_MODELS.english.mb, other: SPEECH_MODELS.other.mb, detect: SPEECH_MODELS.detect.mb, vad: SPEECH_MODELS.vad.mb };
   return { ready: whisper, whisper, whisper_hint: whisper ? undefined : WHISPER_HINT, models, download_mb, languages: CAPTION_LANGUAGES, models_dir: MODEL_DIR };
 }
 
@@ -197,7 +205,7 @@ function fetchModel(kind: SpeechModel): Promise<string> {
     // Claude's connector. curl ships with macOS and Windows 10+, follows the redirect to the download host, and can
     // only fail itself.
     const part = `${dest}.part`;
-    await run("curl", ["-L", "--fail", "--silent", "--show-error", "--connect-timeout", "20", "--retry", "2", "-o", part, `${MODEL_BASE}/${file}`], BIG).catch((err: RunError) => {
+    await run("curl", ["-L", "--fail", "--silent", "--show-error", "--connect-timeout", "20", "--retry", "2", "-o", part, `${process.env.FLOW_MCP_MODEL_BASE || !("base" in SPEECH_MODELS[kind]) ? MODEL_BASE : (SPEECH_MODELS[kind] as { base: string }).base}/${file}`], BIG).catch((err: RunError) => {
       rmSync(part, { force: true });
       throw new Error(err.code === "ENOENT" ? "curl is not installed" : String(err.stderr || err.message).trim().split("\n").at(-1));
     });
@@ -242,7 +250,7 @@ async function probe(file: string, needPicture = true): Promise<{ width: number;
 }
 
 interface WhisperJson {
-  transcription: { tokens?: { text: string; offsets: { from: number; to: number } }[] }[];
+  transcription: { offsets: { from: number; to: number }; tokens?: { text: string; offsets: { from: number; to: number } }[] }[];
   result?: { language?: string };
 }
 
@@ -330,13 +338,90 @@ function whisperFailed(err: RunError): never {
 }
 
 // language: a whisper code (en, es, ja...) or "auto", which detects it first.
+// Where people speak in a mixed sound track (dialogue over engine noise, narration over crashes), from whisper.cpp's
+// own voice-activity detector (whisper-vad-speech-segments, installed with whisper-cpp). Measured on First Lesson
+// against the loudness: "See?" 15.39 s and "You were braver" 23.78 s, where hearing the whole track had them 0.5 and
+// 0.9 s early. Whisper's own segments are no substitute: they run on through seconds of engine noise, and a long tail
+// mis-times words just as a long lead does. Stretches closer than 0.4 s are heard together; a first stretch that
+// starts within 2 s keeps the opening, where a shout over a sound effect can slip past the detector.
+const VAD_SEGMENTS = process.env.FLOW_MCP_WHISPER_VAD ?? WHISPER.replace(/whisper-cli(\.exe)?$/, "whisper-vad-speech-segments$1");
+async function voiceSpans(wav: string): Promise<[number, number, number][]> {
+  const vad = installed("vad") ?? (await fetchModel("vad"));
+  const { stdout, stderr } = await run(VAD_SEGMENTS, ["-vm", vad, "-f", wav], BIG);
+  // The list is printed once, on stdout or stderr depending on the build, in centiseconds.
+  const pick = (t: string) => [...t.matchAll(/start = ([\d.]+), end = ([\d.]+)/g)].map((m) => [Number(m[1]) / 100, Number(m[2]) / 100]);
+  const found = (pick(stdout).length ? pick(stdout) : pick(stderr)).filter(([a, b], i, all) => b > a && (i === 0 || a >= all[i - 1][0]));
+  // Each stretch: [window start, window end, where the speech itself starts].
+  const spans: [number, number, number][] = [];
+  for (const [from, to] of found) {
+    const last = spans[spans.length - 1];
+    if (last && from - last[1] < 0.4) last[1] = to + 0.3;
+    else spans.push([Math.max(last ? last[1] : 0, from - 0.3), to + 0.3, from]);
+  }
+  // The opening stretch is heard from 0:00, because the detector can miss a first shout over a sound effect ("Dad!" over
+  // the stall in First Lesson). Its floor is the first loud spike well above the background (18 dB over the quietest
+  // fifth), or the detector's onset if that comes first: without a floor, Theo's line at 1.3 s in Last Train was
+  // bunched at 0:00, with "fifteen" lit before it was said.
+  if (spans.length && spans[0][0] < 2) {
+    const level = loudness(wav);
+    const quiet = [...level].sort((x, y) => x - y)[Math.floor(level.length / 5)] ?? -60;
+    const onset = spans[0][2];
+    let spike = level.findIndex((v) => v > quiet + 18) * FRAME;
+    if (spike < 0 || spike > onset) spike = onset;
+    // Heard from just before that spike, not from 0:00: a second of footsteps ahead of the first word was enough for
+    // whisper to bunch the whole line onto one instant.
+    spans[0] = [Math.max(0, spike - 0.2), spans[0][1], Math.max(0, spike - 0.05)];
+  }
+  return spans;
+}
+
+// Loudness of a 16 kHz mono 16-bit WAV in 50 ms frames, in dB.
+const FRAME = 0.05;
+function loudness(wav: string): number[] {
+  const buf = readFileSync(wav);
+  const data = buf.indexOf("data") + 8;
+  const step = Math.round(16000 * FRAME);
+  const out: number[] = [];
+  for (let at = data; at + step * 2 <= buf.length; at += step * 2) {
+    let sum = 0;
+    for (let i = 0; i < step; i++) sum += buf.readInt16LE(at + i * 2) ** 2;
+    out.push(10 * Math.log10(sum / step / 32768 ** 2 + 1e-12));
+  }
+  return out;
+}
+
+// The stretches of a clean narration track that hold speech: everything between silences of 0.6 s or more, with a
+// little air kept either side so no word is clipped.
+async function speechSpans(wav: string): Promise<[number, number][]> {
+  const { stderr } = await run(FFMPEG, ["-v", "info", "-i", wav, "-af", "silencedetect=noise=-40dB:d=0.6", "-f", "null", "-"], BIG);
+  const total = Number(stderr.match(/Duration: (\d+):(\d+):([\d.]+)/)?.slice(1).reduce((t, v) => t * 60 + Number(v), 0) ?? 0);
+  const quiet = [...stderr.matchAll(/silence_start: ([\d.]+)[\s\S]*?silence_end: ([\d.]+)/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  const spans: [number, number][] = [];
+  let at = 0;
+  for (const [a, b] of quiet) {
+    if (a - at > 0.2) spans.push([Math.max(0, at - 0.15), a + 0.15]);
+    at = b;
+  }
+  if (total - at > 0.2) spans.push([Math.max(0, at - 0.15), total]);
+  return spans.length ? spans : [[0, total]];
+}
+
 export async function transcribe(video: string, language = "auto"): Promise<Transcript> {
   const info = await probe(video, false);
   if (!info.audio) throw new Error(`"${basename(video)}" has no sound, so there are no words to caption.`);
   const asked = language.trim().toLowerCase() || "auto";
   if (!/^(auto|[a-z]{2,3})$/.test(asked)) throw new Error(`"${language}" isn't a language code. Use a code such as en, es or ja, or auto.`);
   const st = statSync(video);
-  const cacheFile = (...parts: string[]) => join(CACHE_DIR, `${createHash("sha1").update([video, st.size, st.mtimeMs, ...parts].join("|")).digest("hex").slice(0, 16)}.json`);
+  // flow_assemble keeps the narration it laid over a film as <film>-voice.wav, on the film's own timeline. Words are
+  // timed from that clean track when it is there: under the clips' crashes and music, whisper squeezed every word
+  // after a pause onto one instant (five words at 10.18 s, zero length) and dropped the punctuation.
+  const voice = video.replace(/\.\w+$/, "") + "-voice.wav";
+  // It starts at 0:00 like the film and ends with the last line, so it may be shorter, never longer.
+  const voiceLength = existsSync(voice) ? (await probe(voice, false).catch(() => ({ duration: 0 }))).duration : 0;
+  const clean = voiceLength > 0 && voiceLength <= info.duration + 1 ? voice : undefined;
+  const vst = clean ? statSync(clean) : undefined;
+  const cacheFile = (...parts: string[]) =>
+    join(CACHE_DIR, `${createHash("sha1").update([video, st.size, st.mtimeMs, ...(vst ? [clean!, vst.size, vst.mtimeMs] : []), "spans-v7", ...parts].join("|")).digest("hex").slice(0, 16)}.json`);
   const keep = (t: Transcript, ...files: (string | undefined)[]) => {
     mkdirSync(CACHE_DIR, { recursive: true });
     for (const f of files) if (f) writeFileSync(f, JSON.stringify(t));
@@ -348,7 +433,7 @@ export async function transcribe(video: string, language = "auto"): Promise<Tran
 
   const work = mkdtempSync(join(tmpdir(), "flow-captions-"));
   const wav = join(work, "audio.wav");
-  const extract = () => run(FFMPEG, ["-v", "error", "-y", "-i", video, "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], BIG);
+  const extract = () => run(FFMPEG, ["-v", "error", "-y", "-i", clean ?? video, "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", wav], BIG);
   try {
     let lang = asked;
     if (lang === "auto" && !process.env.FLOW_MCP_WHISPER_MODEL) {
@@ -360,12 +445,36 @@ export async function transcribe(video: string, language = "auto"): Promise<Tran
     const cached = cacheFile(basename(model), lang);
     if (existsSync(cached)) return keep(JSON.parse(readFileSync(cached, "utf8")) as Transcript, autoFile);
     if (!existsSync(wav)) await extract();
-    await run(WHISPER, ["-m", model, "-f", wav, "-l", lang, "-t", THREADS, "-ojf", "-of", join(work, "words"), "-np"], BIG).catch(whisperFailed);
-    // whisper-cli exits 0 even when it cannot read the audio, and simply writes nothing.
-    if (!existsSync(join(work, "words.json"))) throw new Error(`whisper.cpp could not read the sound in "${basename(video)}".`);
-    const json = JSON.parse(readFileSync(join(work, "words.json"), "utf8")) as WhisperJson;
-    const heard = json.result?.language ?? lang;
-    const words = wordsFromTokens(json, heard);
+    const listen = async (file: string, out: string) => {
+      await run(WHISPER, ["-m", model, "-f", file, "-l", lang, "-t", THREADS, "-ojf", "-of", out, "-np"], BIG).catch(whisperFailed);
+      // whisper-cli exits 0 even when it cannot read the audio, and simply writes nothing.
+      if (!existsSync(out + ".json")) throw new Error(`whisper.cpp could not read the sound in "${basename(video)}".`);
+      return JSON.parse(readFileSync(out + ".json", "utf8")) as WhisperJson;
+    };
+    let heard = lang;
+    let words: Word[] = [];
+    // Heard as one piece, whisper squeezes the first words after every pause onto one instant (measured: "Why risk it
+    // all for one" all at 20.24 s, five words at 10.18 s with zero length) and can lose the punctuation. Each spoken
+    // stretch is therefore heard on its own, starting on speech, where token times land within ~50 ms, and shifted back
+    // onto the film's timeline. The clean narration track finds its stretches by silence; a mixed track asks whisper's
+    // voice-activity detection. If neither works, the whole track is heard at once, as before.
+    const spans = clean ? await speechSpans(wav) : await voiceSpans(wav).catch(() => undefined);
+    if (spans?.length) {
+      for (const [i, [from, to, onset]] of spans.entries()) {
+        const part = join(work, `part-${i}.wav`);
+        await run(FFMPEG, ["-v", "error", "-y", "-ss", from.toFixed(3), "-t", (to - from).toFixed(3), "-i", wav, "-c:a", "pcm_s16le", part], BIG);
+        const json = await listen(part, join(work, `part-${i}`));
+        heard = json.result?.language ?? heard;
+        // whisper tends to start the first word right at the window's edge, in the air before the speech; the detector
+        // knows when the speech begins, so no word starts earlier than that (measured: 0.3 s early without this).
+        const floor = onset ?? 0;
+        words.push(...wordsFromTokens(json, heard).map((w) => ({ ...w, start: Math.max(w.start + from, floor), end: Math.max(w.end + from, floor + 0.05) })));
+      }
+    } else {
+      const json = await listen(wav, join(work, "words"));
+      heard = json.result?.language ?? lang;
+      words = wordsFromTokens(json, heard);
+    }
     if (!words.length) throw new Error(`No speech was heard in "${basename(video)}".`);
     return keep({ words, text: words.map((w) => w.text).join(joiner(heard)), language: heard, model: basename(model) }, cached, autoFile);
   } finally {
@@ -419,8 +528,26 @@ export function alignText(timed: Word[], text: string, lang = "en"): Word[] {
     }
     let e = k;
     while (e < m && Number.isNaN(out[e].start)) e++;
-    const from = k > 0 ? out[k - 1].end : (timed[0]?.start ?? 0);
-    const to = e < m ? out[e].start : Math.max(from + 0.35 * (e - k), timed.at(-1)?.end ?? 0);
+    // The heard words in the same gap are what these replace ("Pym" for "Pim", "12" for "twelve"). Same count: each
+    // takes its counterpart's time. Otherwise they share that stretch. Spreading over the whole gap instead put "Pim"
+    // straight after the previous line, 4.6 s before it was said.
+    // Only real words count: whisper prints a dash between speakers as a token of its own, and pairing "fifty" with
+    // it gave a caption of zero length.
+    const heard: number[] = [];
+    for (let i = k > 0 ? match[k - 1] + 1 : 0; i < (e < m ? match[e] : n); i++) if (a[i]) heard.push(i);
+    if (heard.length === e - k) {
+      for (let q = k; q < e; q++) {
+        out[q].start = timed[heard[q - k]].start;
+        out[q].end = timed[heard[q - k]].end;
+      }
+      k = e;
+      continue;
+    }
+    let from = heard.length ? timed[heard[0]].start : k > 0 ? out[k - 1].end : (timed[0]?.start ?? 0);
+    const to = heard.length ? timed[heard[heard.length - 1]].end : e < m ? out[e].start : Math.max(from + 0.35 * (e - k), timed.at(-1)?.end ?? 0);
+    // Words the listener missed altogether ("That was the nine forty-nine" heard as "was the 949") were swallowed just
+    // before the next word, not somewhere in the pause before them: spread over a 2 s pause, "That" showed 2 s early.
+    if (!heard.length && e < m) from = Math.max(from, to - 0.3 * (e - k));
     const step = Math.max(0.05, (to - from) / (e - k));
     for (let q = k; q < e; q++) {
       out[q].start = from + step * (q - k);
@@ -468,7 +595,13 @@ function paginate(words: Word[], maxWords: number, maxChars: number, sep: string
 }
 
 function layout(heard: Word[], style: CaptionStyle, width: number, height: number, size: CaptionSize, letters: CaptionLetters, lead: number, lang: string): { pages: Word[][]; states: State[] } {
-  const words = heard.map((w) => ({ ...w, start: Math.max(0, w.start - lead), end: Math.max(0, w.end - lead) }));
+  // A word's end is capped by its length: the speech model lets the last word of a line run on through laughter or a
+  // train arriving, which kept "Adventurous!" and "To a second date." on screen for 7 s (Last Train).
+  const longest = (t: string) => Math.min(1.4, 0.35 + 0.075 * t.replace(/[^\p{L}\p{N}]/gu, "").length);
+  const words = heard.map((w) => {
+    const start = Math.max(0, w.start - lead);
+    return { ...w, start, end: Math.max(start, Math.min(w.end - lead, start + longest(w.text))) };
+  });
   const s = CAPTION_STYLES[style];
   const u = (Math.min(width, height) / 100) * scaleOf(size);
   // Capitals are wider than small letters, so fewer of them fit on a line.
@@ -624,14 +757,23 @@ async function withPage<T>(width: number, height: number, html: string, use: (pa
 const pickColor = (o: CaptionOptions) => (o.color && /^#[0-9a-f]{6}$/i.test(o.color) ? o.color : CAPTION_STYLES[o.style].color);
 
 async function timedWords(video: string, o: CaptionOptions): Promise<{ transcript: Transcript; words: Word[] }> {
-  const transcript = await transcribe(video, o.language ?? "auto");
+  const given = o.words?.filter((w) => w.text.trim() && Number.isFinite(w.start) && Number.isFinite(w.end)).sort((p, q) => p.start - q.start);
+  const transcript: Transcript = given?.length
+    ? { words: given, text: given.map((w) => w.text).join(" "), language: o.language && o.language !== "auto" ? o.language : "en", model: "given timings" }
+    : await transcribe(video, o.language ?? "auto");
   const edited = o.text?.trim();
-  const same = edited !== undefined && norm(edited.replace(/\s+/g, "")) === norm(transcript.text.replace(/\s+/g, "")) && !edited.includes("\n");
+  // "Unchanged" is judged word by word. Comparing with every space removed made "your iced" equal the misheard
+  // "youriced", so a correction that only splits a run-together word was silently thrown away. Only the languages
+  // written without spaces compare that way.
+  const flat = (s: string) =>
+    UNSPACED.has(transcript.language) ? norm(s.replace(/\s+/g, "")) : s.split(/\s+/).map(norm).filter(Boolean).join(" ");
+  const same = edited !== undefined && flat(edited) === flat(transcript.text) && !edited.includes("\n");
   return { transcript, words: edited && !same ? alignText(transcript.words, edited, transcript.language) : transcript.words };
 }
 
 // One still of the real video with the real captions on it, so the panel shows exactly what will be made.
-export async function previewCaptions(video: string, o: CaptionOptions): Promise<{ image: string; at: number }> {
+export async function previewCaptions(video: string, opts: CaptionOptions): Promise<{ image: string; at: number }> {
+  const o = withDefaults(opts);
   const info = await probe(video);
   const { transcript, words } = await timedWords(video, o);
   const lang = transcript.language;
@@ -674,7 +816,12 @@ export interface CaptionResult {
   model: string;
 }
 
-export async function burnCaptions(video: string, o: CaptionOptions, output: string): Promise<CaptionResult> {
+// The tool and the panel always pass a size and position, but a direct caller may not: without them the page got no
+// font size, fell back to the browser's tiny serif default and drew captions nobody could read.
+const withDefaults = (o: CaptionOptions): CaptionOptions => ({ ...o, size: o.size ?? "medium", position: o.position ?? "bottom" });
+
+export async function burnCaptions(video: string, opts: CaptionOptions, output: string): Promise<CaptionResult> {
+  const o = withDefaults(opts);
   const info = await probe(video);
   const { transcript, words } = await timedWords(video, o);
   const lang = transcript.language;
@@ -754,4 +901,26 @@ export function captionedName(dir: string, video: string): string {
     const out = join(dir, `${stem}-captions${i > 1 ? `-${i}` : ""}.mp4`);
     if (!existsSync(out)) return out;
   }
+}
+
+// A closing card for an ad or a film: big centred words over the film's own last frame, blurred and darkened, so the
+// card belongs to the film instead of cutting to a flat colour. Drawn by the same headless Chrome as the captions
+// (ffmpeg here has no text filters). Type is sized from the frame's short side, so a vertical 9:16 card reads on a phone.
+export async function renderEndCard(text: string, width: number, height: number, background: string | undefined, out: string): Promise<string> {
+  const bg = background && existsSync(background) ? `data:image/jpeg;base64,${readFileSync(background).toString("base64")}` : "";
+  const size = Math.round(Math.min(width, height) * (text.length > 40 ? 0.085 : 0.12));
+  const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+    html,body{margin:0;width:${width}px;height:${height}px;overflow:hidden;background:#111}
+    .bg{position:absolute;inset:-40px;background:${bg ? `url(${bg}) center/cover` : "#111"};filter:blur(28px) brightness(.42)}
+    .t{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 8%;
+       font:900 ${size}px/1.12 "Arial Black","Helvetica Neue",Arial,sans-serif;color:#fff;text-wrap:balance;
+       text-shadow:0 ${Math.round(size / 12)}px ${Math.round(size / 3)}px rgba(0,0,0,.55);white-space:pre-line}
+  </style></head><body><div class="bg"></div><div class="t">${esc(text.trim())}</div></body></html>`;
+  try {
+    await withPage(width, height, html, (page) => page.screenshot({ path: out, type: "png" }));
+  } finally {
+    releaseBrowser();
+  }
+  return out;
 }

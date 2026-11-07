@@ -161,6 +161,18 @@ export async function newErrorTiles(page: Page, known: Iterable<string>): Promis
   }, [[...known], TILE_ID_JS] as [string[], string]);
 }
 
+// Flow says WHY on the tile (".error-message-text"): a busy server, or a policy refusal such as "This prompt might
+// violate our policies about generating prominent people". The second never succeeds on retry, so it must not be
+// retried and the user must see Flow's own words, not a generic "failed".
+async function errorReason(page: Page): Promise<string> {
+  return page
+    .locator("flow-grid-tile-container flow-error-tile")
+    .first()
+    .evaluate((el) => ((el.querySelector(".error-message-text") as HTMLElement | null)?.innerText || (el as HTMLElement).innerText).replace(/\s+/g, " ").trim())
+    .catch(() => "");
+}
+const POLICY = /polic|violat|prominent|safety|not allowed|guideline/i;
+
 // Flow's Retry replaces the failed tile with a fresh render of the same prompt and settings, free of charge.
 // Tiles produced by Agent mode only offer Delete, so the button may not be there at all.
 async function retryErrorTile(page: Page, tile: Locator): Promise<boolean> {
@@ -285,6 +297,13 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
     const errors = progress.length ? 0 : await newErrorTiles(page, before);
     if (!errors) continue;
     failures += errors;
+    const reason = await errorReason(page);
+    if (POLICY.test(reason)) {
+      const hint = /prominent|public figure|celebrit/i.test(reason)
+        ? " Flow thinks a face in this scene looks like a real, well-known person, usually one from an uploaded photo or a character made from one. Retrying will not change that: use a character drawn from a description (flow_character with `describe`) instead."
+        : " Retrying the same prompt will not change that.";
+      throw new Error(`Flow refused this generation on policy grounds: "${reason}" Nothing was charged.${hint}`);
+    }
     if (retriesLeft > 0) {
       retriesLeft--;
       if (job) job.progress = "Flow failed, retrying";
@@ -292,7 +311,7 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
       if (retried) continue;
     }
     if (fresh.length) return fresh;
-    throw new Error(`Flow failed this generation ${failures} time(s) ("Sorry, this image/video failed to generate"). Nothing was charged. Try again later or reword the prompt.`);
+    throw new Error(`Flow failed this generation ${failures} time(s) ("${reason || "Sorry, this image/video failed to generate"}"). Nothing was charged. Try again later or reword the prompt.`);
   }
   throw new Error(`Timed out after ${Math.round(timeoutMs / 1000)}s waiting for Flow to finish.`);
 }
@@ -309,6 +328,9 @@ async function openSettings(page: Page): Promise<void> {
 
 async function pickRadio(page: Page, name: string | RegExp): Promise<void> {
   const radio = page.getByRole("radio", { name, exact: typeof name === "string" }).first();
+  // The Escape that closes the model menu when no model change is needed can close the whole settings popover with
+  // it (a brand-new project already on the newest Nano Banana: "Flow has no "x2" option"), so reopen it and look again.
+  if (!(await radio.isVisible().catch(() => false))) await openSettings(page).catch(() => undefined);
   if (!(await radio.isVisible().catch(() => false))) {
     throw new Error(`Flow has no "${name}" option for the current mode/model.`);
   }
@@ -359,6 +381,19 @@ async function pickModel(page: Page, model: string): Promise<void> {
 }
 
 // Applies the scene settings and returns the credit cost Flow quotes for them.
+// One Escape does not always shut the settings popover (2026-10-30: it stayed open after a run and its credit label
+// swallowed the next click on the prompt box, so flow_character timed out). Check it is gone, and try again.
+async function closeSettings(page: Page): Promise<void> {
+  const popover = page.locator(".cdk-overlay-pane:has(.credit-cost-label)");
+  for (let i = 0; i < 3; i++) {
+    if (!(await popover.count())) return;
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur?.());
+    await page.keyboard.press("Escape");
+    await pause(page, 400);
+  }
+  if (await popover.count()) await page.getByRole("button", { name: "Settings trigger" }).click({ timeout: 5000 }).catch(() => undefined);
+}
+
 async function applySettings(page: Page, job: Job): Promise<number> {
   const s = job.params;
   const framesMode = Boolean(s.first_frame || s.last_frame);
@@ -372,10 +407,10 @@ async function applySettings(page: Page, job: Job): Promise<number> {
   if (s.type === "video" && s.duration) await pickRadio(page, `${s.duration}s`);
   await pickRadio(page, `x${s.variants ?? 1}`);
   await pause(page, 600);
-  const costText = await page.getByRole("link", { name: /credits?$/ }).innerText();
+  // The quote is "<N> credits". Low balances add an "Add AI credits" banner link that the old /credits?$/ also matched.
+  const costText = await page.getByRole("link", { name: /^\d[\d,]*\s+credits?$/ }).first().innerText();
   const cost = Number(costText.match(/\d+/)?.[0] ?? NaN);
-  await page.keyboard.press("Escape");
-  await pause(page, 400);
+  await closeSettings(page);
   if (Number.isNaN(cost)) throw new Error(`Could not read the credit cost from Flow ("${costText}").`);
   return cost;
 }
@@ -1138,6 +1173,12 @@ const loadLooks = (): Record<string, string> => {
   }
 };
 export const characterLook = (name: string): string | undefined => loadLooks()[name.toLowerCase()];
+export function forgetCharacter(name: string): void {
+  const all = loadLooks();
+  if (!(name.toLowerCase() in all)) return;
+  delete all[name.toLowerCase()];
+  writeFileSync(LOOKS_FILE, JSON.stringify(all, null, 2));
+}
 export function rememberCharacter(name: string, look: string): void {
   const all = { ...loadLooks(), [name.toLowerCase()]: look.trim() };
   mkdirSync(HOME_DIR, { recursive: true });
@@ -1794,4 +1835,30 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
 
   if (balance !== undefined && left !== undefined) job.credits = balance - left;
   return files;
+}
+
+// A fresh Flow project, so a film can start from scratch without anyone clicking. Mapped live (2026-10-30): Flow's home
+// page has one button "New project", which opens /project/<uuid>; on the project page the name is a text box whose
+// accessible name is "Editable text" (it holds Flow's default name, e.g. "Oct 29 - 22:17").
+export async function createProject(title?: string): Promise<{ id: string; url: string; title: string }> {
+  const page = await getFlowPage();
+  await page.goto(inEnglish("https://flow.google.com/"), { waitUntil: "domcontentloaded" });
+  const button = page.getByRole("button", { name: /new project/i }).first();
+  await button.waitFor({ state: "visible", timeout: 30_000 }).catch(() => {
+    throw new Error("Flow's home page shows no \"New project\" button. Check the Flow window is signed in.");
+  });
+  await button.click();
+  await page.waitForURL(/\/project\/[0-9a-f-]{36}/, { timeout: 30_000 }).catch(() => {
+    throw new Error("Pressed \"New project\" but Flow did not open a project within 30 s.");
+  });
+  const id = page.url().match(/\/project\/([0-9a-f-]{36})/)![1];
+  const name = page.getByRole("textbox", { name: "Editable text" }).first();
+  await name.waitFor({ state: "visible", timeout: 15_000 }).catch(() => undefined);
+  if (title?.trim()) {
+    await name.fill(title.trim()).catch(() => undefined);
+    await name.press("Enter").catch(() => undefined);
+    await page.waitForTimeout(1200);
+  }
+  const shown = (await name.inputValue().catch(() => "")) || title || "";
+  return { id, url: `https://flow.google.com/project/${id}`, title: shown };
 }

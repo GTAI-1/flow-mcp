@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { Core } from "./core.js";
+import { captionPreviewHere, captionSetupHere, captionsHere, narrateHere, presenterHere, transcribeHere, voicesHere, type Core } from "./core.js";
 import { PORT, TOKEN_FILE } from "./server.js";
 
 // Used when another flow-mcp process (Studio or a second Claude client) already owns the Flow tab and queue.
@@ -23,8 +23,10 @@ export class RemoteCore implements Core {
   download = (a: unknown) => call("download", a);
   assemble = (a: unknown) => call("assemble", a);
   techniques = (a: unknown) => call("techniques", a);
-  voices = () => call("voices", {});
-  narrate = (a: unknown) => call("narrate", a);
+  // Run here, not in the owner: they never touch Chrome, and the owner may be running older code.
+  voices = voicesHere;
+  narrate = narrateHere;
+  new_project = (a: unknown) => call("new_project", a);
   character = (a: unknown) => call("character", a);
   characters = () => call("characters", {});
   character_edit = (a: unknown) => call("character_edit", a);
@@ -35,10 +37,12 @@ export class RemoteCore implements Core {
   continue_shot = (a: unknown) => call("continue_shot", a);
   agent = (a: unknown) => call("agent", a);
   outputs = () => call("outputs", {});
-  transcribe = (a: unknown) => call("transcribe", a);
-  caption_preview = (a: unknown) => call("caption_preview", a);
-  captions = (a: unknown) => call("captions", a);
-  caption_setup = () => call("caption_setup", {});
+  // Captions, like narration, run here: they never touch the Flow Chrome.
+  transcribe = transcribeHere;
+  caption_preview = captionPreviewHere;
+  captions = captionsHere;
+  presenter = presenterHere;
+  caption_setup = captionSetupHere;
 
   // Long waits are split up so no single HTTP request outlives fetch's header timeout.
   async wait(a: { job_ids?: string[]; timeout_seconds: number }): Promise<unknown> {
