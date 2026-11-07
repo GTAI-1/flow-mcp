@@ -24,7 +24,7 @@ const sceneSchema = z.object({
   model: z
     .string()
     .optional()
-    .describe("Model label as shown in Flow, e.g. 'Omni Flash 1.2', 'Veo 3.1 - Lite', 'Nano Banana Pro'. Images default to the newest Nano Banana; video omitted keeps Flow's current model."),
+    .describe("Model label as shown in Flow, e.g. 'Omni 1.1 Flash', 'Veo 3.1 - Fast', 'Veo 3.1 - Quality', 'Nano Banana Pro'. Images default to the newest Nano Banana (2.1 today); video omitted keeps Flow's current model."),
   aspect_ratio: z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]).optional().describe("Video supports 16:9 and 9:16 only."),
   duration: z.number().int().min(3).max(15).optional().describe("Video length in seconds. Omni Flash 1.2 supports 3-10s for all users or 3-15s with Google AI Plus/Pro/Ultra. Other models have shorter model-specific limits."),
   resolution: z.enum(["360p", "720p"]).optional().describe("Video resolution. Omni models only."),

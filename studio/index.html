@@ -452,12 +452,12 @@ const toast = (msg, bad) => { const t = Object.assign(document.createElement("di
 const guard = () => { if (!LIVE) { toast("Not connected — start Flow Studio first.", true); return false; } return true; };
 
 // Prices Flow quotes on a Pro plan, x1 take.
-const VIDEO_COST = { "Omni Flash 1.2": (resolution, duration) => { const rate = resolution === "360p" ? 1 : 3; return rate * Math.min(duration, 10) + 2 * rate * Math.max(0, duration - 10); }, "Omni 1.1 Flash": { "360p": { 4: 4, 6: 5, 8: 6, 10: 7 }, "720p": { 4: 7, 6: 10, 8: 12, 10: 15 } }, "Veo 3.1 - Lite": 10, "Veo 3.1 - Fast": 20, "Veo 3.1 - Quality": 100 };
+const VIDEO_COST = { "Omni 1.2 Flash": (resolution, duration) => { const rate = resolution === "360p" ? 1 : 3; return rate * Math.min(duration, 10) + 2 * rate * Math.max(0, duration - 10); }, "Omni 1.1 Flash": { "360p": { 4: 4, 6: 5, 8: 6, 10: 7 }, "720p": { 4: 7, 6: 10, 8: 12, 10: 15 } }, "Veo 3.1 - Lite": 10, "Veo 3.1 - Fast": 20, "Veo 3.1 - Quality": 100 };
 const blank = () => ({ prompt: "", technique: "", chain: false, match: false, first: null, last: null, refs: [] });
 const DEFAULTS = {
   tab: "cast",
   frames: { project: "MyFilm", aspect: "16:9", variants: 1, engine: "exact", scenes: [blank()] },
-  shots: { project: "MyFilm", model: "Omni Flash 1.2", aspect: "16:9", duration: 8, resolution: "720p", variants: 1, quality: "original", max: 25, scenes: [blank()] },
+  shots: { project: "MyFilm", model: "Omni 1.2 Flash", aspect: "16:9", duration: 8, resolution: "720p", variants: 1, quality: "original", max: 25, scenes: [blank()] },
   narrate: { project: "MyFilm", engine: "kokoro", kokoroVoice: "am_michael", speed: 100, geminiVoice: "Charon", text: "", style: "" },
   cut: { project: "MyFilm", music: null, voiceover: null, hold: true, clips: [] },
   captions: { video: null, style: "bold", position: "bottom", size: 100, colors: {}, text: "" },
@@ -501,7 +501,7 @@ const SEGS = {
   n_engine: { get: () => S.narrate.engine, set: (v) => (S.narrate.engine = v), opts: ["kokoro", "gemini"], labels: { kokoro: "Kokoro", gemini: "Google AI Studio" } },
 };
 function shotDurations(model) {
-  if (model === "Omni Flash 1.2") return Array.from({ length: 13 }, (_, i) => i + 3);
+  if (model === "Omni 1.2 Flash") return Array.from({ length: 13 }, (_, i) => i + 3);
   if (model.startsWith("Omni")) return [4, 6, 8, 10];
   if (model.includes("Quality")) return [8];
   return [4, 6, 8];
