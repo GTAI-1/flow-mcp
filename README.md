@@ -73,6 +73,17 @@ claude mcp add --scope user flow -- node /absolute/path/to/flow-mcp/dist/index.j
 
 `--scope user` makes it available in every folder; the default (`local`) only works in the folder you ran it from.
 
+### Use Dia instead of Chrome (macOS)
+
+Set `FLOW_MCP_CHROME` when logging in and when registering the MCP server:
+
+```bash
+FLOW_MCP_CHROME=/Applications/Dia.app/Contents/MacOS/Dia npm run login
+claude mcp add --scope user flow -e FLOW_MCP_CHROME=/Applications/Dia.app/Contents/MacOS/Dia -- node /absolute/path/to/flow-mcp/dist/index.js
+```
+
+Keep `flow` before `-e`: Claude treats `-e` as accepting one or more environment variables. Flow MCP stores its separate session in `~/.flow-mcp/chrome-profile`, so it does not use your everyday Dia profile.
+
 **Claude Desktop**: add to `claude_desktop_config.json` (Mac: `~/Library/Application Support/Claude/`, Windows:
 `%APPDATA%\Claude\`). On Windows, write the path with doubled backslashes, like
 `"C:\\Users\\you\\flow-mcp\\dist\\index.js"`:
