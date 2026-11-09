@@ -204,7 +204,6 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | `flow_characters` | List the project's characters |
 | `flow_techniques` | 39 film-technique prompt presets (camera moves, product shots, transitions, image commands); pass an id as a scene's `technique` |
 | `flow_narrate` | Free narration audio, any length: `kokoro` (the default, a voice that runs on your computer, 28 voices and a `speed`), or `gemini` (Google AI Studio text-to-speech, with the same voices Flow has, plus a `style` note; falls back to Kokoro when the daily limit is used up) |
-| `flow_music_generate` | Generate MP3/WAV music with Google's official Lyria Gemini API (`lyria-3.5` full songs or `lyria-3-clip-preview` clips), optionally instrumental and image-inspired; saves a metadata JSON sidecar. Uses Gemini API billing, not Flow credits. Requires `GEMINI_API_KEY` or the flow-mcp Gemini key file. |
 | `flow_voices` | Narrator voices available, whether Kokoro's model is downloaded yet, and whether a Google key is set up |
 | `flow_captions` | Burn spoken-word captions into any video, landscape or vertical, in one of five styles, at any height and size, in normal, capital or lowercase letters, in about 100 languages; returns the transcript so a misheard word can be fixed and the call repeated (local whisper.cpp, Chrome and FFmpeg, no credits) |
 | `flow_transcribe` | Hear the words in any video or audio on your computer, with each word's start and end time (local whisper.cpp, free) |
@@ -244,7 +243,7 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
   language setting is never changed, and prompts can be written in any language.
 - Environment variables: `GEMINI_API_KEY`, `FLOW_MCP_PORT` (8787), `FLOW_MCP_OUTPUT`,
   `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`, `FLOW_MCP_PAUSE_MIN_S`,
-  `FLOW_MCP_PAUSE_MAX_S`. Music generation uses the existing Gemini key path and never consumes Flow credits.
+  `FLOW_MCP_PAUSE_MAX_S`.
 
 ## If something goes wrong
 

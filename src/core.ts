@@ -4,7 +4,6 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { assemble, voiceTrack } from "./assemble.js";
 import { GEMINI_VOICES, geminiKey, saveGeminiKey, speakWithGemini } from "./gemini.js";
-import { generateMusic } from "./music.js";
 import { KOKORO_DEFAULT_VOICE, KOKORO_MB, KOKORO_VOICES, kokoroReady, speakWithKokoro } from "./kokoro.js";
 import { extractFirstFrame, extractFrameAt, extractLastFrame } from "./chain.js";
 import { burnCaptions, captionedName, captionSetup, previewCaptions, transcribe } from "./captions.js";
@@ -325,16 +324,6 @@ export const shapes = {
     speed: z.number().min(0.5).max(2).optional().describe("Kokoro only: speaking speed, 1 = normal. 0.9 is a calmer narrator pace."),
     style: z.string().max(200).optional().describe("Delivery note for the 'gemini' engine, e.g. 'slowly and warmly'. Keep it to a few words: long notes make the model ramble."),
   },
-  music_generate: {
-    project: z.string().min(1).describe("Folder under the Flow MCP output root for generated audio."),
-    prompt: z.string().min(1).max(8000).describe("Music direction: genre, mood, instruments, BPM/key, structure and intended use. Do not name living artists or request copyrighted lyrics."),
-    model: z.enum(["lyria-3.5", "lyria-3-clip-preview"]).default("lyria-3.5").describe("Official Google Lyria model. lyria-3.5 makes a full song; lyria-3-clip-preview makes a short instrumental clip."),
-    output_format: z.enum(["mp3", "wav"]).default("mp3").describe("Audio container. WAV is supported for lyria-3.5; the clip model is MP3."),
-    output_name: z.string().max(120).optional().describe("Safe base filename without requiring an extension; a numbered music-NN name is chosen by default."),
-    duration_seconds: z.number().int().min(5).max(300).optional().describe("A target mentioned to Lyria in the prompt; exact duration is model-controlled."),
-    instrumental: z.boolean().default(false).describe("Append an instrumental-only/no-vocals instruction for background music."),
-    image_paths: z.array(z.string().min(1)).max(10).optional().describe("Up to 10 absolute JPEG/PNG/WebP paths to inspire the music; files are sent to Google and must be user-approved."),
-  },
   edit: {
     project: z.string().min(1).describe("Local folder for the edited clip."),
     asset: z.string().min(1).describe("Title (or title prefix) of a video already in the Flow project; see flow_assets."),
@@ -450,7 +439,6 @@ export interface Core {
   techniques(a: Args<"techniques">): Promise<unknown>;
   voices(): Promise<unknown>;
   narrate(a: Args<"narrate">): Promise<unknown>;
-  music_generate(a: Args<"music_generate">): Promise<unknown>;
   new_project(a: Args<"new_project">): Promise<unknown>;
   character(a: Args<"character">): Promise<unknown>;
   characters(): Promise<unknown>;
@@ -818,10 +806,6 @@ export class LocalCore implements Core {
 
   voices = voicesHere;
   narrate = narrateHere;
-
-  async music_generate({ project, ...rest }: Args<"music_generate">) {
-    return generateMusic({ project, ...rest });
-  }
 
   async techniques({ category }: Args<"techniques">) {
     return TECHNIQUES.filter((t) => !category || t.category === category);
