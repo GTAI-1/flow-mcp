@@ -284,6 +284,18 @@ server.registerTool(
 );
 
 server.registerTool(
+  "flow_music_generate",
+  {
+    title: "Generate music with Lyria",
+    description:
+      "Generate MP3/WAV music with Google's official Lyria Gemini API and save it under the project's output folder. This is separate Gemini API billing, not Google Flow credits. Requires a verified Gemini API key in GEMINI_API_KEY or the flow-mcp Gemini key file. Use flow_assemble with the returned output path to mix it into a film. Do not name living artists or request copyrighted lyrics.",
+    inputSchema: shapes.music_generate,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  (args) => reply(patient("flow_music_generate", core.music_generate(args))),
+);
+
+server.registerTool(
   "flow_voices",
   {
     title: "List Flow voices",
