@@ -102,7 +102,7 @@ async function readCredits(page: Page): Promise<number | undefined> {
   }
 }
 
-const settingsTrigger = (page: Page) => page.getByRole("button", { name: "Settings trigger" });
+const settingsTrigger = (page: Page) => page.locator("button.settings-trigger-button, button[aria-label='Settings trigger']").first();
 
 // Every finished tile carries its media id in data-media-id; some thumbnails also have it in the URL, but Flow
 // serves signed /asb/ links with no uuid, so the attribute comes first and the URL is only a fallback.
@@ -317,10 +317,13 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
 }
 
 async function openSettings(page: Page): Promise<void> {
+  await setAgentMode(page, false).catch(() => {});
   const probe = page.getByRole("radio", { name: "Image", exact: true });
   for (let attempt = 0; attempt < 3; attempt++) {
     if (await probe.isVisible().catch(() => false)) return;
-    await settingsTrigger(page).click();
+    const trigger = settingsTrigger(page);
+    await trigger.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
+    await trigger.click();
     await probe.waitFor({ state: "visible", timeout: 3000 }).catch(() => {});
   }
   if (!(await probe.isVisible().catch(() => false))) throw new Error("Could not open Flow's generation settings popover.");
@@ -404,7 +407,10 @@ async function applySettings(page: Page, job: Job): Promise<number> {
   const model = s.type === "image" && LEGACY_IMAGE_MODEL.test(s.model ?? "") ? LATEST_IMAGE_MODEL : s.model;
   if (model) await pickModel(page, model);
   if (s.type === "video" && s.resolution) await pickRadio(page, new RegExp(`^${s.resolution}`));
-  if (s.type === "video" && s.duration) await pickRadio(page, `${s.duration}s`);
+  if (s.type === "video" && s.duration) {
+    const radio = page.getByRole("radio", { name: `${s.duration}s`, exact: true }).first();
+    if (await radio.isVisible().catch(() => false)) await pickRadio(page, `${s.duration}s`).catch(() => {});
+  }
   await pickRadio(page, `x${s.variants ?? 1}`);
   await pause(page, 600);
   // The quote is "<N> credits". Low balances add an "Add AI credits" banner link that the old /credits?$/ also matched.
@@ -500,13 +506,21 @@ export async function attachAsset(page: Page, opener: Locator, assetName: string
 }
 
 async function typePrompt(page: Page, prompt: string): Promise<void> {
+  await dismissOverlays(page);
   const box = page.locator(".ProseMirror");
   await box.click();
-  await page.keyboard.press("ControlOrMeta+a");
-  await page.keyboard.press("Delete");
-  // Enter submits in Flow, so the prompt goes in as a single line.
-  await page.keyboard.type(prompt.replace(/\s*\n+\s*/g, " ").trim(), { delay: 8 });
+  const text = prompt.replace(/\s*\n+\s*/g, " ").trim();
+  await page.evaluate((val) => {
+    const el = document.querySelector(".ProseMirror") as HTMLElement | null;
+    if (el) {
+      el.focus();
+      document.execCommand("selectAll", false, undefined);
+      document.execCommand("insertText", false, val);
+    }
+  }, text);
   await pause(page, 500);
+  await page.keyboard.press("Escape").catch(() => {});
+  await clearBackdrops(page);
 }
 
 export type DownloadQuality = "original" | "upscaled";
@@ -791,6 +805,11 @@ async function showAllMedia(page: Page, thorough = false): Promise<void> {
 
 async function ensureProjectGrid(page: Page): Promise<void> {
   await dismissOverlays(page);
+  const sideClose = page.getByRole("button", { name: "Close", exact: true });
+  if (await sideClose.isVisible().catch(() => false)) {
+    await sideClose.click().catch(() => {});
+    await pause(page, 500);
+  }
   const root = page.url().match(/^https:\/\/[^/]+\/project\/[0-9a-f-]{36}/)?.[0];
   // Compared by path: an address ending in ?hl=en is already the grid.
   if (root && new URL(page.url()).pathname !== new URL(root).pathname) {
@@ -810,8 +829,7 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const s = job.params;
 
   await ensureProjectGrid(page);
-  const agent = page.getByRole("button", { name: "Agent", exact: true });
-  if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
+  await setAgentMode(page, false).catch(() => {});
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
 
@@ -1215,17 +1233,28 @@ export async function createCharacter(c: CharacterParams, job?: Job): Promise<{ 
   await dismissOverlays(page);
   await scrollToTop(page);
 
-  await openProjectNav(page, "Characters");
-  await pause(page, 1500);
-  // With no characters yet Flow jumps straight to the creation page.
-  const create = page.getByRole("button", { name: "New character" });
-  if (await create.isVisible().catch(() => false)) await create.click();
-  await page.waitForURL(/\/character$/, { timeout: 15_000 });
+  if (!page.url().includes("/character")) {
+    await openProjectNav(page, "Characters").catch(() => {});
+    await pause(page, 1000);
+    const addMenu = page.locator('button[aria-label="Add media menu"]');
+    if (await addMenu.isVisible().catch(() => false)) {
+      await addMenu.click();
+      await pause(page, 500);
+      const createItem = page.locator('[role="menuitem"]').filter({ hasText: /Create character/i });
+      if (await createItem.isVisible().catch(() => false)) {
+        await createItem.click();
+      }
+    } else {
+      const create = page.getByRole("button", { name: "New character" });
+      if (await create.isVisible().catch(() => false)) await create.click();
+    }
+    await page.waitForURL(/\/character/, { timeout: 15_000 }).catch(() => {});
+  }
 
   if (image.startsWith(ASSET_PREFIX)) {
     const title = image.slice(ASSET_PREFIX.length).trim();
-    await page.getByRole("button", { name: "Add from project", exact: true }).click();
-    const list = page.getByRole("listbox", { name: "Asset list" });
+    await page.getByRole("button", { name: /Add from project/i }).click();
+    const list = page.getByRole("listbox", { name: /Asset list/i });
     await list.waitFor({ state: "visible", timeout: 10_000 });
     let option = optionByName(list, title);
     if (!(await option.isVisible().catch(() => false))) {
@@ -1350,7 +1379,7 @@ export async function runEdit(job: Job): Promise<string[]> {
 // mode on then breaks the NEXT job, which expects the plain composer - a free character build failed that way. So this
 // confirms the toggle actually landed rather than assuming the click worked.
 async function setAgentMode(page: Page, on: boolean): Promise<void> {
-  const agent = page.getByRole("button", { name: "Agent", exact: true });
+  const agent = page.locator("button.agent-mode-chip, button:has-text(\"Agent\")").first();
   // Playwright says why a click did not land ("<div ...> intercepts pointer events", "element is not visible"); keep
   // that, so a failure names what was in the way instead of guessing.
   let why = "";
