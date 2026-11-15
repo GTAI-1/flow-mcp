@@ -82,7 +82,14 @@ export async function getFlowPage(): Promise<Page> {
   const b = await getBrowser();
   const context = b.contexts()[0];
   if (!context) throw new Error("Chrome has no browser context; restart the Flow Chrome window.");
-  const existing = context.pages().find((p) => FLOW_HOSTS.test(p.url()));
+  const flowPages = context.pages().filter((p) => FLOW_HOSTS.test(p.url()));
+  // A login launch can leave the Flow marketing page open beside the signed-in
+  // dashboard or a project. Prefer the project, then the dashboard, so status
+  // checks do not mistake `/about` for a signed-out session.
+  const existing =
+    flowPages.find((p) => /\/project\//.test(p.url())) ??
+    flowPages.find((p) => !/\/about(?:[/?#]|$)/.test(p.url())) ??
+    flowPages[0];
   if (existing) {
     await ensureEnglish(existing);
     return existing;
