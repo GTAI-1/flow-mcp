@@ -268,3 +268,16 @@ build."* Then fully quit and reopen your assistant app so it loads the new versi
 This automates Flow's web interface. It can break whenever Google changes that interface, and
 automated use may be against Google's terms of service. Use it on your own account, at your own
 risk.
+
+
+### Omni Flash 1.2 (Google Flow)
+
+Use `model: "Omni 1.2 Flash"` (the classic model picker also accepts `"Omni Flash 1.2"` as an alias), `duration: 3` through `15` seconds, at `360p` or `720p`. Duration 11-15 seconds requires Google AI Plus, Pro or Ultra; without a subscription use 3-10 seconds.
+
+Google Flow's November 2026 published rate is 1 credit/second at 360p and 3 credits/second at 720p for the first 10 seconds. For seconds 11-15 those rates double. For example, one 8s 720p take is 24 credits and one 15s 720p take is 60 credits. Each variant is billed separately.
+
+The browser's actual Flow quote, when available, remains authoritative. `max_credits` defaults to 25; increase it deliberately before attempting longer or multi-variant videos. The older Omni 1.1 remains selectable until Google retires it on December 5, 2026.
+
+Sources: [Google Flow model capabilities](https://support.google.com/flow/answer/16352836) and [credit costs](https://support.google.com/flow/answer/16526234).
+
+The new agent-first composer is handled separately in [PR #29](https://github.com/GTAI-1/flow-mcp/pull/29). Before merging these changes together, its credit estimate and model selector need to support the 11-15s credit tier and normalize Omni 1.2 names; see the PR discussion.
