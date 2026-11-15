@@ -8,7 +8,7 @@ import { KOKORO_DEFAULT_VOICE, KOKORO_MB, KOKORO_VOICES, kokoroReady, speakWithK
 import { extractFirstFrame, extractFrameAt, extractLastFrame } from "./chain.js";
 import { burnCaptions, captionedName, captionSetup, previewCaptions, transcribe } from "./captions.js";
 import { presenter } from "./presenter.js";
-import { characterLook, createCharacter, createProject, downloadAsset, trashAsset, editCharacter, getFlowState, listAssets, forgetCharacter, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
+import { characterLook, createCharacter, createProject, downloadAsset, downloadCollection, trashAsset, editCharacter, getFlowState, listAssets, forgetCharacter, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
 import { BIN, COMPUTER, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
@@ -134,8 +134,13 @@ export const shapes = {
   assets: { kind: z.enum(["image", "video", "scene"]).optional() },
   download: {
     project: z.string().min(1).describe("Local folder name under the output root."),
-    assets: z.array(z.string().min(1)).min(1).max(30).describe("Titles (or title prefixes) from flow_assets, in the order they should be numbered."),
+    assets: z.array(z.string().min(1)).max(30).default([]).describe("Titles (or title prefixes) from flow_assets, in the order they should be numbered."),
     quality: z.enum(["original", "upscaled"]).default("original"),
+    collection: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Name of a Flow collection: every image in it comes down in ONE ZIP (originals), each under its own title. Use it to fetch a batch whose download stopped."),
   },
   assemble: {
     project: z.string().min(1).describe("Same project name used in flow_generate."),
@@ -624,11 +629,12 @@ export class LocalCore implements Core {
     return (await listAssets()).filter((a) => !kind || a.kind === kind).map(({ name, kind }) => ({ name, kind }));
   }
 
-  async download({ project, assets, quality }: Args<"download">) {
+  async download({ project, assets, quality, collection }: Args<"download">) {
     if (this.queue.busy) throw new Error(BUSY);
+    if (!assets.length && !collection) throw new Error("Name the assets to download, or a collection.");
     const dir = projectDir(project);
     mkdirSync(dir, { recursive: true });
-    const files: string[] = [];
+    const files: string[] = collection ? await downloadCollection(collection, dir) : [];
     // Numbering from 1 every call overwrote clips fetched earlier - it destroyed a finished shot once. Carry on from
     // the highest clip-NN already on disk instead.
     let next = Math.max(0, ...readdirSync(dir).map((f) => Number(f.match(/^clip-(\d+)/)?.[1] ?? 0))) + 1;

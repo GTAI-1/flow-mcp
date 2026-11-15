@@ -700,3 +700,27 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   `end_hold` {seconds, fade} holds the last frame and fades the picture to black (music_curve fades the sound with it). Checked on The Last Delivery: 103.75 s, -14.4 LUFS.
   The speech check hears "deliveries stopped" as "delivery stopped" on both Tyra and Kokoro: it is the listener, not the voice. Pass the real words as `text` to burnCaptions.
 
+- COLLECTIONS = ONE DOWNLOAD FOR A WHOLE BATCH (mapped live 2026-11-07, the user's idea). Left menu "Library" ->
+  `Create collection` adds an entry to list "Collections" with textbox "Rename item" (fill + Enter). Cmd+click (Ctrl
+  on a PC, not checked) selects grid tiles (an inner `.selected`; no checkbox, the hover bar is only Favorite / Reuse
+  prompt / More options); dragging one selected tile WITH the key held drops the whole selection on a collection entry
+  (without the key only the dragged tile goes). Adding MOVES the images out of All media; the collection shows in the
+  grid as `<flow-collection-tile>` (TILE_ID_JS and scanGrid now skip it: its thumbnail changes as items are added, so it
+  passed for a new image). Collection view `/project/<id>/collection/<uuid>`: the top bar's `More options` (NOT
+  "More options for the project", which holds Delete) -> `Download collection` -> one ZIP built in the page (blob: URL)
+  of the 1K originals, each `<title, spaces as _>_<first 8 chars of the media id>.jpg`. Flow can leave out an image that
+  has only just arrived (1 of 2 missing once, both there a moment later), so collectAndDownload checks the ZIP against
+  the list and downloads again, up to 3 times. Agent batches with original quality now go: match tiles -> collection
+  `<folder>-<job id>` -> one ZIP. A collection failure stops the batch (CollectionError) and never re-downloads one by
+  one or re-generates; flow_download `collection` fetches a whole collection. And when Agent mode fails outright, the
+  batch now stops with the reason instead of making every image one by one (the user: "I always see you creating one by
+  one"). 3 images: 17 s end to end, most of it page loads.
+- STYLE REFERENCES CONTAMINATE CUT-OUTS (2026-11-07, Gran Colombia set): a 17-image agent batch with ONE style
+  reference (a ball in a hat on a map) asked for balls alone on pure green, faceless and bare-headed; 10 of 13 came
+  back on the reference's map, 6 wore its hat, some had faces, and "the hat on its own" was a ball wearing it. The agent
+  copies a reference's background and props whatever the words say. Green-screen cut-outs go WITHOUT a reference.
+- AGENT BATCH MATCHING + COLLECTION CHECK (2026-11-07): (1) 8 scenes sharing one long style paragraph matched 1 of 7
+  pictures: the shared words drowned each scene's own. matchScenes now drops words that 60%+ of the scenes share and
+  matches on the rest at a 0.3 threshold (unit-checked: 4/4 right). (2) After the drag, the collection page did not
+  list the just-moved images until reloaded, so the tool thought the move failed and then tried to re-select images no
+  longer in the grid ("None of the 1 image(s) could be selected"). It now reloads the collection before counting.

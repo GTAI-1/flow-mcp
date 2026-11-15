@@ -1,4 +1,4 @@
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import type { Locator, Page } from "playwright-core";
@@ -109,6 +109,7 @@ const settingsTrigger = (page: Page) => page.getByRole("button", { name: "Settin
 // Video tiles at rest expose neither, and their signed thumbnail URL is re-signed over time - using it as a handle
 // made old tiles look new. Titles are stable, so an id-less tile is identified by its title instead.
 const TILE_ID_JS = `(tile) => {
+  if (tile.querySelector("flow-collection-tile")) return undefined;
   const media = tile.querySelector("img[data-media-id], video[data-media-id], img[src], video[src]");
   const id = media && (media.getAttribute("data-media-id") || media.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0]);
   if (id) return id;
@@ -651,6 +652,312 @@ function unpackTakes(zip: string, targetStem: string): string[] {
   return out;
 }
 
+// ---- Collections: the whole batch in ONE download (mapped live 2026-11-07, the user's idea) ----------------------
+// Left menu "Library" -> `Create collection` adds an entry to list "Collections" with a textbox "Rename item".
+// Cmd+click (Ctrl elsewhere - not checked on a PC) selects grid tiles (an inner ".selected"); dragging one of them
+// with the key still held drops the whole selection on a collection entry. That MOVES the images out of All media
+// into the collection, which also shows in the grid as a <flow-collection-tile>. In the collection's own view
+// (/project/<id>/collection/<uuid>) the top bar's `More options` has `Download collection`: one ZIP of the originals,
+// each named "<title with _>_<first 8 characters of its media id>.jpg". 1 image came down in 1.2 s.
+const SELECT_KEY = process.platform === "darwin" ? "Meta" : "Control";
+
+export class CollectionError extends Error {}
+
+const collectionEntry = (page: Page, name: string) =>
+  page.getByRole("list", { name: "Collections" }).getByRole("button", { name, exact: true });
+
+async function ensureCollection(page: Page, name: string): Promise<Locator> {
+  const entry = collectionEntry(page, name);
+  if (await entry.isVisible().catch(() => false)) return entry;
+  if (await entry.count().catch(() => 0)) {
+    // It exists but the Library section is folded away.
+    await page.getByRole("button", { name: "Toggle library" }).click({ timeout: 4000 }).catch(() => {});
+    await leaveSideMenu(page);
+    await pause(page, 600);
+    if (await entry.isVisible().catch(() => false)) return entry;
+  }
+  const create = page.getByRole("button", { name: "Create collection" });
+  if (!(await create.isVisible().catch(() => false)))
+    throw new CollectionError('Flow\'s left-hand menu shows no "Create collection" button, so the images could not be gathered into one download.');
+  await create.click({ timeout: 5000 });
+  const box = page.getByRole("textbox", { name: "Rename item" }).first();
+  await box.waitFor({ state: "visible", timeout: 8000 }).catch(() => {
+    throw new CollectionError("Flow made a collection but offered no name box for it.");
+  });
+  await box.fill(name);
+  await box.press("Enter");
+  await leaveSideMenu(page);
+  await pause(page, 1000);
+  if (!(await entry.isVisible().catch(() => false))) throw new CollectionError(`The new collection "${name}" does not show in Flow's left-hand menu.`);
+  return entry;
+}
+
+const isSelected = (tile: Locator) => tile.locator(".selected").count().then((n) => n > 0, () => false);
+
+async function selectClick(page: Page, tile: Locator): Promise<void> {
+  await tile.scrollIntoViewIfNeeded().catch(() => {});
+  const box = await tile.boundingBox();
+  if (!box) return;
+  // Upper middle of the tile: clear of the hover buttons in the corners and the title along the bottom.
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.4);
+  await pause(page, 120);
+  await page.keyboard.down(SELECT_KEY);
+  await page.mouse.down();
+  await page.mouse.up();
+  await page.keyboard.up(SELECT_KEY);
+  await pause(page, 220);
+}
+
+// Selects exactly these tiles (anything selected before is let go first) and returns the last one selected, which is
+// on screen and becomes the drag handle.
+async function selectTiles(page: Page, ids: string[]): Promise<string | undefined> {
+  for (const tile of await page.locator("flow-grid-tile-container:has(.selected)").all()) {
+    const id = await tile.evaluate((t, js) => (eval(js) as (t: Element) => string | undefined)(t), TILE_ID_JS).catch(() => undefined);
+    if (!id || !ids.includes(id)) await selectClick(page, tile);
+  }
+  await scrollToTop(page);
+  const left = new Set(ids);
+  let last: string | undefined;
+  for (let step = 0; step < 200 && left.size; step++) {
+    for (const id of [...left]) {
+      const tile = mediaTile(page, id);
+      if (!(await tile.count())) continue;
+      if (!(await isSelected(tile))) await selectClick(page, tile);
+      if (await isSelected(tile)) {
+        left.delete(id);
+        last = id;
+      }
+    }
+    if (!left.size) break;
+    const moved = await page.evaluate(() => {
+      const el = document.querySelector(".page-container");
+      if (!el) return false;
+      const before = el.scrollTop;
+      el.scrollTop = before + el.clientHeight * 0.8;
+      return el.scrollTop > before;
+    });
+    if (!moved) break;
+    await pause(page, 700);
+  }
+  // The handle has to be on screen for the drag.
+  if (last) await mediaTile(page, last).scrollIntoViewIfNeeded().catch(() => {});
+  return last;
+}
+
+async function dragSelectionTo(page: Page, handle: string, entry: Locator): Promise<void> {
+  const tile = await mediaTile(page, handle).boundingBox();
+  const target = await entry.boundingBox();
+  if (!tile || !target) throw new CollectionError("The images or the collection were not on screen for the drag.");
+  const x = tile.x + tile.width / 2;
+  const y = tile.y + tile.height * 0.4;
+  await page.mouse.move(x, y);
+  await page.keyboard.down(SELECT_KEY);
+  await page.mouse.down();
+  await page.mouse.move(x + 8, y + 8, { steps: 4 });
+  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 20 });
+  await pause(page, 500);
+  await page.mouse.up();
+  await page.keyboard.up(SELECT_KEY);
+  await pause(page, 1500);
+}
+
+// Media ids inside the open collection view (small, but walked like the grid in case it is long).
+async function idsInView(page: Page): Promise<Set<string>> {
+  const ids = new Set<string>();
+  await scrollToTop(page);
+  for (let step = 0; step < 100; step++) {
+    for (const id of await mediaIds(page)) ids.add(id);
+    const moved = await page.evaluate(() => {
+      const el = document.querySelector(".page-container");
+      if (!el) return false;
+      const before = el.scrollTop;
+      el.scrollTop = before + el.clientHeight * 0.8;
+      return el.scrollTop > before;
+    });
+    if (!moved) break;
+    await pause(page, 600);
+  }
+  return ids;
+}
+
+async function openCollection(page: Page, name: string): Promise<void> {
+  await ensureProjectGrid(page);
+  const entry = await ensureCollection(page, name);
+  await entry.click({ timeout: 5000 });
+  await leaveSideMenu(page);
+  await page.waitForURL(/\/collection\//, { timeout: 15_000 }).catch(() => {
+    throw new CollectionError(`Flow did not open the collection "${name}".`);
+  });
+  await pause(page, 2500);
+}
+
+// In the collection's own view: top bar More options -> Download collection -> one ZIP.
+async function downloadOpenCollection(page: Page, timeoutMs: number): Promise<string> {
+  await useOwnDownloadDir(page);
+  await page.mouse.move(2, 2); // no tile toolbar may be showing: tiles have their own "More options"
+  // Flow hides its top bar once the grid is scrolled, and counting the collection scrolls it.
+  await scrollToTop(page);
+  await pause(page, 600);
+  const before = downloadsNow();
+  // The top bar's own button lives in <flow-more-options-menu>; every tile in the collection also carries a hidden
+  // "More options", and .first() picked one of those once the collection held 20 (click timed out).
+  await page.locator("flow-more-options-menu").getByRole("button", { name: "More options", exact: true }).first().click({ timeout: 8000 });
+  const item = page.getByRole("menuitem", { name: "Download collection" });
+  if (!(await item.waitFor({ state: "visible", timeout: 6000 }).then(() => true, () => false))) {
+    await page.keyboard.press("Escape").catch(() => {});
+    throw new CollectionError('The collection\'s menu has no "Download collection".');
+  }
+  await item.click();
+  const zip = await waitForDownloadedFile(page, before, timeoutMs).catch(() => {
+    throw new CollectionError("Flow was asked for the collection's ZIP but no file arrived.");
+  });
+  if (extensionOf(zip) !== ".zip") throw new CollectionError(`Flow's collection download was not a ZIP (${extensionOf(zip)}).`);
+  return zip;
+}
+
+// Unpacks a collection ZIP. With `wanted`, each image is saved as its stem (matched by the media id in its name);
+// without, every image keeps its own name. Returns the saved files and the ids that were not in the ZIP.
+function unpackCollection(zip: string, dir: string, wanted?: { id: string; stem: string }[]): { files: string[]; saved: Map<string, string> } {
+  const work = mkdtempSync(join(tmpdir(), "flow-collection-"));
+  try {
+    const entries = extractZip(zip, work);
+    const files: string[] = [];
+    const saved = new Map<string, string>();
+    if (!wanted) {
+      mkdirSync(dir, { recursive: true });
+      for (const p of entries) {
+        const dest = join(dir, basename(p, extname(p)).replace(/[^\w.-]+/g, "_") + extensionOf(p));
+        copyFileSync(p, dest);
+        files.push(dest);
+      }
+      return { files, saved };
+    }
+    const byId = new Map<string, string>();
+    for (const p of entries) {
+      const tag = basename(p, extname(p)).match(/_([0-9a-f]{8})$/)?.[1];
+      if (tag) byId.set(tag, p);
+    }
+    for (const w of wanted) {
+      const p = byId.get(w.id.slice(0, 8));
+      if (!p) continue;
+      const dest = `${w.stem}${extensionOf(p)}`;
+      copyFileSync(p, dest);
+      files.push(dest);
+      saved.set(w.id, dest);
+    }
+    return { files, saved };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+    rmSync(zip, { force: true });
+  }
+}
+
+// Moves these grid images into the collection `name` and fetches them all in one ZIP, each saved as its stem.
+// Never falls back to another way of downloading (the user's rule: a failed step stops and says so): it throws a
+// CollectionError naming where the images are.
+export async function collectAndDownload(page: Page, job: Job | undefined, name: string, wanted: { id: string; stem: string }[]): Promise<Map<string, string>> {
+  try {
+    return await collectAndDownloadOnce(page, job, name, wanted);
+  } catch (err) {
+    // Any failure in here (a Playwright timeout included) is a download problem, never a reason to generate again.
+    if (err instanceof CollectionError) throw err;
+    await ensureProjectGrid(page).catch(() => {});
+    throw new CollectionError(`Gathering the images into the collection "${name}" stopped: ${(err as Error).message.split("\n")[0]}`);
+  }
+}
+
+async function collectAndDownloadOnce(page: Page, job: Job | undefined, name: string, wanted: { id: string; stem: string }[]): Promise<Map<string, string>> {
+  const ids = wanted.map((w) => w.id);
+  let inside = new Set<string>();
+  // A collection made earlier in this batch may already hold some of them (they are no longer in All media then).
+  await ensureProjectGrid(page);
+  if (await collectionEntry(page, name).count().catch(() => 0)) {
+    await openCollection(page, name);
+    inside = await idsInView(page);
+  }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const todo = ids.filter((id) => !inside.has(id));
+    if (!todo.length) break;
+    await ensureProjectGrid(page);
+    const entry = await ensureCollection(page, name);
+    if (job) step(job, `selecting ${todo.length} image(s) for the collection`);
+    const handle = await selectTiles(page, todo);
+    if (!handle) throw new CollectionError(`None of the ${todo.length} image(s) could be selected in Flow's grid.`);
+    if (job) step(job, `moving ${todo.length} image(s) into the collection "${name}"`);
+    await dragSelectionTo(page, handle, entry);
+    await openCollection(page, name);
+    // the collection page lists images moved in during this visit only after a fresh load (same cause as the ZIP)
+    await page.goto(inEnglish(page.url()), { waitUntil: "domcontentloaded" });
+    await page.locator("flow-grid-tile-container").first().waitFor({ state: "visible", timeout: 20_000 }).catch(() => {});
+    await pause(page, 2000);
+    inside = await idsInView(page);
+  }
+  if (!page.url().includes("/collection/")) {
+    await openCollection(page, name);
+    inside = await idsInView(page);
+  }
+  const notMoved = ids.filter((id) => !inside.has(id));
+  if (notMoved.length) {
+    await ensureProjectGrid(page).catch(() => {});
+    throw new CollectionError(
+      `${notMoved.length} of ${ids.length} image(s) would not go into the collection "${name}"; they are still in All media. ` +
+        `Nothing was downloaded one by one instead.`,
+    );
+  }
+  // Flow builds the ZIP in the page from the images it has loaded, and one that has only just arrived can be left out
+  // (2026-11-07: 1 of 2 missing, both there on the next try). So the ZIP is checked against the list and the
+  // collection downloaded again for whatever is missing.
+  // Which image becomes which file, written down first: if the download stops, downloadCollection can still name
+  // every file after its scene instead of Flow's title.
+  writeManifest(name, wanted);
+  const saved = new Map<string, string>();
+  let pending = wanted;
+  const here = page.url();
+  for (let attempt = 0; attempt < 4 && pending.length; attempt++) {
+    // The collection page only lists images moved in during this visit once it is loaded afresh: without a reload
+    // its ZIP held 8 of 20 three times running; after one, all 20.
+    if (attempt) await pause(page, attempt * 5000);
+    await page.goto(inEnglish(here), { waitUntil: "domcontentloaded" });
+    await page.locator("flow-grid-tile-container").first().waitFor({ state: "visible", timeout: 20_000 }).catch(() => {});
+    await pause(page, 2500);
+    if (job) step(job, `downloading the collection "${name}" as one ZIP${attempt ? ` (again, for ${pending.length} missing)` : ""}`);
+    const zip = await downloadOpenCollection(page, 60_000 + ids.length * 3000);
+    for (const [id, file] of unpackCollection(zip, "", pending).saved) saved.set(id, file);
+    pending = pending.filter((w) => !saved.has(w.id));
+  }
+  await ensureProjectGrid(page).catch(() => {});
+  if (pending.length)
+    throw new CollectionError(`The collection "${name}" downloaded 4 times, but ${pending.length} of ${ids.length} image(s) were never in its ZIP.`);
+  return saved;
+}
+
+const MANIFESTS = join(HOME_DIR, "collections");
+const manifestFile = (name: string) => join(MANIFESTS, `${name.replace(/[^\w.-]+/g, "_")}.json`);
+
+function writeManifest(name: string, wanted: { id: string; stem: string }[]): void {
+  mkdirSync(MANIFESTS, { recursive: true });
+  const old = existsSync(manifestFile(name)) ? (JSON.parse(readFileSync(manifestFile(name), "utf8")) as { id: string; stem: string }[]) : [];
+  const merged = [...old.filter((o) => !wanted.some((w) => w.id === o.id)), ...wanted];
+  writeFileSync(manifestFile(name), JSON.stringify(merged, null, 1));
+}
+
+// The whole collection in one ZIP. A collection made by an image batch is saved under the batch's scene names (its
+// manifest says which image is which scene) in the batch's own folder; any other collection keeps Flow's titles in
+// `dir`.
+export async function downloadCollection(name: string, dir: string): Promise<string[]> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  await openCollection(page, name);
+  await page.goto(inEnglish(page.url()), { waitUntil: "domcontentloaded" });
+  await pause(page, 3000);
+  const zip = await downloadOpenCollection(page, 300_000);
+  const manifest = existsSync(manifestFile(name)) ? (JSON.parse(readFileSync(manifestFile(name), "utf8")) as { id: string; stem: string }[]) : undefined;
+  const out = unpackCollection(zip, dir, manifest);
+  await ensureProjectGrid(page).catch(() => {});
+  return out.files;
+}
+
 // Flow titles clips itself and happily reuses a title: two takes of the same scene both came back as "Woman climbing
 // granite wall", which makes a clip impossible to identify by name and cost real time tonight. Renaming each finished
 // tile to our own scene name fixes it at the source - the user's suggestion, and the right one.
@@ -903,11 +1210,14 @@ async function scanGrid(page: Page, stopAt?: (assets: FlowAsset[]) => boolean): 
           // like a still in the Library and download as a ZIP of loose clips.
           kind: t.querySelector("flow-scene-tile") ? ("scene" as const) : t.querySelector("flow-video-tile") ? ("video" as const) : ("image" as const),
           id: (eval(js) as (t: Element) => string | undefined)(t),
+          // A collection sits in the grid as a tile of its own (2026-11-07). It is not media, and its thumbnail
+          // changes whenever something is added, so it would pass for a brand-new image.
+          collection: !!t.querySelector("flow-collection-tile"),
         })),
       TILE_ID_JS,
     );
     for (const a of batch) {
-      if (!a.name) continue;
+      if (!a.name || a.collection) continue;
       const known = seen.get(a.name);
       if (!known) seen.set(a.name, a);
       else if (!known.id && a.id) known.id = a.id;
@@ -1415,7 +1725,17 @@ const words = (text: string) => new Set(text.toLowerCase().match(/[a-z0-9']{3,}/
 // Returns, per scene, the indexes of the tiles that belong to it (best match first). A tile counts when at least
 // half of the scene's meaningful words appear in the prompt Flow stored for that tile.
 export function matchScenes(scenes: string[], prompts: string[]): number[][] {
-  const sceneWords = scenes.map(words);
+  // Words that most scenes share (a long common style paragraph) say nothing about WHICH scene a picture is, and they
+  // drowned the distinctive ones: 8 scenes sharing one style text matched 1 of 7 pictures (2026-11-07). Match on what
+  // is particular to each scene.
+  const all = scenes.map(words);
+  const count = new Map<string, number>();
+  for (const ws of all) for (const w of ws) count.set(w, (count.get(w) ?? 0) + 1);
+  const common = (w: string) => scenes.length > 2 && (count.get(w) ?? 0) >= Math.max(2, Math.ceil(scenes.length * 0.6));
+  const sceneWords = all.map((ws) => {
+    const own = new Set([...ws].filter((w) => !common(w)));
+    return own.size >= 3 ? own : ws;
+  });
   const pairs: { scene: number; tile: number; score: number }[] = [];
   prompts.forEach((prompt, tile) => {
     const have = words(prompt);
@@ -1430,7 +1750,8 @@ export function matchScenes(scenes: string[], prompts: string[]): number[][] {
   // First give every scene its single best tile, then hand leftover tiles to their best scene as extra takes.
   for (const firstPass of [true, false]) {
     for (const { scene, tile, score } of pairs) {
-      if (score < 0.5 || usedTiles.has(tile) || (firstPass && out[scene].length)) continue;
+      // a third of a scene's own words is plenty once the shared boilerplate is gone (the agent paraphrases)
+      if (score < 0.3 || usedTiles.has(tile) || (firstPass && out[scene].length)) continue;
       out[scene].push(tile);
       usedTiles.add(tile);
     }
@@ -1442,7 +1763,12 @@ interface RoundOutcome {
   produced: number;
   timedOut: boolean;
   failedTiles: number;
+  // What the agent wrote back, when it drew nothing (it answers in text instead of generating).
+  reply?: string;
 }
+
+// Scenes per request to Flow's agent. 17 and 20 worked; 30 and 39 came back with nothing drawn (2026-11-07).
+const AGENT_CHUNK = 20;
 
 // One pass through Flow's agent for the given scene numbers: ask, wait, match the new tiles back to those scenes
 // and download them. Returns how many scenes it actually delivered.
@@ -1458,6 +1784,9 @@ function step(job: Job, text: string | undefined): void {
   if (!t0s.has(job)) t0s.set(job, Date.now());
   console.error(`[flow-mcp ${job.id}] ${((Date.now() - t0s.get(job)!) / 1000).toFixed(1)}s ${text}`);
 }
+
+// One collection per batch, named after its folder and job, so a rerun never mixes with an older set.
+const collectionFor = (job: Job) => `${basename(job.params.output_dir)}-${job.id}`;
 
 async function agentRound(
   page: Page,
@@ -1516,6 +1845,7 @@ async function agentRound(
   await pause(page, 800);
   const start = page.getByRole("button", { name: "Start generation" });
   if (!(await start.isEnabled())) throw new Error("Flow's agent did not accept the script (Start generation stayed disabled).");
+  const textBefore = new Set((await page.locator("body").innerText().catch(() => "")).split("\n").map((l) => l.trim()));
   await start.click();
 
   // The agent shows a Stop button while it works and "NN%" on every tile it is rendering.
@@ -1546,6 +1876,17 @@ async function agentRound(
     .then((r) => r.errors)
     .catch(() => 0);
   const fresh = (await scanGrid(page)).filter((t) => t.id && !before.has(t.id) && !beforeNames.has(t.name) && t.kind === "image");
+  if (!fresh.length) {
+    // Nothing drawn: keep what the agent wrote instead, so the reason reaches the user rather than a silent retry.
+    const reply = (await page.locator("body").innerText().catch(() => ""))
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 25 && !textBefore.has(l) && !/^\d+%/.test(l) && !l.startsWith("Generate exactly") && !l.includes("Scene 1"))
+      .join(" ")
+      .slice(0, 600);
+    await closeAgentSession(page);
+    return { produced: 0, timedOut, failedTiles, reply: reply || undefined };
+  }
 
   // Tiles finish in any order and the agent rewords prompts, so each image is matched back to its scene by the
   // prompt Flow stored for it ("Reuse prompt" puts that text in the composer).
@@ -1568,21 +1909,31 @@ async function agentRound(
   );
   const drop = Number(process.env.FLOW_MCP_SIMULATE_MISSING ?? 0); // test hook: pretend this scene number failed
   mkdirSync(s.output_dir, { recursive: true });
-  let produced = 0;
+  const wanted: { scene: number; id: string; stem: string }[] = [];
   for (const [n, tileIndexes] of assigned.entries()) {
     const sceneIndex = indexes[n];
     if (!tileIndexes.length || (numberOf(sceneIndex) === drop && !s.agent_numbers)) continue;
-    for (const [v, tileIndex] of tileIndexes.entries()) {
-      const id = fresh[tileIndex].id!;
+    for (const [v, tileIndex] of tileIndexes.entries())
+      wanted.push({ scene: sceneIndex, id: fresh[tileIndex].id!, stem: join(s.output_dir, `scene-${String(numberOf(sceneIndex)).padStart(2, "0")}${v ? `-v${v + 1}` : ""}`) });
+  }
+  let produced = 0;
+  if ((s.download_quality ?? "original") === "original" && wanted.length) {
+    // The user's way (2026-11-07): gather the whole batch into one collection and fetch it as ONE ZIP, instead of a
+    // tile menu per image (4.2 s each). Originals only; an upscaled batch still goes tile by tile.
+    const saved = await collectAndDownload(page, job, collectionFor(job), wanted);
+    files.push(...saved.values());
+  } else {
+    for (const w of wanted) {
       const started = Date.now();
       // New tiles sit at the top of the grid, so a scan is only needed when this one has scrolled out of the page.
-      if (!(await mediaTile(page, id).count())) await scanGrid(page, (seen) => seen.some((x) => x.id === id));
-      const stem = join(s.output_dir, `scene-${String(numberOf(sceneIndex)).padStart(2, "0")}${v ? `-v${v + 1}` : ""}`);
-      step(job, `downloading scene ${numberOf(sceneIndex)}`);
-      files.push(...(await downloadTile(page, mediaTile(page, id), stem, s.download_quality ?? "original")));
+      if (!(await mediaTile(page, w.id).count())) await scanGrid(page, (seen) => seen.some((x) => x.id === w.id));
+      step(job, `downloading scene ${numberOf(w.scene)}`);
+      files.push(...(await downloadTile(page, mediaTile(page, w.id), w.stem, s.download_quality ?? "original")));
       await pause(page, Math.max(0, downloadPace() - (Date.now() - started)));
     }
-    done.add(sceneIndex);
+  }
+  for (const scene of new Set(wanted.map((w) => w.scene))) {
+    done.add(scene);
     produced++;
   }
   return { produced, timedOut, failedTiles };
@@ -1718,10 +2069,13 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
 
   const files: string[] = [];
   const done = new Set<number>();
+  const firstNumber = Number(s.file_stem.match(/\d+/)?.[0] ?? 1);
+  const numberOf = (i: number) => s.agent_numbers?.[i] ?? firstNumber + i;
   let agentTimedOut = false;
   let failedTiles = 0;
   let agentRetries = 0;
   let agentProblem = "";
+  let collectionProblem = "";
   try {
     // References are uploaded once with readable names (the agent sees them), before Agent mode hides the upload menu.
     if (s.agent_refs?.length && !s.agent_ref_assets?.length) {
@@ -1738,23 +2092,34 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
     await setAgentMode(page, true);
     step(job, "setting the agent to generate without asking");
     await setAgentSettings(page, "Never", s.aspect_ratio ?? "16:9");
-    for (let round = 0; round < 3; round++) {
+    rounds: for (let round = 0; round < 3; round++) {
       const todo = scenes.map((_, i) => i).filter((i) => !done.has(i));
       if (!todo.length) break;
       if (round) {
         agentRetries += todo.length;
         job.progress = `asking the agent again for ${todo.length} scene(s)`;
       }
-      const out = await agentRound(page, job, scenes, todo, round > 0, files, done);
-      agentTimedOut ||= out.timedOut;
-      failedTiles = out.failedTiles;
-      if (!out.produced) break; // the agent delivered nothing this round: stop asking it
+      for (let c = 0; c < todo.length; c += AGENT_CHUNK) {
+        const chunk = todo.slice(c, c + AGENT_CHUNK);
+        if (todo.length > AGENT_CHUNK) step(job, `asking the agent for scenes ${numberOf(chunk[0])}-${numberOf(chunk[chunk.length - 1])}`);
+        const out = await agentRound(page, job, scenes, chunk, round > 0, files, done);
+        agentTimedOut ||= out.timedOut;
+        failedTiles = out.failedTiles;
+        if (!out.produced) {
+          // The agent drew nothing for a whole request: stop asking it, and never quietly switch to one by one.
+          if (!done.size) agentProblem = `it drew nothing${out.reply ? `; it said: "${out.reply}"` : ""}.`;
+          break rounds;
+        }
+      }
     }
   } catch (err) {
+    // A download that stopped is NOT a reason to make the images again or to fetch them another way: they exist in
+    // Flow. Stop, and say where they are.
+    if (err instanceof CollectionError) collectionProblem = err.message;
     // Agent mode could not be used (2026-10-13: "Could not switch Agent mode on" failed a whole 11-image batch with
     // nothing made). Whatever the agent did not deliver is made one by one below instead: slower, but the batch still
     // ends with every image.
-    agentProblem = (err as Error).message;
+    else agentProblem = (err as Error).message;
   } finally {
     step(job, "putting the agent settings back");
     await ensureProjectGrid(page).catch(() => {});
@@ -1764,11 +2129,23 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
     await setAgentMode(page, false).catch(() => {});
   }
 
+  // Agent mode failing outright is NOT a reason to make the whole batch one image at a time (the user, 2026-11-07:
+  // "I always see you creating one by one"). Stop and say why; the one-by-one route is only for the few scenes a
+  // working agent dropped.
+  if (agentProblem && !done.size) {
+    throw new Error(`Flow's agent could not run this batch: ${agentProblem} Nothing was made one by one instead.`);
+  }
+  if (collectionProblem) {
+    throw new Error(
+      `${collectionProblem} The images are in Flow (collection "${collectionFor(job)}" if they were moved there): ` +
+        `flow_download with collection "${collectionFor(job)}" fetches them as one ZIP without generating anything. ` +
+        (files.length ? `Saved before it stopped: ${files.length} file(s) in ${s.output_dir}.` : "Nothing was saved yet."),
+    );
+  }
+
   // Anything the agent still has not delivered is generated one by one, which is slower but exact.
   const missing = scenes.map((_, i) => i).filter((i) => !done.has(i));
   const failed: number[] = [];
-  const base = Number(s.file_stem.match(/\d+/)?.[0] ?? 1);
-  const numberOf = (i: number) => s.agent_numbers?.[i] ?? base + i;
   const stillFails = Number(process.env.FLOW_MCP_SIMULATE_FAILED ?? 0); // test hook: pretend this scene failed for good
   // A scene made one by one keeps its references: the uploaded copies when there are some, else the original files.
   const refsFor = (i: number): string[] | undefined => {
@@ -1781,6 +2158,13 @@ export async function runAgentBatch(job: Job): Promise<string[]> {
       .slice(0, 3);
     return picked.length ? picked.map(({ r, k }) => (s.agent_ref_assets?.[k] ? `${ASSET_PREFIX}${s.agent_ref_assets[k]}` : r.image)) : undefined;
   };
+  // One by one is only for the odd scene a working agent dropped. More than a few go back as "still failed", and
+  // Retry asks the agent again for just those, in bulk.
+  const MAX_ONE_BY_ONE = 3;
+  if (missing.length > MAX_ONE_BY_ONE) {
+    failed.push(...missing.map(numberOf));
+    missing.length = 0;
+  }
   for (const [n, i] of missing.entries()) {
     job.progress = `re-running scene ${numberOf(i)} one by one (${n + 1}/${missing.length})`;
     if (numberOf(i) === stillFails && !job.params.agent_numbers) {
