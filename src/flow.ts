@@ -341,6 +341,32 @@ async function pickRadio(page: Page, name: string | RegExp): Promise<void> {
   }
 }
 
+// Omni 1.2 Flash sets its length with a slider (mat-slider, input[type=range] aria-label "Length", min 0..max 12 = 3..15 s)
+// instead of the older 4s/6s/8s/10s radios. The keyboard drives the native range input, which fires the events Angular
+// listens to; the input's value is read back to confirm.
+const SLIDER_MIN_SECONDS = 3;
+async function pickDuration(page: Page, seconds: number): Promise<void> {
+  const slider = page.locator('input[type="range"][aria-label="Length"]').first();
+  if (!(await slider.isVisible().catch(() => false))) {
+    await pickRadio(page, `${seconds}s`);
+    return;
+  }
+  const min = Number(await slider.getAttribute("min")) || 0;
+  const max = Number(await slider.getAttribute("max")) || 0;
+  const target = seconds - SLIDER_MIN_SECONDS + min;
+  if (target < min || target > max) {
+    throw new Error(`Flow's length slider goes from ${SLIDER_MIN_SECONDS}s to ${max - min + SLIDER_MIN_SECONDS}s; ${seconds}s is out of range.`);
+  }
+  const current = async () => Number(await slider.inputValue());
+  if ((await current()) === target) return;
+  await slider.focus();
+  await page.keyboard.press("Home");
+  for (let i = min; i < target; i++) await page.keyboard.press("ArrowRight");
+  await pause(page, 500);
+  const now = await current();
+  if (now !== target) throw new Error(`Could not set Flow's length slider to ${seconds}s (it reads ${now + SLIDER_MIN_SECONDS - min}s).`);
+}
+
 // Image jobs use the newest Nano Banana unless another model is named (the user's call, 2026-10-13: "should always
 // default to latest"). The menu then held Nano Banana Pro, 2 Lite and 2.1 - the plain "Nano Banana 2" was gone, and
 // asking for it by name picked whichever came first. The newest is the highest version number that is not a Lite model,
@@ -405,7 +431,7 @@ async function applySettings(page: Page, job: Job): Promise<number> {
   const model = s.type === "image" && LEGACY_IMAGE_MODEL.test(s.model ?? "") ? LATEST_IMAGE_MODEL : s.model;
   if (model) await pickModel(page, model);
   if (s.type === "video" && s.resolution) await pickRadio(page, new RegExp(`^${s.resolution}`));
-  if (s.type === "video" && s.duration) await pickRadio(page, `${s.duration}s`);
+  if (s.type === "video" && s.duration) await pickDuration(page, s.duration);
   await pickRadio(page, `x${s.variants ?? 1}`);
   await pause(page, 600);
   // The quote is "<N> credits". Low balances add an "Add AI credits" banner link that the old /credits?$/ also matched.
