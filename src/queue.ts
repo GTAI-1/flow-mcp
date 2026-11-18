@@ -6,7 +6,7 @@ export interface SceneParams {
   prompt: string;
   type: "video" | "image";
   max_credits: number;
-  duration?: 4 | 6 | 8 | 10;
+  duration?: number;
   resolution?: "360p" | "720p";
   model?: string;
   aspect_ratio?: "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
