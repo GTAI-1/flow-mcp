@@ -243,21 +243,21 @@ audio{width:100%;margin-top:8px;filter:invert(1) hue-rotate(180deg)}
       <section class="panel" data-panel="shots">
         <div class="step">Step 3</div>
         <h2>Shots</h2>
-        <p class="lede">Video clips. Give a shot a first and last frame and Flow animates between them; chain a shot onto the one before it for a continuous move. Flow charges by length — the estimate is live at the bottom.</p>
+        <p class="lede">Video clips. Give a shot a first and last frame and Flow animates between them; chain a shot onto the one before it for a continuous move. The estimate below updates as you change settings. Flow checks the generation price before each shot.</p>
         <div class="card">
           <label class="f">Project folder</label><input type="text" id="s_project" placeholder="MyFilm">
-          <label class="f">Model</label><select id="s_model"></select>
+          <label class="f" for="s_model">Model</label><select id="s_model"></select>
           <div class="grid2">
             <div><label class="f">Frame</label><div class="seg" data-seg="s_aspect"></div></div>
-            <div><label class="f">Length (s)</label><div class="seg" data-seg="s_duration"></div></div>
+            <div><label class="f" for="s_duration">Length (s)</label><select id="s_duration"></select></div>
           </div>
           <div class="grid2">
             <div><label class="f">Generate at · 720p is Flow's max</label><div class="seg" data-seg="s_resolution"></div></div>
-            <div><label class="f">Download size · upscale is free</label><div class="seg" data-seg="s_quality"></div></div>
+            <div><label class="f">Download size</label><div class="seg" data-seg="s_quality"></div></div>
           </div>
           <div class="grid2">
             <div><label class="f">Takes per shot</label><div class="seg" data-seg="s_variants"></div></div>
-            <div><label class="f">Max credits per shot</label><input type="number" id="s_max" min="0" value="25"></div>
+            <div><label class="f" for="s_max">Max generation credits per shot</label><input type="number" id="s_max" min="0" value="25"></div>
           </div>
         </div>
         <h2 style="margin-top:18px">Shots <small id="s_count"></small></h2>
@@ -450,7 +450,18 @@ const toast = (msg, bad) => { const t = Object.assign(document.createElement("di
 const guard = () => { if (!LIVE) { toast("Not connected — start Flow Studio first.", true); return false; } return true; };
 
 // Prices Flow quotes on a Pro plan, x1 take.
-const VIDEO_COST = { "Omni 1.1 Flash": { "360p": { 4: 4, 6: 5, 8: 6, 10: 7 }, "720p": { 4: 7, 6: 10, 8: 12, 10: 15 } }, "Veo 3.1 - Lite": 10, "Veo 3.1 - Fast": 20, "Veo 3.1 - Quality": 100 };
+const OMNI_12 = "Omni 1.2 Flash";
+const VIDEO_COST = {
+  [OMNI_12]: (resolution, seconds) => (resolution === "720p" ? 3 : 1) * (seconds + Math.max(0, seconds - 10)),
+  "Omni 1.1 Flash": { "360p": { 4: 4, 6: 5, 8: 6, 10: 7 }, "720p": { 4: 7, 6: 10, 8: 12, 10: 15 } },
+  "Veo 3.1 - Lite": 10,
+  "Veo 3.1 - Fast": 20,
+  "Veo 3.1 - Quality": 100,
+};
+const VIDEO_LENGTHS = {
+  [OMNI_12]: Array.from({ length: 13 }, (_, i) => i + 3),
+  "Omni 1.1 Flash": [4, 6, 8, 10],
+};
 const blank = () => ({ prompt: "", technique: "", chain: false, match: false, first: null, last: null, refs: [] });
 const DEFAULTS = {
   tab: "cast",
@@ -490,7 +501,6 @@ const SEGS = {
   f_variants: { get: () => S.frames.variants, set: (v) => (S.frames.variants = +v), opts: [1, 2, 3, 4] },
   f_engine: { get: () => S.frames.engine, set: (v) => (S.frames.engine = v), opts: ["exact", "agent"], labels: { exact: "One by one", agent: "Flow agent · all at once" } },
   s_aspect: { get: () => S.shots.aspect, set: (v) => (S.shots.aspect = v), opts: ["16:9", "9:16"] },
-  s_duration: { get: () => S.shots.duration, set: (v) => (S.shots.duration = +v), opts: [4, 6, 8, 10] },
   s_resolution: { get: () => S.shots.resolution, set: (v) => (S.shots.resolution = v), opts: ["360p", "720p"] },
   s_quality: { get: () => S.shots.quality, set: (v) => (S.shots.quality = v), opts: ["original", "upscaled"], labels: { original: "720p", upscaled: "1080p" } },
   s_variants: { get: () => S.shots.variants, set: (v) => (S.shots.variants = +v), opts: [1, 2, 3, 4] },
@@ -501,8 +511,7 @@ const SEGS = {
 function renderSegs() {
   for (const [key, cfg] of Object.entries(SEGS)) {
     const host = $(`[data-seg="${key}"]`); if (!host) continue;
-    const omni = S.shots.model.startsWith("Omni");
-    const off = (key === "s_duration" || key === "s_resolution") && !omni;
+    const off = key === "s_resolution" && !VIDEO_LENGTHS[S.shots.model];
     host.innerHTML = cfg.opts.map((o) => `<button type="button" data-v="${o}" class="${String(cfg.get()) === String(o) ? "on" : ""}" ${off ? "disabled" : ""}>${cfg.labels?.[o] ?? o}</button>`).join("");
   }
 }
@@ -1032,11 +1041,13 @@ $("#l_trash").onclick = async () => {
 };
 
 /* ---------- roll ---------- */
-const sceneCost = (sc) => {
-  const m = VIDEO_COST[S.shots.model];
-  const per = typeof m === "number" ? m : m[S.shots.resolution][S.shots.duration];
-  return per * S.shots.variants;
-};
+function shotCost({ model, duration, resolution, quality, variants }) {
+  const price = VIDEO_COST[model];
+  const generation = (typeof price === "function" ? price(resolution, duration)
+    : typeof price === "number" ? price : price[resolution][duration]) * variants;
+  const upscale = model === OMNI_12 && quality === "upscaled" ? Math.max(0, duration - 10) * variants : 0;
+  return { generation, upscale };
+}
 function estimate() {
   const tab = S.tab;
   const btn = $("#roll");
@@ -1048,9 +1059,13 @@ function estimate() {
     btn.disabled = busy || !ready;
   } else if (tab === "shots") {
     const ready = S.shots.scenes.filter((s) => s.prompt.trim());
-    const total = ready.reduce((n, s) => n + sceneCost(s), 0);
+    const { generation, upscale } = shotCost(S.shots);
+    const total = ready.length * (generation + upscale);
     $("#estNum").textContent = `≈ ${total} credits`;
-    $("#estSub").textContent = `${ready.length} shot(s) ready`;
+    const notes = [`${ready.length} shot(s) ready`];
+    if (upscale && ready.length) notes.push(`includes ≈ ${ready.length * upscale} for upscale`);
+    if (generation > S.shots.max && ready.length) notes.push(`≈ ${generation} per shot exceeds your generation cap`);
+    $("#estSub").textContent = notes.join(" · ");
     btn.disabled = busy || !ready.length;
   } else {
     const narrateCost = "Free";
@@ -1078,11 +1093,14 @@ $("#roll").onclick = async () => {
     technique: sc.technique || undefined,
     reference_images: sc.refs.length ? sc.refs.map(ref) : undefined,
     ...(video
-      ? { model: cfg.model, max_credits: cfg.max, download_quality: cfg.quality, ...(cfg.model.startsWith("Omni") ? { duration: cfg.duration, resolution: cfg.resolution } : {}), chain_previous: (i > 0 && sc.chain) || undefined, first_frame: sc.chain ? undefined : ref(sc.first), last_frame: ref(sc.last) }
+      ? { model: cfg.model, max_credits: cfg.max, download_quality: cfg.quality, ...(VIDEO_LENGTHS[cfg.model] ? { duration: cfg.duration, resolution: cfg.resolution } : {}), chain_previous: (i > 0 && sc.chain) || undefined, first_frame: sc.chain ? undefined : ref(sc.first), last_frame: ref(sc.last) }
       : { max_credits: 0, reference_previous: (i > 0 && sc.match) || undefined }),
   }));
-  const cost = video ? list.reduce((n, s) => n + sceneCost(s), 0) : 0;
-  if (cost > 0 && !confirm(`Queue ${scenes.length} shot(s) for about ${cost} credits?`)) return;
+  if (video) {
+    const { generation, upscale } = shotCost(cfg);
+    const cost = scenes.length * (generation + upscale);
+    if (!confirm(`Queue ${scenes.length} shot(s) for about ${cost} credits${upscale ? " including upscale" : ""}?`)) return;
+  }
   try { await api("generate", { project: cfg.project, scenes }); toast(video ? "Rolling." : "Rendering frames."); poll(); } catch (err) { toast(err.message, true); }
 };
 
@@ -1186,7 +1204,14 @@ async function poll(detailed = false) {
 /* ---------- boot ---------- */
 function renderAll() {
   for (const [id, val] of [["f_project", S.frames.project], ["s_project", S.shots.project], ["n_project", S.narrate.project], ["c_project", S.cut.project], ["e_project", S.cut.project], ["l_project", S.cut.project]]) if ($("#" + id) && !$("#" + id).value) $("#" + id).value = val;
+  if (!Object.hasOwn(VIDEO_COST, S.shots.model)) S.shots.model = DEFAULTS.shots.model;
   $("#s_model").innerHTML = Object.keys(VIDEO_COST).map((m) => `<option ${m === S.shots.model ? "selected" : ""}>${m}</option>`).join("");
+  const lengths = VIDEO_LENGTHS[S.shots.model] ?? [8];
+  if (!lengths.includes(S.shots.duration)) S.shots.duration = DEFAULTS.shots.duration;
+  const length = $("#s_duration");
+  length.disabled = !VIDEO_LENGTHS[S.shots.model];
+  length.innerHTML = lengths.map((seconds) => `<option value="${seconds}" ${seconds === S.shots.duration ? "selected" : ""}>${seconds}s</option>`).join("");
+  $("#s_max").value = S.shots.max;
   renderSegs(); renderScenes(); renderCast(); renderNarrate();
   const mus = $('[data-slot="music"]'), vo = $('[data-slot="voiceover"]');
   if (mus) mus.outerHTML = slotHtml("music", 0, S.cut.music, "Music track");
@@ -1197,6 +1222,8 @@ function renderAll() {
   estimate(); save();
 }
 $("#s_model").addEventListener("change", (e) => { S.shots.model = e.target.value; save(); renderAll(); });
+$("#s_duration").addEventListener("change", (e) => { S.shots.duration = Number(e.target.value); save(); estimate(); });
+$("#s_max").addEventListener("input", (e) => { S.shots.max = Number(e.target.value); save(); estimate(); });
 for (const [id, path] of [["f_project", "frames"], ["s_project", "shots"], ["n_project", "narrate"], ["c_project", "cut"]])
   $("#" + id).addEventListener("input", (e) => { S[path].project = e.target.value; save(); });
 (async () => {

@@ -405,7 +405,20 @@ async function applySettings(page: Page, job: Job): Promise<number> {
   const model = s.type === "image" && LEGACY_IMAGE_MODEL.test(s.model ?? "") ? LATEST_IMAGE_MODEL : s.model;
   if (model) await pickModel(page, model);
   if (s.type === "video" && s.resolution) await pickRadio(page, new RegExp(`^${s.resolution}`));
-  if (s.type === "video" && s.duration) await pickRadio(page, `${s.duration}s`);
+  if (s.type === "video" && s.duration) {
+    const slider = page.getByRole("slider", { name: "Length" });
+    if (await slider.isVisible().catch(() => false)) {
+      await slider.focus();
+      await slider.press("Home");
+      for (let second = 3; second < s.duration; second++) await slider.press("ArrowRight");
+      const displayedLength = page.getByText(`${s.duration} Sec`, { exact: true });
+      if (!(await displayedLength.isVisible().catch(() => false))) {
+        throw new Error(`Flow could not select a duration of ${s.duration} seconds.`);
+      }
+    } else {
+      await pickRadio(page, `${s.duration}s`);
+    }
+  }
   await pickRadio(page, `x${s.variants ?? 1}`);
   await pause(page, 600);
   // The quote is "<N> credits". Low balances add an "Add AI credits" banner link that the old /credits?$/ also matched.
