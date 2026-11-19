@@ -327,12 +327,40 @@ async function openSettings(page: Page): Promise<void> {
   if (!(await probe.isVisible().catch(() => false))) throw new Error("Could not open Flow's generation settings popover.");
 }
 
+// Omni (2026-11-17) sets the duration with a "Length" slider, not radio buttons: <input type="range" aria-label="Length">
+// in <flow-duration-slider>, whose stops are indexes (0..7 for 3..10 s on Omni 1.2 Flash) and whose label reads "6 Sec".
+// The index-to-seconds mapping is not assumed: walk the stops, reading the label, until it shows the wanted length.
+// Returns false when there is no such slider or it has no stop for that length, so the caller reports it as before.
+async function revealDuration(page: Page, name: string | RegExp): Promise<boolean> {
+  const wanted = typeof name === "string" ? /^(\d+)s$/.exec(name)?.[1] : undefined;
+  if (!wanted) return false;
+  const slider = page.locator('flow-duration-slider input[type="range"]').first();
+  if (!(await slider.isVisible().catch(() => false))) return false;
+  const label = page.locator("flow-duration-slider .duration-slider-value").first();
+  const seconds = async () => /(\d+)\s*sec/i.exec(await label.innerText().catch(() => ""))?.[1];
+  if ((await seconds()) === wanted) return true;
+  const min = Number((await slider.getAttribute("min")) ?? 0);
+  const max = Number((await slider.getAttribute("max")) ?? 0);
+  const step = Number((await slider.getAttribute("step")) || 1);
+  const original = await slider.inputValue();
+  for (let i = min; i <= max; i += step) {
+    await slider.fill(String(i));
+    await pause(page, 300);
+    if ((await seconds()) === wanted) return true;
+  }
+  await slider.fill(original);
+  await pause(page, 300);
+  return false;
+}
+
 async function pickRadio(page: Page, name: string | RegExp): Promise<void> {
   const radio = page.getByRole("radio", { name, exact: typeof name === "string" }).first();
   // The Escape that closes the model menu when no model change is needed can close the whole settings popover with
   // it (a brand-new project already on the newest Nano Banana: "Flow has no "x2" option"), so reopen it and look again.
   if (!(await radio.isVisible().catch(() => false))) await openSettings(page).catch(() => undefined);
   if (!(await radio.isVisible().catch(() => false))) {
+    // A duration set on the Length slider has no radio to check afterwards.
+    if (await revealDuration(page, name)) return;
     throw new Error(`Flow has no "${name}" option for the current mode/model.`);
   }
   if (!(await radio.isChecked())) {
