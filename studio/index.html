@@ -450,12 +450,15 @@ const toast = (msg, bad) => { const t = Object.assign(document.createElement("di
 const guard = () => { if (!LIVE) { toast("Not connected — start Flow Studio first.", true); return false; } return true; };
 
 // Prices Flow quotes on a Pro plan, x1 take.
-const VIDEO_COST = { "Omni 1.1 Flash": { "360p": { 4: 4, 6: 5, 8: 6, 10: 7 }, "720p": { 4: 7, 6: 10, 8: 12, 10: 15 } }, "Veo 3.1 - Lite": 10, "Veo 3.1 - Fast": 20, "Veo 3.1 - Quality": 100 };
+// Omni 1.2 Flash (Flow's default since 2026-11-21) takes any length from 3 to 15 s: 720p is 3 credits a second up to 10 s,
+// then 6 a second; 360p a third of that. Quotes read from Flow's own settings popover.
+const omni12 = (res, d) => (res === "360p" ? (d <= 10 ? d : 10 + 2 * (d - 10)) : d <= 10 ? 3 * d : 30 + 6 * (d - 10));
+const VIDEO_COST = { "Omni 1.2 Flash": omni12, "Omni 1.1 Flash": { "360p": { 4: 4, 6: 5, 8: 6, 10: 7 }, "720p": { 4: 7, 6: 10, 8: 12, 10: 15 } }, "Veo 3.1 - Lite": 10, "Veo 3.1 - Fast": 20, "Veo 3.1 - Quality": 100 };
 const blank = () => ({ prompt: "", technique: "", chain: false, match: false, first: null, last: null, refs: [] });
 const DEFAULTS = {
   tab: "cast",
   frames: { project: "MyFilm", aspect: "16:9", variants: 1, engine: "exact", scenes: [blank()] },
-  shots: { project: "MyFilm", model: "Omni 1.1 Flash", aspect: "16:9", duration: 8, resolution: "720p", variants: 1, quality: "original", max: 25, scenes: [blank()] },
+  shots: { project: "MyFilm", model: "Omni 1.2 Flash", aspect: "16:9", duration: 8, resolution: "720p", variants: 1, quality: "original", max: 25, scenes: [blank()] },
   narrate: { project: "MyFilm", engine: "kokoro", kokoroVoice: "am_michael", speed: 100, geminiVoice: "Charon", text: "", style: "" },
   cut: { project: "MyFilm", music: null, voiceover: null, hold: true, clips: [] },
   captions: { video: null, style: "bold", position: "bottom", size: 100, colors: {}, text: "" },
@@ -485,12 +488,14 @@ const hashTab = () => { const t = location.hash.slice(1); return $(`#tabs button
 addEventListener("hashchange", () => { const t = hashTab(); if (t) showTab(t); });
 
 /* ---------- segmented controls ---------- */
+// Lengths offered per model. Omni 1.2 takes any second from 3 to 15; these are the useful steps.
+const durations = () => (S.shots.model.startsWith("Omni 1.2") ? [4, 6, 8, 10, 12, 15] : [4, 6, 8, 10]);
 const SEGS = {
   f_aspect: { get: () => S.frames.aspect, set: (v) => (S.frames.aspect = v), opts: ["16:9", "9:16", "1:1", "4:3", "3:4"] },
   f_variants: { get: () => S.frames.variants, set: (v) => (S.frames.variants = +v), opts: [1, 2, 3, 4] },
   f_engine: { get: () => S.frames.engine, set: (v) => (S.frames.engine = v), opts: ["exact", "agent"], labels: { exact: "One by one", agent: "Flow agent · all at once" } },
   s_aspect: { get: () => S.shots.aspect, set: (v) => (S.shots.aspect = v), opts: ["16:9", "9:16"] },
-  s_duration: { get: () => S.shots.duration, set: (v) => (S.shots.duration = +v), opts: [4, 6, 8, 10] },
+  s_duration: { get: () => S.shots.duration, set: (v) => (S.shots.duration = +v), get opts() { return durations(); } },
   s_resolution: { get: () => S.shots.resolution, set: (v) => (S.shots.resolution = v), opts: ["360p", "720p"] },
   s_quality: { get: () => S.shots.quality, set: (v) => (S.shots.quality = v), opts: ["original", "upscaled"], labels: { original: "720p", upscaled: "1080p" } },
   s_variants: { get: () => S.shots.variants, set: (v) => (S.shots.variants = +v), opts: [1, 2, 3, 4] },
@@ -1034,7 +1039,7 @@ $("#l_trash").onclick = async () => {
 /* ---------- roll ---------- */
 const sceneCost = (sc) => {
   const m = VIDEO_COST[S.shots.model];
-  const per = typeof m === "number" ? m : m[S.shots.resolution][S.shots.duration];
+  const per = typeof m === "number" ? m : typeof m === "function" ? m(S.shots.resolution, S.shots.duration) : m[S.shots.resolution][S.shots.duration];
   return per * S.shots.variants;
 };
 function estimate() {
@@ -1196,7 +1201,13 @@ function renderAll() {
   if ($("#n_style")) $("#n_style").value = S.narrate.style ?? "";
   estimate(); save();
 }
-$("#s_model").addEventListener("change", (e) => { S.shots.model = e.target.value; save(); renderAll(); });
+$("#s_model").addEventListener("change", (e) => {
+  S.shots.model = e.target.value;
+  // Omni 1.1 has no 12 or 15 s: move to the nearest length the new model offers.
+  const opts = durations();
+  if (!opts.includes(S.shots.duration)) S.shots.duration = opts.reduce((a, b) => (Math.abs(b - S.shots.duration) < Math.abs(a - S.shots.duration) ? b : a));
+  save(); renderAll();
+});
 for (const [id, path] of [["f_project", "frames"], ["s_project", "shots"], ["n_project", "narrate"], ["c_project", "cut"]])
   $("#" + id).addEventListener("input", (e) => { S[path].project = e.target.value; save(); });
 (async () => {
