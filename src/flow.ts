@@ -981,27 +981,24 @@ export async function downloadCollection(name: string, dir: string): Promise<str
 // Flow titles clips itself and happily reuses a title: two takes of the same scene both came back as "Woman climbing
 // granite wall", which makes a clip impossible to identify by name and cost real time tonight. Renaming each finished
 // tile to our own scene name fixes it at the source - the user's suggestion, and the right one.
+// The grid's More options -> Rename stopped saving (seen 2026-11-24: the name reverts on reload, even by hand), but
+// renaming from the item's own page persists: open the tile, edit the title field there, press its Done button.
 async function renameTile(page: Page, tile: Locator, title: string): Promise<boolean> {
   try {
     await hoverTile(page, tile);
-    const more = tile.getByRole("button", { name: "More options" });
-    if (!(await more.isVisible({ timeout: 3000 }).catch(() => false))) return false;
-    await more.click();
-    const rename = page.getByRole("menuitem", { name: "Rename", exact: true });
-    if (!(await rename.isVisible({ timeout: 4000 }).catch(() => false))) {
-      await page.keyboard.press("Escape");
-      return false;
-    }
-    await rename.click();
-    await pause(page, 1200);
-    await page.keyboard.press("ControlOrMeta+a");
-    await page.keyboard.type(title, { delay: 8 });
-    await page.keyboard.press("Enter");
+    await tile.click();
+    const box = page.getByRole("textbox", { name: "Editable text" });
+    await box.waitFor({ state: "visible", timeout: 8000 });
+    await box.click();
+    await box.fill(title);
+    await page.getByRole("button", { name: "Done", exact: true }).click({ timeout: 4000 });
     await pause(page, 1500);
     return true;
   } catch {
     await page.keyboard.press("Escape").catch(() => {});
     return false;
+  } finally {
+    await ensureProjectGrid(page).catch(() => {});
   }
 }
 
