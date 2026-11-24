@@ -1,0 +1,11 @@
+{
+  "name": "flow-mcp",
+  "owner": { "name": "antoniovita" },
+  "plugins": [
+    {
+      "name": "flow-mcp",
+      "source": "./",
+      "description": "Local MCP server that drives Google Flow in its own Chrome profile."
+    }
+  ]
+}
