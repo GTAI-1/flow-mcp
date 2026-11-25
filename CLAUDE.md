@@ -724,11 +724,30 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   matches on the rest at a 0.3 threshold (unit-checked: 4/4 right). (2) After the drag, the collection page did not
   list the just-moved images until reloaded, so the tool thought the move failed and then tried to re-select images no
   longer in the grid ("None of the 1 image(s) could be selected"). It now reloads the collection before counting.
+- FLOW UPDATE (mapped live 2026-11-21, nothing spent). (1) The agent switch is now `Flow Agent` (a `.switch` button with
+  aria-pressed; was `Agent`), its prompt box reads "Describe your goal", and its settings button is `Agent settings`
+  (was `Settings`). agentToggle() matches /^(Flow )?Agent$/. (2) The agent settings panel (`flow-agent-panel`) keeps the
+  Confirm radios (Always/Never) but has NO Save button any more: every change saves as it is made. Image defaults sit
+  one level deeper behind the button "Image defaults <model>, <aspect>, <n> output" (radiogroup "Model" with radios
+  "🍌 Nano Banana 2.1" etc., aspect radios, x1-x4, Thinking level), with its own Back; closeAgentSettings presses Back
+  up to three times. There is also "Video defaults" and a project "Memory". (3) New video model **Omni 1.2 Flash**,
+  Flow's default, with a `Length` slider (input type=range 0..12 = 3..15 s; the popover shows "Length N Sec") instead
+  of the 4s/6s/8s/10s radios. pickDuration moves it by keys from Home and checks the "N Sec" text. Quotes, 720p:
+  3 credits a second to 10 s, then 6 (4=12, 8=24, 10=30, 11=36, 15=60); 360p: 1 a second to 10 s, then 2 (12=14,
+  15=20). Omni 1.1 Flash still has the radios (10 s 720p = 15). The model menu marks Omni 1.1 Flash, Veo 3.1 - Fast
+  and Veo 3.1 - Quality "Leaving Dec 5" (pickModel matches by includes, so the suffix is harmless). (4) Image mode has
+  a new "Thinking level" (Low/Medium/High) for Nano Banana 2.1; not driven. (5) Unchanged: `.ProseMirror` prompt box
+  ("What do you want to create?"), Clear prompt, Settings trigger, Start/End (+ "Swap first and last frames"), the
+  ingredients picker and its tabs (Uploads included), Add media menu (Upload, New collection, Create character, New
+  scene), tile menu and the Download submenu (1K/2K; 4K disabled). The left menu of a project with no videos or
+  uploads shows no Videos/Uploads entries, plus a new `Create tool`. Checked with a test MCP: lengths quoted 21
+  (Omni 1.2 7 s 720p), 14 (12 s 360p) and 10 (Omni 1.1 6 s) with max_credits 0, and a free image made end to end; then a 5-image agent batch (5 of 5 from the agent, in order, agent off and confirm back on Always afterwards, 0 credits) and one paid Omni 1.2 Flash clip, 3 s at 360p for 3 credits (the user's OK): 360x640, 3.0 s with sound, clean at 8 frames a second.
 - WINDOWS 11, AURORA CATALOG (2026-11-25, images only, 0 credits): flow-mcp ran on a real PC - image jobs with
   uploaded reference photos, `asset:` reuse of those uploads and 1K downloads all worked. Two Flow changes met there:
   (1) the composer's agent switch is now named "Flow Agent" (a switch with aria-pressed, icon "spark") and the agent's
-  settings sit behind their own "Agent settings" icon button beside it; agentToggle() accepts "Agent" or "Flow Agent",
-  scoped to flow-base-prompt-box, and setAgentSettings accepts "Settings" or "Agent settings". (2) After setFiles, Flow
+  settings sit behind their own "Agent settings" icon button beside it - the same rename as the FLOW UPDATE above, met
+  here before 770e001 was merged. Both sides had written an agentToggle(); the merge keeps one, scoped to
+  flow-base-prompt-box, and setAgentSettings accepts "Settings" or "Agent settings" in any case. (2) After setFiles, Flow
   asks "Rights to use this image" (Cancel / I agree) and the upload never starts until it is answered - a job waited
   out its 90 s with the dialog open. "I agree" is a statement about the user's rights to the picture, so uploadAsset
   only presses it in a process started with FLOW_MCP_AGREE_UPLOAD_RIGHTS=1 (the Aurora watcher sets it: its uploads
@@ -767,7 +786,8 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   cdk-style backdrop: all four failed before, pass after. (Without the backdrop the stand-in hid the bug.) This was NOT
   the cause of the catalog failures above, though it produces the same message.
 - LEFT MENU (read live, read-only, 2026-11-25): All media, Images, Characters, Scenes, Uploads, Library (with its own
-  add button), Tools (with "Create tool"), Trash, Collapse. "Videos" is gone; "Uploads" is still there.
+  add button), Tools (with "Create tool"), Trash, Collapse. No "Videos" because that project has no videos yet: the
+  FLOW UPDATE above saw Videos and Uploads show only once a project holds some.
 - AFTER A FLAG THE QUEUE STOPS (2026-11-25, final review of the Aurora watcher): a job that fails with Flow's "unusual
   activity" refusal now cancels every job still waiting in that process's queue (queue.ts holdAfterFlag), each with
   "Not started: Flow flagged unusual activity on job <id> ... flow_retry this job". Before, the rest of the batch kept

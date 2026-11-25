@@ -67,25 +67,21 @@ async function clearBackdrops(page: Page): Promise<void> {
 }
 
 // The agent's own image model, set to the newest Nano Banana like single images. Best effort: a batch never fails over it.
+// Since 2026-11-21 it is a radio group "Model" inside the "Image defaults" sub-panel (radios "🍌 Nano Banana 2.1" ...).
 async function pickAgentImageModel(page: Page): Promise<void> {
-  const button = page.locator("flow-agent-panel").getByRole("button", { name: "Image generation default model" });
-  if (!(await button.isVisible().catch(() => false))) return;
-  await button.click({ timeout: 5000 }).catch(() => {});
-  const items = page.getByRole("menuitem");
-  if (!(await items.first().isVisible().catch(() => false))) await items.first().waitFor({ state: "visible", timeout: 4000 }).catch(() => {});
-  const names = (await items.allInnerTexts().catch(() => [] as string[])).map((t) => t.replace(/\s+/g, " ").trim());
+  const radios = page.locator("flow-agent-panel").getByRole("radiogroup", { name: "Model" }).getByRole("radio");
+  if (!(await radios.first().isVisible().catch(() => false))) return;
+  const names = (await radios.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label") ?? e.textContent ?? ""))).map((t) => t.replace(/\s+/g, " ").trim());
   const index = newestNanoBanana(names);
-  const shown = (await button.innerText().catch(() => "")).replace(/\s+/g, " ");
-  if (index >= 0 && !shown.includes(names[index])) await items.nth(index).click({ timeout: 4000 }).catch(() => {});
-  else await page.keyboard.press("Escape");
+  if (index >= 0 && !(await radios.nth(index).isChecked().catch(() => true))) await radios.nth(index).click({ timeout: 4000 }).catch(() => {});
   await pause(page, 400);
-  await clearBackdrops(page);
 }
 
-// The agent settings panel replaces the composer, hiding the Agent button; Back closes it without saving.
+// The agent settings panel replaces the composer, hiding the Agent button. Back leaves it; since 2026-11-21 the defaults
+// sit one level deeper ("Image defaults"), so it can take two Backs. Changes there save as they are made.
 async function closeAgentSettings(page: Page): Promise<void> {
   const back = page.locator("flow-agent-panel").getByRole("button", { name: "Back", exact: true });
-  if (await back.isVisible().catch(() => false)) {
+  for (let i = 0; i < 3 && (await back.isVisible().catch(() => false)); i++) {
     await clearBackdrops(page);
     await back.click({ timeout: 5000 }).catch(() => {});
     await pause(page, 800);
@@ -407,6 +403,27 @@ async function pickModel(page: Page, model: string): Promise<void> {
   await pause(page, 700);
 }
 
+// Omni 1.1 Flash offers 4s/6s/8s/10s radios. Omni 1.2 Flash (2026-11-21) has a "Length" slider instead: an
+// <input type=range> 0..12 that reads "Length 3 Sec" .. "Length 15 Sec" in the popover. The slider's own value is not
+// in seconds, so it is moved by keys from its first step and the popover's own "<N> Sec" text is checked.
+async function pickDuration(page: Page, seconds: number): Promise<void> {
+  const slider = page.getByRole("slider", { name: "Length" });
+  if (!(await slider.isVisible().catch(() => false))) return pickRadio(page, `${seconds}s`);
+  const pane = page.locator(".cdk-overlay-pane:has(.credit-cost-label)").last();
+  const shown = async () => Number(/Length\s*(\d+)\s*Sec/i.exec(await pane.innerText().catch(() => ""))?.[1] ?? NaN);
+  await slider.focus();
+  await page.keyboard.press("Home");
+  await pause(page, 300);
+  const min = await shown();
+  const steps = Number(await slider.getAttribute("max")) - Number(await slider.getAttribute("min"));
+  if (Number.isNaN(min) || seconds < min || seconds > min + steps) {
+    throw new Error(`This model's clips run ${Number.isNaN(min) ? "a different range" : `${min} to ${min + steps} s`}; ${seconds} s is not one of them.`);
+  }
+  for (let i = 0; i < seconds - min; i++) await page.keyboard.press("ArrowRight");
+  await pause(page, 500);
+  if ((await shown()) !== seconds) throw new Error(`Flow's length slider did not land on ${seconds} s (it shows ${await shown()} s).`);
+}
+
 // Applies the scene settings and returns the credit cost Flow quotes for them.
 // One Escape does not always shut the settings popover (2026-10-30: it stayed open after a run and its credit label
 // swallowed the next click on the prompt box, so flow_character timed out). Check it is gone, and try again.
@@ -431,7 +448,7 @@ async function applySettings(page: Page, job: Job): Promise<number> {
   const model = s.type === "image" && LEGACY_IMAGE_MODEL.test(s.model ?? "") ? LATEST_IMAGE_MODEL : s.model;
   if (model) await pickModel(page, model);
   if (s.type === "video" && s.resolution) await pickRadio(page, new RegExp(`^${s.resolution}`));
-  if (s.type === "video" && s.duration) await pickRadio(page, `${s.duration}s`);
+  if (s.type === "video" && s.duration) await pickDuration(page, s.duration);
   await pickRadio(page, `x${s.variants ?? 1}`);
   await pause(page, 600);
   // The quote is "<N> credits". Low balances add an "Add AI credits" banner link that the old /credits?$/ also matched.
@@ -1705,9 +1722,10 @@ export async function runEdit(job: Job): Promise<string[]> {
   return saved;
 }
 
-// The composer's agent switch. Flow renamed it from "Agent" to "Flow Agent" (seen 2026-11-25: a switch button with
-// aria-pressed, icon "spark"), and the agent's settings moved to their own "Agent settings" icon button beside it.
-// Both names are accepted, scoped to the prompt box so nothing else on the page can match.
+// The composer's agent switch. Flow renamed it from "Agent" to "Flow Agent" (seen 2026-11-21 and again on Windows on
+// 2026-11-25: a switch button with aria-pressed, icon "spark"), and the agent's settings moved to their own
+// "Agent settings" icon button beside it. Both names are accepted, scoped to the prompt box so nothing else on the
+// page can match. (Upstream 770e001 wrote the same helper unscoped; the merge kept this one.)
 export function agentToggle(page: Page) {
   return page.locator("flow-base-prompt-box").getByRole("button", { name: /^(Flow )?Agent$/ });
 }
@@ -1739,18 +1757,28 @@ async function setAgentMode(page: Page, on: boolean): Promise<void> {
 async function setAgentSettings(page: Page, confirm: "Always" | "Never", imageAspect?: string): Promise<void> {
   // Scoped to the prompt box: Flow added a second "Settings" button to the top bar ("View settings", seen 2026-10-13),
   // and an unscoped lookup matched both and failed every agent batch.
+  // Renamed "Settings" -> "Agent settings" on 2026-11-21; either name works.
   await clearBackdrops(page);
   await page.locator("flow-base-prompt-box").getByRole("button", { name: /^(Agent )?Settings$/i }).first().click();
   try {
+    const panel = page.locator("flow-agent-panel");
     await page.getByRole("heading", { name: "Agent settings" }).waitFor({ state: "visible", timeout: 8000 });
-    await page.getByRole("radio", { name: new RegExp(`^${confirm}`) }).click();
+    await panel.getByRole("radio", { name: new RegExp(`^${confirm}`) }).click();
     if (imageAspect) {
-      await page.getByRole("radio", { name: imageAspect, exact: true }).first().click();
-      await page.getByRole("radio", { name: "x1", exact: true }).first().click();
+      // Aspect, outputs and model now live in the "Image defaults" sub-panel, and every change saves by itself.
+      const defaults = panel.getByRole("button", { name: /^Image defaults/ });
+      if (await defaults.isVisible().catch(() => false)) {
+        await defaults.click();
+        await page.getByRole("heading", { name: "Image defaults" }).waitFor({ state: "visible", timeout: 8000 });
+      }
+      await panel.getByRole("radio", { name: imageAspect, exact: true }).first().click();
+      await panel.getByRole("radio", { name: "x1", exact: true }).first().click();
       await pickAgentImageModel(page);
     }
     await pause(page, 300);
-    await page.getByRole("button", { name: "Save", exact: true }).click();
+    // The old panel had a Save button; the new one saves as you go.
+    const save = page.getByRole("button", { name: "Save", exact: true });
+    if (await save.isVisible().catch(() => false)) await save.click();
     await pause(page, 1200);
   } finally {
     // Saved or not, never leave the panel covering the composer: the next step needs the Agent button.
