@@ -730,13 +730,17 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   settings sit behind their own "Agent settings" icon button beside it; agentToggle() accepts "Agent" or "Flow Agent",
   scoped to flow-base-prompt-box, and setAgentSettings accepts "Settings" or "Agent settings". (2) After setFiles, Flow
   asks "Rights to use this image" (Cancel / I agree) and the upload never starts until it is answered - a job waited
-  out its 90 s with the dialog open. uploadAsset presses "I agree" when it shows within 6 s; the user approved that for
-  their own photos. The filechooser wait is 20 s.
+  out its 90 s with the dialog open. "I agree" is a statement about the user's rights to the picture, so uploadAsset
+  only presses it in a process started with FLOW_MCP_AGREE_UPLOAD_RIGHTS=1 (the Aurora watcher sets it: its uploads
+  are the shop's own piece photos, which the user approved on 2026-11-25). Any other process leaves the question to the
+  user in the Flow window and, if nobody answers before the upload times out, presses Cancel and says why
+  (`node scripts/check-upload-rights.mjs`). The filechooser wait is 20 s.
 - A SECOND flow-mcp FOR A WATCHER (the Aurora catalog watcher, N8N Croche/Aurora Semijoias - Vertical/catalogo-fotos):
-  it spawns dist/index.js with FLOW_MCP_PORT=8799 and its own FLOW_MCP_HOME, so it never touches the 8787 owner and can
-  pace images at 8-15 s. PROFILE_DIR comes from HOME, so such a process would open an EMPTY, signed-out Chrome profile
-  if Chrome were closed; the watcher opens Chrome itself first with ~/.flow-mcp/chrome-profile on CDP 9333. Any client
-  that gives flow-mcp its own HOME must do the same.
+  it spawns dist/index.js with FLOW_MCP_PORT=8799 and its own FLOW_MCP_HOME, so it never touches the 8787 owner's
+  queue. Its pace is the default 25-70 s: at 8-15 s Flow flagged unusual activity (below). PROFILE_DIR is
+  FLOW_MCP_PROFILE when set, else HOME/chrome-profile, so the watcher passes the signed-in ~/.flow-mcp/chrome-profile
+  (it also opens Chrome itself first on CDP 9333). Any client that gives flow-mcp its own HOME must pass
+  FLOW_MCP_PROFILE, or a Chrome launched by it opens an EMPTY, signed-out profile (`node scripts/check-profile.mjs`).
 - FAILED TILES LOOKED FINISHED + "UNUSUAL ACTIVITY" (2026-11-25, Windows, the Aurora catalog watcher). Flow now titles a
   failed tile with the PROMPT (in 2026-09 its aria-label was empty), so TILE_ID_JS gave it the id "title:<prompt>": a job
   took its own failure for a finished id-less still and tried to download it ("Flow's tile menu did not open" - a failed
@@ -764,3 +768,20 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   the cause of the catalog failures above, though it produces the same message.
 - LEFT MENU (read live, read-only, 2026-11-25): All media, Images, Characters, Scenes, Uploads, Library (with its own
   add button), Tools (with "Create tool"), Trash, Collapse. "Videos" is gone; "Uploads" is still there.
+- AFTER A FLAG THE QUEUE STOPS (2026-11-25, final review of the Aurora watcher): a job that fails with Flow's "unusual
+  activity" refusal now cancels every job still waiting in that process's queue (queue.ts holdAfterFlag), each with
+  "Not started: Flow flagged unusual activity on job <id> ... flow_retry this job". Before, the rest of the batch kept
+  being sent into the same refusal. A job already running cannot be stopped. `node scripts/check-queue-flagged.mjs`.
+- ONE FLOW WINDOW, TWO PROCESSES (2026-11-25): Claude Desktop's flow-mcp (8787) and the watcher's (8799) both drive the
+  Chrome on CDP 9333, and two of them in one tab at once mix up prompts, "before" snapshots and downloads. src/tablock.ts
+  is a lock file every process finds at the same place (~/.flow-mcp/tab-<CDP port>.lock, FLOW_MCP_TAB_LOCK overrides):
+  queued jobs wait their turn (the job's progress says "waiting for another flow-mcp process (pid, port: job)"), up to
+  30 min, and keep the 25 s minimum pause across processes (tab-<port>.lock.last); page-driving direct calls (assets,
+  download, trash, new_project, character, character_edit, characters) refuse at once and name who has the window; a
+  detailed flow_status skips the account panel while anyone holds it. A holder heartbeats every 20 s; a lock whose pid
+  is gone, or with no heartbeat for 2 min, is taken over. Only processes running this code take part: Claude's own
+  connector does once the user restarts Claude. `node scripts/check-tab-lock.mjs` (7 checks, real processes).
+- A PICTURE IS NOT A CHARACTER: generate's CHARACTER LOCK used to treat every "asset:<name>" that looked like a name as
+  a character, including flow-mcp's own uploads ("asset:fm-<job>-ref1.jpg", reused by the Aurora catalog for styles
+  02-05), so jewelry photos were told to keep "the same face, same eyes, same hair". Names starting "fm-" or ending in
+  an image/video extension are pictures now and leave the prompt as written. `node scripts/check-prompts.mjs`.

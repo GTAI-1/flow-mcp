@@ -459,7 +459,7 @@ async function waitForUpload(page: Page, name: string, timeoutMs: number): Promi
 
 // Uploads under a unique filename so the asset can be picked unambiguously afterwards.
 // "asset:<name>" refers to something already in the Flow project (image, video, character) and skips the upload.
-async function uploadAsset(page: Page, job: Job, file: string, label: string): Promise<string> {
+export async function uploadAsset(page: Page, job: Job, file: string, label: string, uploadTimeoutMs = 90_000): Promise<string> {
   if (file.startsWith(ASSET_PREFIX)) return file.slice(ASSET_PREFIX.length).trim();
   if (!existsSync(file)) throw new Error(`File not found: ${file}`);
   const name = `fm-${job.id}-${label}${extname(file).toLowerCase()}`;
@@ -471,11 +471,26 @@ async function uploadAsset(page: Page, job: Job, file: string, label: string): P
   await page.getByRole("menuitem", { name: "Upload", exact: true }).click();
   await (await chooser).setFiles(staged);
   // Since 2026-11 Flow asks "Rights to use this image" (Cancel / I agree) once the file is chosen, and the upload never
-  // starts until it is answered (the job used to wait out 90 s with the dialog open). The user approved answering it
-  // for their own photos (2026-11-25).
-  const agree = page.locator(".cdk-overlay-container").getByRole("button", { name: "I agree", exact: true });
-  if (await agree.waitFor({ state: "visible", timeout: 6000 }).then(() => true, () => false)) await agree.click();
-  await waitForUpload(page, name, 90_000);
+  // starts until it is answered. "I agree" is a statement about the user's rights to the picture, so a process only
+  // makes it when started with FLOW_MCP_AGREE_UPLOAD_RIGHTS=1 (the Aurora catalog watcher, whose uploads are the shop's
+  // own piece photos: the user approved that on 2026-11-25). Any other process leaves the question to the user in the
+  // Flow window; unanswered when the upload times out, it is declined with Cancel so the dialog does not block the page.
+  const overlay = page.locator(".cdk-overlay-container");
+  const agree = overlay.getByRole("button", { name: "I agree", exact: true });
+  const asked = await agree.waitFor({ state: "visible", timeout: 6000 }).then(() => true, () => false);
+  const mayAgree = process.env.FLOW_MCP_AGREE_UPLOAD_RIGHTS === "1";
+  if (asked && mayAgree) await agree.click();
+  try {
+    await waitForUpload(page, name, uploadTimeoutMs);
+  } catch (err) {
+    if (!asked || mayAgree || !(await agree.isVisible().catch(() => false))) throw err;
+    await overlay.getByRole("button", { name: "Cancel", exact: true }).click({ timeout: 3000 }).catch(() => {});
+    throw new Error(
+      `Flow asked "Rights to use this image" for ${basename(file)} and nobody answered, so nothing was uploaded (the ` +
+        `question was declined). Answer it in the Flow window yourself, or start flow-mcp with ` +
+        `FLOW_MCP_AGREE_UPLOAD_RIGHTS=1 only when every image it uploads is yours to use.`,
+    );
+  }
   return name;
 }
 

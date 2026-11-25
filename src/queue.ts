@@ -59,6 +59,9 @@ export type JobRunner = (job: Job) => Promise<string[]>;
 // randomised pause between them.
 const PAUSE_MIN_MS = Number(process.env.FLOW_MCP_PAUSE_MIN_S ?? 25) * 1000;
 const PAUSE_MAX_MS = Number(process.env.FLOW_MCP_PAUSE_MAX_S ?? 70) * 1000;
+// Flow's check for automated traffic ("We noticed some unusual activity", see FLAGGED in flow.ts). Once it has fired,
+// sending the next job only adds to what it saw, so the jobs still waiting are not started.
+const FLAGGED = /unusual activity/i;
 
 export class JobQueue {
   private jobs = new Map<string, Job>();
@@ -66,7 +69,12 @@ export class JobQueue {
   private lastFinished = 0;
   pausedReason: string | null = null;
 
-  constructor(private runner: JobRunner) {}
+  // `gate` wraps every run: LocalCore passes flowTabGate, so a job waits while another flow-mcp process drives the
+  // same Flow window.
+  constructor(
+    private runner: JobRunner,
+    private gate?: (job: Job, run: () => Promise<string[]>) => Promise<string[]>,
+  ) {}
 
   add(params: SceneParams): Job {
     const job: Job = {
@@ -115,6 +123,18 @@ export class JobQueue {
     return job;
   }
 
+  // Every job still waiting is cancelled with the reason; flow_retry puts it back in line once Flow has calmed down.
+  private holdAfterFlag(flagged: Job): void {
+    for (const job of this.list()) {
+      if (job.status !== "queued") continue;
+      job.status = "cancelled";
+      job.error =
+        `Not started: Flow flagged unusual activity on job ${flagged.id} (its check for automated traffic), so nothing ` +
+        `more was sent. Wait a while, then flow_retry this job.`;
+      job.finishedAt = new Date().toISOString();
+    }
+  }
+
   private async work(): Promise<void> {
     if (this.working) return;
     this.working = true;
@@ -135,7 +155,7 @@ export class JobQueue {
         job.status = "running";
         job.attempts++;
         try {
-          job.files = await this.runner(job);
+          job.files = await (this.gate ? this.gate(job, () => this.runner(job)) : this.runner(job));
           job.status = "done";
           job.error = undefined;
         } catch (err) {
@@ -144,6 +164,7 @@ export class JobQueue {
           // is re-queued here. Timeouts are never retried automatically: they may still have spent credits.
           const retryable = /agent finished without creating/i.test(job.error);
           job.status = retryable && job.attempts <= (job.params.retries ?? 1) ? "queued" : "failed";
+          if (FLAGGED.test(job.error)) this.holdAfterFlag(job);
         }
         job.finishedAt = new Date().toISOString();
         this.lastFinished = Date.now();
