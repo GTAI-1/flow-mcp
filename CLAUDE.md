@@ -724,3 +724,43 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   matches on the rest at a 0.3 threshold (unit-checked: 4/4 right). (2) After the drag, the collection page did not
   list the just-moved images until reloaded, so the tool thought the move failed and then tried to re-select images no
   longer in the grid ("None of the 1 image(s) could be selected"). It now reloads the collection before counting.
+- WINDOWS 11, AURORA CATALOG (2026-11-25, images only, 0 credits): flow-mcp ran on a real PC - image jobs with
+  uploaded reference photos, `asset:` reuse of those uploads and 1K downloads all worked. Two Flow changes met there:
+  (1) the composer's agent switch is now named "Flow Agent" (a switch with aria-pressed, icon "spark") and the agent's
+  settings sit behind their own "Agent settings" icon button beside it; agentToggle() accepts "Agent" or "Flow Agent",
+  scoped to flow-base-prompt-box, and setAgentSettings accepts "Settings" or "Agent settings". (2) After setFiles, Flow
+  asks "Rights to use this image" (Cancel / I agree) and the upload never starts until it is answered - a job waited
+  out its 90 s with the dialog open. uploadAsset presses "I agree" when it shows within 6 s; the user approved that for
+  their own photos. The filechooser wait is 20 s.
+- A SECOND flow-mcp FOR A WATCHER (the Aurora catalog watcher, N8N Croche/Aurora Semijoias - Vertical/catalogo-fotos):
+  it spawns dist/index.js with FLOW_MCP_PORT=8799 and its own FLOW_MCP_HOME, so it never touches the 8787 owner and can
+  pace images at 8-15 s. PROFILE_DIR comes from HOME, so such a process would open an EMPTY, signed-out Chrome profile
+  if Chrome were closed; the watcher opens Chrome itself first with ~/.flow-mcp/chrome-profile on CDP 9333. Any client
+  that gives flow-mcp its own HOME must do the same.
+- FAILED TILES LOOKED FINISHED + "UNUSUAL ACTIVITY" (2026-11-25, Windows, the Aurora catalog watcher). Flow now titles a
+  failed tile with the PROMPT (in 2026-09 its aria-label was empty), so TILE_ID_JS gave it the id "title:<prompt>": a job
+  took its own failure for a finished id-less still and tried to download it ("Flow's tile menu did not open" - a failed
+  tile has no More options, only Retry / Reuse prompt / Delete), and when the same prompt failed again its new error
+  tile looked already known, so the job waited out its 180 s ("Timed out ... waiting for Flow to finish"). Both happened
+  on one earring: 2 of 5 styles lost, 9 minutes wasted. Failed tiles now get NO id, freshMedia never takes one, and
+  waitForNewMedia counts failures by position (newErrorTiles counts every id-less failure above the first known tile, so
+  it takes that count first and only treats a rise as new; older failures at the top of the grid are otherwise a false
+  alarm). The failures were Flow's ANTI-AUTOMATION check: ".error-message-text" = "We noticed some unusual activity. Note
+  that browser extensions that modify the page may cause issues. Please visit the Help Center for more information."
+  (not charged; buttons Retry / Reuse prompt / Delete), on 4 of 7 stills in ~15 minutes, at the watcher's 8-15 s pace,
+  after a day of catalog runs. Such a failure is never retried (FLAGGED): the job stops with Flow's words and "stop
+  sending jobs for a while". Do NOT work around this check (rules above): slow down and let it clear. Agent batches:
+  their "N tile(s) failed" note can now include older failures at the top of the grid (cosmetic).
+  `node scripts/check-error-tiles.mjs` (after a build) replays all of it on a stand-in grid in its own headless Chrome:
+  before the fix it got the finished-still mistake, the 12 s timeout and a plain failure taken as finished instead of
+  retried; after, all four pass (the flagged one stops in 2 s).
+- locator.isVisible({ timeout }) IGNORES its timeout and answers at once (Playwright documents the option as ignored).
+  Four checks relied on it: the tile menu's Download and Rename items, renameTile's More options, and Retry on a failed
+  tile. Right after a click a menu is not always on the page yet, so a menu that opened a moment late was taken for one
+  that never opened, and its invisible cdk backdrop then swallowed the retry's click. visibleWithin() (waitFor visible)
+  replaces all four, and a failed download attempt clears showing backdrops before the next.
+  `node scripts/check-tile-menus.mjs` drives Download and Rename on a stand-in with menus 0 and 400 ms late over a
+  cdk-style backdrop: all four failed before, pass after. (Without the backdrop the stand-in hid the bug.) This was NOT
+  the cause of the catalog failures above, though it produces the same message.
+- LEFT MENU (read live, read-only, 2026-11-25): All media, Images, Characters, Scenes, Uploads, Library (with its own
+  add button), Tools (with "Create tool"), Trash, Collapse. "Videos" is gone; "Uploads" is still there.

@@ -22,6 +22,12 @@ const FAILURE_TEXT = /failed|couldn.t|unable/i;
 
 const pause = (page: Page, ms: number) => page.waitForTimeout(ms);
 
+// locator.isVisible() never waits: Playwright ignores its timeout option and answers at once. Right after a click Flow's
+// menu is not always on the page yet, even when it opens "instantly", so `isVisible({ timeout })` could take a tile menu
+// for one that never opened, and a rename could fail silently. Waiting for the element is what those calls meant.
+// scripts/check-tile-menus.mjs pins it (found 2026-11-25 while chasing failed tiles, which were a separate bug).
+const visibleWithin = (locator: Locator, ms: number) => locator.waitFor({ state: "visible", timeout: ms }).then(() => true, () => false);
+
 // `detailed` opens the account panel to read the balance, so it must not run while a generation is driving the page.
 export async function getFlowState(detailed = false): Promise<FlowState> {
   const page = await getFlowPage();
@@ -108,8 +114,11 @@ const settingsTrigger = (page: Page) => page.getByRole("button", { name: "Settin
 // serves signed /asb/ links with no uuid, so the attribute comes first and the URL is only a fallback.
 // Video tiles at rest expose neither, and their signed thumbnail URL is re-signed over time - using it as a handle
 // made old tiles look new. Titles are stable, so an id-less tile is identified by its title instead.
+// A failed tile holds no media and gets NO id: since 2026-11 Flow titles it with the prompt, and as "title:<prompt>" it
+// passed for a finished still (the job then "downloaded" it: "Flow's tile menu did not open") and a new failure of the
+// same prompt passed for the old one (the job waited out its timeout). waitForNewMedia counts failures by position.
 const TILE_ID_JS = `(tile) => {
-  if (tile.querySelector("flow-collection-tile")) return undefined;
+  if (tile.querySelector("flow-collection-tile, flow-error-tile")) return undefined;
   const media = tile.querySelector("img[data-media-id], video[data-media-id], img[src], video[src]");
   const id = media && (media.getAttribute("data-media-id") || media.getAttribute("src")?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/)?.[0]);
   if (id) return id;
@@ -149,6 +158,8 @@ const mediaTile = (page: Page, id: string) =>
 
 // A failed generation becomes a <flow-error-tile> ("Failed ... You have not been charged") with Flow's own Retry
 // button. Old failures can sit anywhere in the grid, so only error tiles above the first already-known tile count.
+// Failed tiles have no id, so older failures that sit above every known tile are counted too: waitForNewMedia takes
+// the count before it starts and only treats a rise as a new failure.
 export async function newErrorTiles(page: Page, known: Iterable<string>): Promise<number> {
   return page.evaluate(([ids, js]: [string[], string]) => {
     const seen = new Set(ids);
@@ -173,13 +184,17 @@ async function errorReason(page: Page): Promise<string> {
     .catch(() => "");
 }
 const POLICY = /polic|violat|prominent|safety|not allowed|guideline/i;
+// "We noticed some unusual activity. Note that browser extensions that modify the page may cause issues." (seen
+// 2026-11-25 on catalog stills, nothing charged): Flow's check for automated traffic. Retrying at once only adds to what
+// it saw, so such a failure is never retried and the job stops with Flow's words and what to do.
+const FLAGGED = /unusual activity/i;
 
 // Flow's Retry replaces the failed tile with a fresh render of the same prompt and settings, free of charge.
 // Tiles produced by Agent mode only offer Delete, so the button may not be there at all.
 async function retryErrorTile(page: Page, tile: Locator): Promise<boolean> {
   await hoverTile(page, tile);
   const retry = tile.getByRole("button", { name: "Retry" });
-  if (!(await retry.isVisible({ timeout: 2000 }).catch(() => false))) return false;
+  if (!(await visibleWithin(retry, 2000))) return false;
   await retry.click({ timeout: 10_000 });
   await pause(page, 1500);
   await scrollToTop(page);
@@ -264,19 +279,24 @@ export async function freshMedia(page: Page, before: string[], kind?: MediaKind)
         busy:
           /\d+%/.test((t as HTMLElement).innerText) ||
           (!!t.querySelector("flow-video-tile") && !t.querySelector('img[alt="Generated video thumbnail"], video')),
+        failed: !!t.querySelector("flow-error-tile"),
       }));
     },
     TILE_ID_JS,
   );
-  const ours = tiles.filter((t) => t.id && !before.includes(t.id) && !t.label.startsWith("fm-") && !t.busy && (!kind || t.kind === kind));
+  const ours = tiles.filter(
+    (t) => t.id && !before.includes(t.id) && !t.label.startsWith("fm-") && !t.busy && !t.failed && (!kind || t.kind === kind),
+  );
   return [...new Set(ours.map((t) => t.id!))];
 }
 
-async function waitForNewMedia(page: Page, before: string[], count: number, timeoutMs: number, job?: Job, kind?: MediaKind): Promise<string[]> {
+export async function waitForNewMedia(page: Page, before: string[], count: number, timeoutMs: number, job?: Job, kind?: MediaKind): Promise<string[]> {
   const deadline = Date.now() + timeoutMs;
   let retriesLeft = job?.params.retries ?? 1;
   let failures = 0;
   let seen = "";
+  // Failed tiles have no id, so older failures above every known tile are in this count too: only a rise is ours.
+  const errorsBefore = await newErrorTiles(page, before);
   while (Date.now() < deadline) {
     await pause(page, 2000);
     const fresh = await freshMedia(page, before, kind);
@@ -295,10 +315,16 @@ async function waitForNewMedia(page: Page, before: string[], count: number, time
       [...document.querySelectorAll("flow-grid-tile-container")].slice(0, 8).map((t) => (t as HTMLElement).innerText.match(/\d+%/)?.[0]).filter(Boolean),
     );
     if (job) job.progress = progress.join(", ") || undefined;
-    const errors = progress.length ? 0 : await newErrorTiles(page, before);
+    const errors = progress.length ? 0 : Math.max(0, (await newErrorTiles(page, before)) - errorsBefore);
     if (!errors) continue;
     failures += errors;
     const reason = await errorReason(page);
+    if (FLAGGED.test(reason)) {
+      throw new Error(
+        `Flow refused this generation: "${reason}" Nothing was charged. This is Flow's check for automated traffic: stop ` +
+          `sending jobs for a while (pressing Retry or resending at once only adds to it), then try one by hand in Flow.`,
+      );
+    }
     if (POLICY.test(reason)) {
       const hint = /prominent|public figure|celebrit/i.test(reason)
         ? " Flow thinks a face in this scene looks like a real, well-known person, usually one from an uploaded photo or a character made from one. Retrying will not change that: use a character drawn from a description (flow_character with `describe`) instead."
@@ -441,9 +467,14 @@ async function uploadAsset(page: Page, job: Job, file: string, label: string): P
   copyFileSync(file, staged);
   await scrollToTop(page);
   await page.getByRole("button", { name: "Add media menu" }).click();
-  const chooser = page.waitForEvent("filechooser", { timeout: 10_000 });
+  const chooser = page.waitForEvent("filechooser", { timeout: 20_000 });
   await page.getByRole("menuitem", { name: "Upload", exact: true }).click();
   await (await chooser).setFiles(staged);
+  // Since 2026-11 Flow asks "Rights to use this image" (Cancel / I agree) once the file is chosen, and the upload never
+  // starts until it is answered (the job used to wait out 90 s with the dialog open). The user approved answering it
+  // for their own photos (2026-11-25).
+  const agree = page.locator(".cdk-overlay-container").getByRole("button", { name: "I agree", exact: true });
+  if (await agree.waitFor({ state: "visible", timeout: 6000 }).then(() => true, () => false)) await agree.click();
   await waitForUpload(page, name, 90_000);
   return name;
 }
@@ -961,14 +992,14 @@ export async function downloadCollection(name: string, dir: string): Promise<str
 // Flow titles clips itself and happily reuses a title: two takes of the same scene both came back as "Woman climbing
 // granite wall", which makes a clip impossible to identify by name and cost real time tonight. Renaming each finished
 // tile to our own scene name fixes it at the source - the user's suggestion, and the right one.
-async function renameTile(page: Page, tile: Locator, title: string): Promise<boolean> {
+export async function renameTile(page: Page, tile: Locator, title: string): Promise<boolean> {
   try {
     await hoverTile(page, tile);
     const more = tile.getByRole("button", { name: "More options" });
-    if (!(await more.isVisible({ timeout: 3000 }).catch(() => false))) return false;
+    if (!(await visibleWithin(more, 3000))) return false;
     await more.click();
     const rename = page.getByRole("menuitem", { name: "Rename", exact: true });
-    if (!(await rename.isVisible({ timeout: 4000 }).catch(() => false))) {
+    if (!(await visibleWithin(rename, 4000))) {
       await page.keyboard.press("Escape");
       return false;
     }
@@ -1001,7 +1032,7 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
       if (await more.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false)) await more.click();
       else await tile.click({ button: "right" });
       const download = page.getByRole("menuitem", { name: "Download", exact: true });
-      if (!(await download.isVisible({ timeout: 8000 }).catch(() => false))) {
+      if (!(await visibleWithin(download, 8000))) {
         // Saying what Flow actually offered turns "locator timed out" into something that explains itself next time.
         const items = await page.locator('[role="menuitem"]').evaluateAll((ms) => ms.map((m) => (m.textContent ?? "").replace(/\s+/g, " ").trim()));
         throw new Error(items.length ? `Flow's tile menu has no Download item. It offered: ${items.join(" | ")}` : "Flow's tile menu did not open.");
@@ -1031,6 +1062,9 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
       lastError = err;
       await page.keyboard.press("Escape").catch(() => {});
       await pause(page, 2000);
+      // A menu that opened after the Escape leaves its invisible backdrop over the grid, and the next attempt's click
+      // on "More options" would land on it instead (Playwright then waits out its whole timeout).
+      await clearBackdrops(page);
     }
   }
   throw lastError;
@@ -1117,7 +1151,7 @@ export async function runGeneration(job: Job): Promise<string[]> {
   const s = job.params;
 
   await ensureProjectGrid(page);
-  const agent = page.getByRole("button", { name: "Agent", exact: true });
+  const agent = agentToggle(page);
   if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
   const clear = page.getByRole("button", { name: "Clear prompt" });
   if (await clear.isVisible().catch(() => false)) await clear.click();
@@ -1656,11 +1690,18 @@ export async function runEdit(job: Job): Promise<string[]> {
   return saved;
 }
 
+// The composer's agent switch. Flow renamed it from "Agent" to "Flow Agent" (seen 2026-11-25: a switch button with
+// aria-pressed, icon "spark"), and the agent's settings moved to their own "Agent settings" icon button beside it.
+// Both names are accepted, scoped to the prompt box so nothing else on the page can match.
+export function agentToggle(page: Page) {
+  return page.locator("flow-base-prompt-box").getByRole("button", { name: /^(Flow )?Agent$/ });
+}
+
 // The agent session panel hides the composer, so a toggle attempted underneath it does nothing at all. Leaving agent
 // mode on then breaks the NEXT job, which expects the plain composer - a free character build failed that way. So this
 // confirms the toggle actually landed rather than assuming the click worked.
 async function setAgentMode(page: Page, on: boolean): Promise<void> {
-  const agent = page.getByRole("button", { name: "Agent", exact: true });
+  const agent = agentToggle(page);
   // Playwright says why a click did not land ("<div ...> intercepts pointer events", "element is not visible"); keep
   // that, so a failure names what was in the way instead of guessing.
   let why = "";
@@ -1684,7 +1725,7 @@ async function setAgentSettings(page: Page, confirm: "Always" | "Never", imageAs
   // Scoped to the prompt box: Flow added a second "Settings" button to the top bar ("View settings", seen 2026-10-13),
   // and an unscoped lookup matched both and failed every agent batch.
   await clearBackdrops(page);
-  await page.locator("flow-base-prompt-box").getByRole("button", { name: "Settings", exact: true }).click();
+  await page.locator("flow-base-prompt-box").getByRole("button", { name: /^(Agent )?Settings$/i }).first().click();
   try {
     await page.getByRole("heading", { name: "Agent settings" }).waitFor({ state: "visible", timeout: 8000 });
     await page.getByRole("radio", { name: new RegExp(`^${confirm}`) }).click();
