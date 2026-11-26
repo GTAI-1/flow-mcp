@@ -23,11 +23,15 @@ const CDP_URL = `http://127.0.0.1:${CDP_PORT}`;
 const CHROME_PATHS = [
   process.env.FLOW_MCP_CHROME,
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
   "/usr/bin/google-chrome",
+  "/usr/bin/brave-browser",
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-  // Windows also installs Chrome here: 32-bit builds, and per-user installs made without admin rights.
+  "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+  // Windows also installs Chrome/Brave here: 32-bit builds, and per-user installs made without admin rights.
   "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
   process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe` : undefined,
+  process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\BraveSoftware\\Brave-Browser\\Application\\brave.exe` : undefined,
 ].filter((p): p is string => Boolean(p));
 
 let browser: Browser | null = null;
@@ -80,14 +84,17 @@ export async function getBrowser(): Promise<Browser> {
 
 export async function getFlowPage(): Promise<Page> {
   const b = await getBrowser();
-  const context = b.contexts()[0];
-  if (!context) throw new Error("Chrome has no browser context; restart the Flow Chrome window.");
-  const existing = context.pages().find((p) => FLOW_HOSTS.test(p.url()));
+  const contexts = b.contexts();
+  if (!contexts.length) throw new Error("Chrome has no browser context; restart the Flow browser window.");
+  const allPages = contexts.flatMap((c) => c.pages());
+  const existing =
+    allPages.find((p) => /^https:\/\/flow\.google\.com\/project\//.test(p.url())) ??
+    allPages.find((p) => FLOW_HOSTS.test(p.url()));
   if (existing) {
     await ensureEnglish(existing);
     return existing;
   }
-  const page = await context.newPage();
+  const page = await contexts[0].newPage();
   await page.goto(inEnglish(FLOW_URL), { waitUntil: "domcontentloaded" });
   await ensureEnglish(page);
   return page;

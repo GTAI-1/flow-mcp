@@ -2,9 +2,9 @@
 export const PLAYBOOK = {
   workflow: [
     "Call flow_status first. If it returns a hint, relay it to the user and stop.",
-    "Plan the whole piece as scenes of one shot each, then send them in ONE flow_generate call so file numbering and chaining work.",
-    "Tell the user the expected credit total before queueing anything that costs credits.",
-    "Call flow_wait repeatedly until finished is true; scenes run one at a time with 25-70 s pauses.",
+    "Before calling flow_generate for any video scenes, confirm all 6 settings with the user (do not guess unspecified ones): (1) video model (e.g. Omni 1.2 Flash, Omni 1.1 Flash, Veo 3.1 - Lite), (2) clip length (`duration`), (3) generation resolution (`360p` or `720p`), (4) download quality (`original`, `720p`, `1080p`, or `upscaled`), (5) quantity (scene count and `variants` x1-x4), and (6) parallel `concurrency` (1-4), along with the expected credit total.",
+    "Plan the whole piece as scenes of one shot each, then send them in ONE flow_generate call so file numbering and chaining work. For independent non-chained video/image scenes, pass `concurrency: 2` to `4` (normal composer with Flow Agent off) to render multiple scenes in parallel while still checking max_credits on every scene.",
+    "Call flow_wait repeatedly until finished is true; serial scenes run one at a time with 25-70 s pauses, while `concurrency > 1` overlaps up to 4 renders with short staggers.",
     "To put the spoken words on screen: FIRST call flow_transcribe on the film (with `language`), show the user the words, flag anything that looks misheard (names especially, and words run together), propose the fixes, and wait for the user to confirm or correct them. Only then call flow_captions once, passing the agreed words as `text` (style bold for short-form, clean for subtitles).",
     "If an image batch finishes with \"still failed: scene ...\" in its note, call flow_retry with its job id: only those images are made again, under their own scene numbers.",
     "No call blocks for more than about 45 s. A reply with still_working and a task_id means Flow is still busy with it: pass the task_id to flow_wait, and never repeat the call.",

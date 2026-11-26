@@ -40,13 +40,62 @@ export async function getFlowState(detailed = false): Promise<FlowState> {
   return state;
 }
 
-// Menus close on Escape; the account panel does not and needs its own close button.
+// Menus close on Escape; Flow's "What's new" changelog modal keeps "Get started" disabled until the user steps
+// through its iframe slides via "Next", and the account panel needs its own close button.
 async function dismissOverlays(page: Page): Promise<void> {
   await leaveSideMenu(page);
+  const changelog = page.locator("flow-change-log-modal");
+  if (await changelog.isVisible().catch(() => false)) {
+    const startBtn = changelog.getByRole("button", { name: /^(Get started|Done|Close)$/i }).first();
+    const frame = page.frameLocator('iframe[title="Changelog"], iframe.change-log-modal-iframe');
+    for (let step = 0; step < 10 && (await changelog.isVisible().catch(() => false)); step++) {
+      if (await startBtn.isEnabled().catch(() => false)) {
+        await startBtn.click({ timeout: 5000 }).catch(() => {});
+        await pause(page, 600);
+        break;
+      }
+      const next = frame.getByRole("button", { name: /^Next$/i }).first();
+      if (await next.isVisible().catch(() => false)) {
+        await next.click({ timeout: 3000 }).catch(() => {});
+        await pause(page, 400);
+      } else break;
+    }
+  }
+  const onboarding = page
+    .locator('[role="dialog"], mat-dialog-container')
+    .getByRole("button", { name: /^(Get started|Got it|Dismiss|Skip|Continue|Close)$/i })
+    .first();
+  if ((await onboarding.isVisible().catch(() => false)) && (await onboarding.isEnabled().catch(() => false))) {
+    await onboarding.click({ timeout: 5000 }).catch(() => {});
+    await pause(page, 600);
+  }
   await page.keyboard.press("Escape");
   const closePanel = page.getByRole("button", { name: "Close account panel" });
   if (await closePanel.isVisible().catch(() => false)) await closePanel.click({ timeout: 5000 }).catch(() => {});
   await clearBackdrops(page);
+}
+
+// Closes the Flow Agent side panel (which opens by default on fresh profiles and hides the normal composer's Agent
+// switch) and switches Flow Agent off when visible.
+async function ensureAgentOff(page: Page): Promise<void> {
+  const sideClose = page.getByRole("button", { name: "Close", exact: true }).filter({ hasText: /right_panel_close/ }).first();
+  if (await sideClose.isVisible().catch(() => false)) {
+    await sideClose.click({ timeout: 5000 }).catch(() => {});
+    await pause(page, 800);
+  } else if (await page.getByRole("button", { name: "Agent settings" }).isVisible().catch(() => false)) {
+    const close = page.getByRole("button", { name: "Close", exact: true }).first();
+    if (await close.isVisible().catch(() => false)) {
+      await close.click({ timeout: 5000 }).catch(() => {});
+      await pause(page, 800);
+    }
+  }
+  const agent = agentToggle(page);
+  if (await agent.isVisible({ timeout: 5000 }).catch(() => false)) {
+    if ((await agent.getAttribute("aria-pressed").catch(() => null)) === "true") {
+      await agent.click();
+      await pause(page, 500);
+    }
+  }
 }
 
 // Some of Flow's menus ignore Escape (the agent's model menu did, 2026-10-13), and the invisible backdrop behind an
@@ -61,7 +110,7 @@ async function clearBackdrops(page: Page): Promise<void> {
 }
 
 // The agent's switch was renamed "Agent" -> "Flow Agent" (seen 2026-11-21); either name, and nothing else, is it.
-const agentToggle = (page: Page) => page.getByRole("button", { name: /^(Flow )?Agent$/ });
+const agentToggle = (page: Page) => page.getByRole("button", { name: /^(Flow )?Agent$/i });
 
 // The agent's own image model, set to the newest Nano Banana like single images. Best effort: a batch never fails over it.
 // Since 2026-11-21 it is a radio group "Model" inside the "Image defaults" sub-panel (radios "🍌 Nano Banana 2.1" ...).
@@ -378,6 +427,12 @@ async function pickModel(page: Page, model: string): Promise<void> {
   }
   await items.nth(index).click();
   await pause(page, 700);
+  if (!latest) {
+    const after = (await button.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+    if (!after.toLowerCase().includes(model.toLowerCase())) {
+      throw new Error(`Requested model "${model}", but Flow's model selector still shows "${after}". Nothing was generated.`);
+    }
+  }
 }
 
 // Omni 1.1 Flash offers 4s/6s/8s/10s radios. Omni 1.2 Flash (2026-11-21) has a "Length" slider instead: an
@@ -521,18 +576,24 @@ export async function attachAsset(page: Page, opener: Locator, assetName: string
 }
 
 async function typePrompt(page: Page, prompt: string): Promise<void> {
-  const box = page.locator(".ProseMirror");
+  const box = page.locator(".ProseMirror").first();
   await box.click();
   await page.keyboard.press("ControlOrMeta+a");
-  await page.keyboard.press("Delete");
-  // Enter submits in Flow, so the prompt goes in as a single line.
-  await page.keyboard.type(prompt.replace(/\s*\n+\s*/g, " ").trim(), { delay: 8 });
-  await pause(page, 500);
+  await page.keyboard.press("Backspace");
+  // Enter submits in Flow, so the prompt goes in as a single line. insertText avoids hundreds of CDP keystroke
+  // round-trips while another scene is rendering in parallel, falling back to type() if ProseMirror rejects it.
+  const line = prompt.replace(/\s*\n+\s*/g, " ").trim();
+  await page.keyboard.insertText(line);
+  await pause(page, 400);
+  if (!(await box.innerText().catch(() => "")).trim()) {
+    await page.keyboard.type(line, { delay: 8 });
+    await pause(page, 500);
+  }
 }
 
-export type DownloadQuality = "original" | "upscaled";
+export type DownloadQuality = "original" | "720p" | "1080p" | "upscaled";
 
-export async function downloadMedia(page: Page, mediaId: string, targetStem: string, quality: DownloadQuality = "original"): Promise<string[]> {
+export async function downloadMedia(page: Page, mediaId: string, targetStem: string, quality: DownloadQuality = "original", job?: Job): Promise<string[]> {
   // A tile that has just finished rendering is still settling and the grid re-renders around it, so give it a moment.
   await scrollToTop(page);
   await pause(page, 2500);
@@ -546,7 +607,7 @@ export async function downloadMedia(page: Page, mediaId: string, targetStem: str
   // Grab the title NOW, while the id still resolves, so the download can re-find this exact tile later even if the
   // virtualised grid unmounts and remounts it between steps.
   const title = (await tile.getAttribute("aria-label").catch(() => null)) ?? undefined;
-  return downloadTile(page, tileByIdOrTitle(page, mediaId, title), targetStem, quality);
+  return downloadTile(page, tileByIdOrTitle(page, mediaId, title), targetStem, quality, title, job);
 }
 
 type TileResolver = () => Promise<Locator>;
@@ -595,22 +656,49 @@ function downloadsNow(): Set<string> {
   return seen;
 }
 
+const FLOW_UUID_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const FLOW_DOWNLOAD_NAME = /_[0-9a-f]{8}(?:_(?:720p|1080p|2k|4k))?\.(?:mp4|jpe?g|png|webp|gif|zip)$/i;
+const normAlphaNum = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+
+// When Chrome/Brave falls back to the user's shared ~/Downloads folder, make sure we only pick up a file that actually
+// came from Flow (not an unrelated personal download happening in another browser tab).
+export function isFlowDownloadName(filename: string, expectedHint?: string): boolean {
+  if (FLOW_UUID_NAME.test(filename) || FLOW_DOWNLOAD_NAME.test(filename)) return true;
+  if (expectedHint === "__zip__") return /\.zip$/i.test(filename);
+  if (expectedHint) {
+    const hint = normAlphaNum(expectedHint);
+    const name = normAlphaNum(filename);
+    if (hint.length >= 6 && name.startsWith(hint.slice(0, Math.min(hint.length, 16)))) return true;
+  }
+  return !expectedHint && /\.(?:mp4|jpe?g|png|webp|gif|zip)$/i.test(filename);
+}
+
 // Waits for a file to finish arriving in our download directory and returns it.
-async function waitForDownloadedFile(page: Page, before: Set<string>, timeoutMs: number): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
+async function waitForDownloadedFile(page: Page, before: Set<string>, timeoutMs: number, expectedHint?: string): Promise<string> {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
   let stable: { path: string; size: number } | undefined;
   while (Date.now() < deadline) {
     // Every quarter second: an image is there in well under a second, and a size that held still across two checks
     // still proves Chrome has finished writing it.
     await pause(page, 250);
-    // Both places: ours, and Chrome's own folder for when the override has been reset behind our back.
+    // Prefer our isolated download folder first; only inspect the shared ~/Downloads folder with Flow filename
+    // filtering so unrelated personal downloads are never hijacked.
     const candidates: string[] = [];
     for (const dir of [DOWNLOAD_DIR, SYSTEM_DOWNLOADS]) {
       if (!existsSync(dir)) continue;
+      const shared = dir === SYSTEM_DOWNLOADS;
       for (const f of readdirSync(dir)) {
         if (before.has(`${dir}/${f}`) || f.endsWith(".crdownload") || f.startsWith(".")) continue;
-        candidates.push(join(dir, f));
+        if (shared && !isFlowDownloadName(f, expectedHint)) continue;
+        const full = join(dir, f);
+        if (shared) {
+          const st = statSync(full);
+          if (st.mtimeMs < startedAt - 5000) continue;
+        }
+        candidates.push(full);
       }
+      if (candidates.length) break;
     }
     for (const path of candidates) {
       const size = statSync(path).size;
@@ -828,7 +916,7 @@ async function downloadOpenCollection(page: Page, timeoutMs: number): Promise<st
     throw new CollectionError('The collection\'s menu has no "Download collection".');
   }
   await item.click();
-  const zip = await waitForDownloadedFile(page, before, timeoutMs).catch(() => {
+  const zip = await waitForDownloadedFile(page, before, timeoutMs, "__zip__").catch(() => {
     throw new CollectionError("Flow was asked for the collection's ZIP but no file arrived.");
   });
   if (extensionOf(zip) !== ".zip") throw new CollectionError(`Flow's collection download was not a ZIP (${extensionOf(zip)}).`);
@@ -1005,13 +1093,14 @@ async function renameTile(page: Page, tile: Locator, title: string): Promise<boo
   }
 }
 
-async function downloadTile(page: Page, target: Locator | TileResolver, targetStem: string, quality: DownloadQuality): Promise<string[]> {
+async function downloadTile(page: Page, target: Locator | TileResolver, targetStem: string, quality: DownloadQuality, expectedHint?: string, job?: Job): Promise<string[]> {
   await useOwnDownloadDir(page);
   const resolve: TileResolver = typeof target === "function" ? target : async () => target;
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const tile = await resolve();
+      const titleHint = expectedHint ?? ((await tile.getAttribute("aria-label").catch(() => null)) || undefined);
       const before = downloadsNow();
       // Flow only shows a tile's toolbar for a real pointer move over it - Playwright's hover() does not trigger it.
       // The toolbar's "More options" beats a right-click, which can land on the <video> and raise Chrome's own menu.
@@ -1027,15 +1116,39 @@ async function downloadTile(page: Page, target: Locator | TileResolver, targetSt
         throw new Error(items.length ? `Flow's tile menu has no Download item. It offered: ${items.join(" | ")}` : "Flow's tile menu did not open.");
       }
       await download.click({ timeout: 10_000 });
-      // Size submenu: "720p Original size" / "1K Original size", or the best upscale the plan allows.
+      // Size submenu: "360p Original size" / "720p Original size" / "1K Original size", plus optional upscales
+      // (e.g. "720p Upscaled · 1 credit" on 360p clips, or "1080p Upscaled" / "2K Upscaled").
+      let usingUpscale = false;
       const original = page.getByRole("menuitem", { name: /original/i }).first();
       if (await original.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false)) {
-        const upscaled = page.locator('[role="menuitem"]:not([aria-disabled="true"]):not([disabled])').filter({ hasText: /upscaled/i }).first();
-        const wanted = quality === "upscaled" && (await upscaled.isVisible().catch(() => false)) ? upscaled : original;
+        const enabled = page.locator('[role="menuitem"]:not([aria-disabled="true"]):not([disabled])');
+        let candidate: Locator | undefined;
+        if (quality === "720p") candidate = enabled.filter({ hasText: /720p/i }).first();
+        else if (quality === "1080p") {
+          const p1080 = enabled.filter({ hasText: /1080p/i }).first();
+          candidate = (await p1080.isVisible().catch(() => false)) ? p1080 : enabled.filter({ hasText: /upscaled/i }).first();
+        } else if (quality === "upscaled") {
+          candidate = enabled.filter({ hasText: /upscaled/i }).first();
+        }
+        let wanted = original;
+        if (candidate && (await candidate.isVisible().catch(() => false))) {
+          const label = (await candidate.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+          const extraCredits = Number(/(\d+)\s*credits?/i.exec(label)?.[1] ?? 0);
+          if (extraCredits > 0 && job && (job.credits ?? 0) + extraCredits > job.params.max_credits) {
+            job.note = [job.note, `skipped "${label}" (would exceed max_credits=${job.params.max_credits}); downloaded original`].filter(Boolean).join(" · ");
+          } else {
+            wanted = candidate;
+            usingUpscale = /upscaled/i.test(label) || quality !== "original";
+            if (extraCredits > 0 && job) {
+              job.credits = (job.credits ?? 0) + extraCredits;
+              job.note = [job.note, `downloaded ${label}`].filter(Boolean).join(" · ");
+            }
+          }
+        }
         await wanted.click();
       }
       // Upscales are rendered on demand, so they can take minutes to appear.
-      const file = await waitForDownloadedFile(page, before, quality === "upscaled" ? 600_000 : 180_000);
+      const file = await waitForDownloadedFile(page, before, usingUpscale ? 600_000 : 180_000, titleHint);
       const kind = extensionOf(file);
       let saved: string[];
       if (kind === ".zip") saved = unpackTakes(file, targetStem);
@@ -1129,18 +1242,89 @@ async function ensureProjectGrid(page: Page): Promise<void> {
   await scrollToTop(page);
 }
 
-// Drives one generation in the Flow tab and returns the downloaded file paths.
-export async function runGeneration(job: Job): Promise<string[]> {
-  const state = await getFlowState();
-  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
-  const page = await getFlowPage();
-  const s = job.params;
+const SUBMIT_STAGGER_MS = Math.max(1500, Number(process.env.FLOW_MCP_SUBMIT_STAGGER_S ?? 4) * 1000);
+const normPrompt = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
-  await ensureProjectGrid(page);
-  const agent = agentToggle(page);
-  if ((await agent.getAttribute("aria-pressed")) === "true") await agent.click();
+async function busyTileCount(page: Page): Promise<number> {
+  return page
+    .evaluate(() =>
+      [...document.querySelectorAll("flow-grid-tile-container")].filter(
+        (t) =>
+          /\d+%/.test((t as HTMLElement).innerText) ||
+          (!!t.querySelector("flow-video-tile") && !t.querySelector('img[alt="Generated video thumbnail"], video')),
+      ).length,
+    )
+    .catch(() => 0);
+}
+
+async function clearComposer(page: Page): Promise<void> {
   const clear = page.getByRole("button", { name: "Clear prompt" });
-  if (await clear.isVisible().catch(() => false)) await clear.click();
+  if (await clear.isVisible().catch(() => false)) {
+    await clear.click().catch(() => {});
+    await pause(page, 300);
+    return;
+  }
+  const box = page.locator(".ProseMirror").first();
+  if (await box.isVisible().catch(() => false)) {
+    await box.click().catch(() => {});
+    await page.keyboard.press("ControlOrMeta+a").catch(() => {});
+    await page.keyboard.press("Backspace").catch(() => {});
+    await pause(page, 250);
+  }
+}
+
+// Reads the prompt Flow stored for a finished (or failed) tile using its Reuse prompt action, then clears the composer.
+async function readTilePrompt(page: Page, tile: Locator): Promise<string> {
+  try {
+    await hoverTile(page, tile, 350);
+    const direct = tile.getByRole("button", { name: "Reuse prompt" });
+    if (await direct.isVisible({ timeout: 1200 }).catch(() => false)) {
+      await direct.click();
+    } else {
+      const more = tile.getByRole("button", { name: "More options" });
+      if (await more.waitFor({ state: "visible", timeout: 2500 }).then(() => true, () => false)) await more.click();
+      else await tile.click({ button: "right" });
+      const reuse = page.getByRole("menuitem", { name: "Reuse prompt", exact: true });
+      if (!(await reuse.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false))) {
+        await page.keyboard.press("Escape").catch(() => {});
+        return "";
+      }
+      await reuse.click();
+    }
+    await pause(page, 700);
+    const text = (await page.locator(".ProseMirror").first().innerText().catch(() => "")).trim();
+    await closeAgentSession(page).catch(() => {});
+    await clearComposer(page);
+    return text;
+  } catch {
+    await page.keyboard.press("Escape").catch(() => {});
+    await clearComposer(page).catch(() => {});
+    return "";
+  }
+}
+
+// Matches a completed tile's stored prompt against the currently in-flight parallel scenes.
+// Normal composer stores prompts verbatim, so normalized equality hits first before word-overlap fallback.
+export function matchParallelTile(tilePrompt: string, candidatePrompts: string[]): number {
+  if (!candidatePrompts.length) return -1;
+  if (candidatePrompts.length === 1) return 0;
+  const target = normPrompt(tilePrompt);
+  if (!target) return -1;
+  const exact = candidatePrompts.findIndex((p) => {
+    const n = normPrompt(p);
+    return n === target || (n.length > 20 && (target.includes(n) || n.includes(target)));
+  });
+  if (exact >= 0) return exact;
+  const assigned = matchScenes(candidatePrompts, [tilePrompt]);
+  return assigned.findIndex((hits) => hits.length > 0);
+}
+
+// Configures Flow's normal composer (Agent off), checks max_credits, attaches any frames/references, and submits.
+async function submitInComposer(page: Page, job: Job, allowCapacityWait: boolean): Promise<{ status: "submitted"; before: string[] } | { status: "capacity" }> {
+  const s = job.params;
+  await ensureProjectGrid(page);
+  await ensureAgentOff(page);
+  await clearComposer(page);
 
   job.credits = await applySettings(page, job);
   if (job.credits > s.max_credits) {
@@ -1176,10 +1360,54 @@ export async function runGeneration(job: Job): Promise<string[]> {
 
   await typePrompt(page, s.prompt);
   const start = page.getByRole("button", { name: "Start generation" });
-  if (!(await start.isEnabled())) throw new Error("Flow's Start generation button is disabled; the prompt or inputs were not accepted.");
+  if (!(await start.isEnabled())) {
+    if (allowCapacityWait) {
+      await clearComposer(page);
+      return { status: "capacity" };
+    }
+    throw new Error("Flow's Start generation button is disabled; the prompt or inputs were not accepted.");
+  }
   await scrollToTop(page);
   const before = await mediaIds(page);
+  const busyBefore = allowCapacityWait ? await busyTileCount(page) : 0;
   await start.click();
+
+  if (allowCapacityWait) {
+    // Confirm Flow accepted the submission (prompt cleared or a new busy tile appeared). If Flow hit its server-side
+    // concurrency cap, pause submitting and harvest in-flight renders before retrying this scene.
+    const acceptDeadline = Date.now() + 8000;
+    let accepted = false;
+    while (Date.now() < acceptDeadline) {
+      await pause(page, 600);
+      const boxText = (await page.locator(".ProseMirror").first().innerText().catch(() => "")).trim();
+      if (!boxText || (await busyTileCount(page)) > busyBefore) {
+        accepted = true;
+        break;
+      }
+    }
+    if (!accepted) {
+      const limitBanner = await page
+        .locator('[role="alert"], .mat-mdc-snack-bar-label, .cdk-overlay-container')
+        .innerText()
+        .catch(() => "");
+      if (/limit|too many|concurrent|wait|queue|busy/i.test(limitBanner)) {
+        await clearComposer(page);
+        return { status: "capacity" };
+      }
+    }
+  }
+  return { status: "submitted", before };
+}
+
+// Drives one generation in the Flow tab and returns the downloaded file paths.
+export async function runGeneration(job: Job): Promise<string[]> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) throw new Error(state.hint);
+  const page = await getFlowPage();
+  const s = job.params;
+
+  const submitted = await submitInComposer(page, job, false);
+  const before = submitted.status === "submitted" ? submitted.before : [];
 
   const variants = s.variants ?? 1;
   const fresh = await waitForNewMedia(page, before, variants, s.type === "image" ? IMAGE_TIMEOUT_MS : VIDEO_TIMEOUT_MS, job, s.type === "image" ? "image" : "video");
@@ -1201,10 +1429,255 @@ export async function runGeneration(job: Job): Promise<string[]> {
     // old title failed every such download after 30 s ("locator.waitFor: Timeout 30000ms exceeded ... aria-label=
     // <the prompt>", reported by a user, 2026-10-15) while the clip sat finished and renamed in Flow.
     const handle = renamed && id.startsWith("title:") ? `title:${newTitle}` : id;
-    files.push(...(await downloadMedia(page, handle, stem, s.download_quality)));
+    files.push(...(await downloadMedia(page, handle, stem, s.download_quality, job)));
     await pause(page, 1500);
   }
   return files;
+}
+
+interface ParallelSlot {
+  job: Job;
+  kind: MediaKind;
+  expectedVariants: number;
+  receivedCount: number;
+  deadline: number;
+  retriesLeft: number;
+}
+
+// Drives multiple independent scenes through Flow's normal composer (Flow Agent off) with up to `maxConcurrency`
+// renders in flight at once. Keeps Flow's upfront max_credits quote check on every scene, self-adapts if Flow hits a
+// server-side concurrency limit, and matches finished out-of-order tiles back to their exact scenes via Reuse prompt.
+export async function runParallelGenerations(
+  jobs: Job[],
+  maxConcurrency: number,
+  prepareJob: (job: Job) => Promise<void>,
+): Promise<void> {
+  const state = await getFlowState();
+  if (!state.signedIn || !state.inProject) {
+    const now = new Date().toISOString();
+    for (const j of jobs) {
+      if (j.status !== "queued") continue;
+      j.status = "failed";
+      j.error = state.hint;
+      j.finishedAt = now;
+    }
+    return;
+  }
+
+  const page = await getFlowPage();
+  await ensureProjectGrid(page);
+  await ensureAgentOff(page);
+
+  const knownIds = new Set<string>(await mediaIds(page));
+  for (const a of await scanGrid(page)) {
+    if (a.id) knownIds.add(a.id);
+    if (a.name) knownIds.add(`title:${a.name}`);
+  }
+  await scrollToTop(page);
+
+  const pending = [...jobs];
+  const inFlight: ParallelSlot[] = [];
+  let effectiveMax = Math.max(1, Math.min(4, maxConcurrency));
+  const titleSettle = new Map<string, number>();
+  let handledErrors = 0;
+
+  while (pending.length || inFlight.length) {
+    // 1. Fill open slots up to effectiveMax, staggering submissions at a human pace.
+    while (inFlight.length < effectiveMax && pending.length) {
+      const job = pending.shift()!;
+      if (job.status !== "queued") continue;
+      job.status = "running";
+      job.attempts++;
+      job.progress = "submitting";
+      try {
+        await prepareJob(job);
+        const res = await submitInComposer(page, job, inFlight.length > 0);
+        if (res.status === "capacity") {
+          job.status = "queued";
+          job.attempts = Math.max(0, job.attempts - 1);
+          job.progress = "waiting for Flow slot";
+          pending.unshift(job);
+          effectiveMax = Math.max(1, inFlight.length);
+          break;
+        }
+        const kind: MediaKind = job.params.type === "image" ? "image" : "video";
+        const timeoutMs = kind === "image" ? IMAGE_TIMEOUT_MS : VIDEO_TIMEOUT_MS;
+        inFlight.push({
+          job,
+          kind,
+          expectedVariants: job.params.variants ?? 1,
+          receivedCount: 0,
+          deadline: Date.now() + timeoutMs,
+          retriesLeft: job.params.retries ?? 1,
+        });
+        job.progress = `rendering (${inFlight.length} in flight)`;
+        if (inFlight.length < effectiveMax && pending.length) {
+          const stagger = SUBMIT_STAGGER_MS * (0.8 + Math.random() * 0.6);
+          await pause(page, Math.round(stagger));
+        }
+      } catch (err) {
+        job.status = "failed";
+        job.progress = undefined;
+        job.error = err instanceof Error ? err.message : String(err);
+        job.finishedAt = new Date().toISOString();
+      }
+    }
+
+    if (!inFlight.length) continue;
+
+    // 2. Poll the grid for finished tiles, live progress, and errors.
+    await pause(page, 2500);
+    await scrollToTop(page);
+
+    const progressList = await page
+      .evaluate(
+        (n) =>
+          [...document.querySelectorAll("flow-grid-tile-container")]
+            .slice(0, n)
+            .map((t) => (t as HTMLElement).innerText.match(/\d+%/)?.[0])
+            .filter(Boolean),
+        Math.max(8, inFlight.length * 3),
+      )
+      .catch(() => [] as string[]);
+    const progText = progressList.length
+      ? `rendering (${inFlight.length} in flight: ${progressList.join(", ")})`
+      : `rendering (${inFlight.length} in flight)`;
+    for (const slot of inFlight) slot.job.progress = progText;
+
+    const fresh = await freshMedia(page, [...knownIds]);
+    const settled: string[] = [];
+    const currentTitles = new Set(fresh.filter((id) => id.startsWith("title:")));
+    for (const k of [...titleSettle.keys()]) if (!currentTitles.has(k)) titleSettle.delete(k);
+
+    for (const id of fresh) {
+      if (id.startsWith("title:")) {
+        const hits = (titleSettle.get(id) ?? 0) + 1;
+        titleSettle.set(id, hits);
+        if (hits >= 2) settled.push(id);
+      } else {
+        settled.push(id);
+      }
+    }
+
+    // 3. Match each newly finished tile back to its exact in-flight job, rename, and download.
+    for (const id of settled) {
+      if (!inFlight.length) break;
+      knownIds.add(id);
+      titleSettle.delete(id);
+
+      const tile = mediaTile(page, id);
+      const tileKind = await tile
+        .evaluate((el) => (el.querySelector("flow-video-tile") ? "video" : el.querySelector("flow-image-tile") ? "image" : ""))
+        .catch(() => "");
+      const candidates = tileKind ? inFlight.filter((s) => s.kind === tileKind) : inFlight;
+      const pool = candidates.length ? candidates : inFlight;
+
+      let chosen = pool[0];
+      if (pool.length > 1) {
+        const storedPrompt = await readTilePrompt(page, tile);
+        const idx = matchParallelTile(
+          storedPrompt,
+          pool.map((s) => s.job.params.prompt),
+        );
+        if (idx >= 0) chosen = pool[idx];
+      }
+
+      const job = chosen.job;
+      const s = job.params;
+      mkdirSync(s.output_dir, { recursive: true });
+      const label = chosen.expectedVariants > 1 ? `${s.file_stem}-v${chosen.receivedCount + 1}` : s.file_stem;
+      const newTitle = `${basename(s.output_dir)}-${label}`;
+      job.progress = "downloading";
+      try {
+        const renamed = await renameTile(page, mediaTile(page, id), newTitle).catch(() => false);
+        if (renamed) {
+          knownIds.add(`title:${newTitle}`);
+          job.note = [job.note, `renamed in Flow to ${newTitle}`].filter(Boolean).join(" · ");
+        }
+        await pause(page, 600);
+        const stem = join(s.output_dir, label);
+        const handle = renamed && id.startsWith("title:") ? `title:${newTitle}` : id;
+        const downloaded = await downloadMedia(page, handle, stem, s.download_quality, job);
+        job.files.push(...downloaded);
+        chosen.receivedCount++;
+        if (chosen.receivedCount >= chosen.expectedVariants) {
+          job.status = "done";
+          job.progress = undefined;
+          job.error = undefined;
+          job.finishedAt = new Date().toISOString();
+          inFlight.splice(inFlight.indexOf(chosen), 1);
+        }
+      } catch (err) {
+        job.status = "failed";
+        job.progress = undefined;
+        job.error = err instanceof Error ? err.message : String(err);
+        job.finishedAt = new Date().toISOString();
+        inFlight.splice(inFlight.indexOf(chosen), 1);
+      }
+      await pause(page, 800);
+    }
+
+    // 4. Handle any failed tiles (flow-error-tile) above known tiles.
+    const errors = await newErrorTiles(page, knownIds);
+    if (errors > handledErrors && inFlight.length) {
+      const reason = await errorReason(page);
+      const errTile = page.locator("flow-grid-tile-container:has(flow-error-tile)").first();
+      let target = inFlight[0];
+      if (inFlight.length > 1) {
+        const errPrompt = await readTilePrompt(page, errTile);
+        const idx = matchParallelTile(
+          errPrompt,
+          inFlight.map((s) => s.job.params.prompt),
+        );
+        if (idx >= 0) target = inFlight[idx];
+      }
+      if (POLICY.test(reason)) {
+        const hint = /prominent|public figure|celebrit/i.test(reason)
+          ? " Flow thinks a face in this scene looks like a real, well-known person, usually one from an uploaded photo or a character made from one. Retrying will not change that: use a character drawn from a description (flow_character with `describe`) instead."
+          : " Retrying the same prompt will not change that.";
+        target.job.status = "failed";
+        target.job.progress = undefined;
+        target.job.error = `Flow refused this generation on policy grounds: "${reason}" Nothing was charged.${hint}`;
+        target.job.finishedAt = new Date().toISOString();
+        inFlight.splice(inFlight.indexOf(target), 1);
+        handledErrors = errors;
+      } else if (target.retriesLeft > 0) {
+        target.retriesLeft--;
+        target.job.progress = "Flow failed, retrying";
+        const retried = await retryErrorTile(page, errTile);
+        if (!retried) {
+          target.job.status = "failed";
+          target.job.progress = undefined;
+          target.job.error = reason ? `Flow reported a generation failure: "${reason}".` : "Flow reported a generation failure.";
+          target.job.finishedAt = new Date().toISOString();
+          inFlight.splice(inFlight.indexOf(target), 1);
+          handledErrors = errors;
+        }
+      } else {
+        target.job.status = "failed";
+        target.job.progress = undefined;
+        target.job.error = reason ? `Flow reported a generation failure: "${reason}".` : "Flow reported a generation failure.";
+        target.job.finishedAt = new Date().toISOString();
+        inFlight.splice(inFlight.indexOf(target), 1);
+        handledErrors = errors;
+      }
+    } else if (errors < handledErrors) {
+      handledErrors = errors;
+    }
+
+    // 5. Fail any individual slot that exceeded its render timeout without aborting healthy peers.
+    const now = Date.now();
+    for (let i = inFlight.length - 1; i >= 0; i--) {
+      if (now > inFlight[i].deadline) {
+        const slot = inFlight.splice(i, 1)[0];
+        const secs = Math.round((slot.kind === "image" ? IMAGE_TIMEOUT_MS : VIDEO_TIMEOUT_MS) / 1000);
+        slot.job.status = "failed";
+        slot.job.progress = undefined;
+        slot.job.error = `Timed out after ${secs}s waiting for Flow to finish.`;
+        slot.job.finishedAt = new Date().toISOString();
+      }
+    }
+  }
 }
 
 export interface FlowAsset {
@@ -1450,7 +1923,7 @@ export async function trashAsset(name: string): Promise<{ trashed: string }> {
   const tile = tileOf(page, same[0]);
   await hoverTile(page, tile);
   await tile.getByRole("button", { name: "More options" }).click();
-  await page.getByRole("menuitem", { name: "Move to trash", exact: true }).click();
+  await page.getByRole("menuitem", { name: /^Move to (trash|bin)$/i }).click();
   await pause(page, 2000);
   if (await tile.count()) throw new Error(`"${name}" is still in the project - Flow did not move it to Trash.`);
   await scrollToTop(page);

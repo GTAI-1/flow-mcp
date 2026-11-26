@@ -189,7 +189,7 @@ agree on what is running. That API listens on 127.0.0.1 only and needs a per-run
 | Tool | Purpose |
 |---|---|
 | `flow_status` | Session state (signed in, project open, plan, credits left), queue, pacing, prompt playbook |
-| `flow_generate` | Queue scenes: prompt, image or video, model, aspect, duration, resolution, variants, first/last frame, reference images, `max_credits` cap |
+| `flow_generate` | Queue scenes in Flow's normal composer (Agent off): prompt, image or video, model, aspect, duration, resolution, variants, first/last frame, reference images, `download_quality` (`original` / `720p` / `1080p` / `upscaled`), `max_credits` cap, and optional `concurrency` (1–4) for parallel non-chained renders |
 | `flow_wait` | Wait for jobs, or for the task id of a slow call; returns file paths and results. Answers within about 40 s, so call again until `finished` is true |
 | `flow_cancel` | Cancel a job that has not started |
 | `flow_retry` | Re-queue failed jobs with the same settings and file names (a failed tile is first retried inside Flow with its own free Retry button: `retries`, default 1) |
@@ -234,16 +234,27 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
 
 ## Behaviour and settings
 
-- One generation at a time, with a random 25–70 second pause between them. The page carries an
+- By default, one generation runs at a time with a random 25–70 second pause between them. The page carries an
   invisible reCAPTCHA; this drives the real interface at human pace and does nothing to evade it.
+- **Parallel non-chained scenes (optional):** Flow's normal composer (with Flow Agent off) lets you queue multiple
+  videos or images at once. Pass `concurrency: 2`–`4` to `flow_generate` (or set `FLOW_MCP_CONCURRENCY` / pick
+  **Parallel** in Flow Studio) to keep up to 4 independent scenes in flight with a short stagger between
+  submissions (`FLOW_MCP_SUBMIT_STAGGER_S`, default 4 s). Each scene still checks Flow's upfront `max_credits`
+  quote, finished tiles are matched back to their scenes via `Reuse prompt`, and `chain_previous` /
+  `reference_previous` scenes stay strictly serial.
+- **Brave and other Chromium browsers:** `flow-mcp` automatically falls back to Brave if Chrome is not installed,
+  or point `FLOW_MCP_CHROME` at Brave (e.g. `/Applications/Brave Browser.app/Contents/MacOS/Brave Browser` on Mac).
+  It uses a dedicated profile (`~/.flow-mcp/chrome-profile`), so you sign in once and it stays unattended with no
+  remote-debugging popups.
 - Before each generation the server reads Flow's own credit quote and skips the scene if it exceeds
   `max_credits` (default 25).
-- Any Google account language works. The server finds Flow's buttons by their English names, so its
-  Chrome window always shows Flow in English (it adds `?hl=en` to the address). Your account's own
-  language setting is never changed, and prompts can be written in any language.
+- Any Google account language works (including UK English `en-GB`). The server finds Flow's buttons by their
+  English names, so its Chrome window always shows Flow in English (it adds `?hl=en` to the address). Your
+  account's own language setting is never changed, and prompts can be written in any language.
 - Environment variables: `GEMINI_API_KEY`, `FLOW_MCP_PORT` (8787), `FLOW_MCP_OUTPUT`,
-  `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`, `FLOW_MCP_PAUSE_MIN_S`,
-  `FLOW_MCP_PAUSE_MAX_S`.
+  `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`,
+  `FLOW_MCP_CONCURRENCY` (1), `FLOW_MCP_SUBMIT_STAGGER_S` (4), `FLOW_MCP_PAUSE_MIN_S` (25),
+  `FLOW_MCP_PAUSE_MAX_S` (70).
 
 ## If something goes wrong
 

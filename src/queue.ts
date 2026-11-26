@@ -32,7 +32,8 @@ export interface SceneParams {
   attach?: string[];
   continue_mode?: "exact" | "likeness";
   retries?: number;
-  download_quality?: "original" | "upscaled";
+  download_quality?: "original" | "720p" | "1080p" | "upscaled";
+  concurrency?: number;
   output_dir: string;
   file_stem: string;
 }
@@ -54,11 +55,31 @@ export interface Job {
 }
 
 export type JobRunner = (job: Job) => Promise<string[]>;
+export type BatchRunner = (jobs: Job[], concurrency: number) => Promise<void>;
 
-// Flow is driven like a careful person would: one generation at a time, with a
-// randomised pause between them.
+// Flow is driven like a careful person would: by default one generation at a time, with a
+// randomised pause between them. Opt-in concurrency (2-4) overlaps independent scenes in Flow's
+// normal composer (Agent off), while chained scenes remain strictly serial.
 const PAUSE_MIN_MS = Number(process.env.FLOW_MCP_PAUSE_MIN_S ?? 25) * 1000;
 const PAUSE_MAX_MS = Number(process.env.FLOW_MCP_PAUSE_MAX_S ?? 70) * 1000;
+export const DEFAULT_CONCURRENCY = Math.max(1, Math.min(4, Math.floor(Number(process.env.FLOW_MCP_CONCURRENCY ?? 1)) || 1));
+
+function effectiveConcurrency(job: Job): number {
+  const n = job.params.concurrency ?? DEFAULT_CONCURRENCY;
+  return Math.max(1, Math.min(4, Math.floor(n) || 1));
+}
+
+function isParallelEligible(job: Job): boolean {
+  const p = job.params;
+  return (
+    effectiveConcurrency(job) > 1 &&
+    !p.chain_from &&
+    !p.reference_from &&
+    !p.continue_from &&
+    !p.agent_scenes &&
+    !p.edit_asset
+  );
+}
 
 export class JobQueue {
   private jobs = new Map<string, Job>();
@@ -66,7 +87,10 @@ export class JobQueue {
   private lastFinished = 0;
   pausedReason: string | null = null;
 
-  constructor(private runner: JobRunner) {}
+  constructor(
+    private runner: JobRunner,
+    private batchRunner?: BatchRunner,
+  ) {}
 
   add(params: SceneParams): Job {
     const job: Job = {
@@ -78,7 +102,9 @@ export class JobQueue {
       createdAt: new Date().toISOString(),
     };
     this.jobs.set(job.id, job);
-    void this.work();
+    // Defer starting the worker to a microtask so a synchronous loop of add() calls (like flow_generate) finishes
+    // enqueuing the whole batch before work() inspects the queue for parallel grouping.
+    queueMicrotask(() => void this.work());
     return job;
   }
 
@@ -101,7 +127,7 @@ export class JobQueue {
       job.status = "queued";
       job.error = undefined;
       job.finishedAt = undefined;
-      void this.work();
+      queueMicrotask(() => void this.work());
     }
     return job;
   }
@@ -120,7 +146,8 @@ export class JobQueue {
     this.working = true;
     try {
       for (;;) {
-        const job = this.list().find((j) => j.status === "queued");
+        const queued = this.list().filter((j) => j.status === "queued");
+        const job = queued[0];
         if (!job) return;
         if (this.lastFinished) {
           const pause = PAUSE_MIN_MS + Math.random() * (PAUSE_MAX_MS - PAUSE_MIN_MS);
@@ -132,6 +159,41 @@ export class JobQueue {
           }
         }
         if (job.status !== "queued") continue;
+
+        // Collect a contiguous run of independent parallel-eligible jobs so one coordinator drives Flow's composer
+        // with up to `concurrency` renders in flight while respecting chained/serial barriers.
+        if (this.batchRunner && isParallelEligible(job)) {
+          const run: Job[] = [];
+          const cap = effectiveConcurrency(job);
+          for (const candidate of this.list()) {
+            if (candidate.status !== "queued") continue;
+            if (!isParallelEligible(candidate)) {
+              if (run.length) break;
+              continue;
+            }
+            if (effectiveConcurrency(candidate) !== cap) break;
+            run.push(candidate);
+          }
+          if (run.length >= 2) {
+            try {
+              await this.batchRunner(run, cap);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              const now = new Date().toISOString();
+              for (const j of run) {
+                if (j.status === "queued" || j.status === "running") {
+                  j.status = "failed";
+                  j.progress = undefined;
+                  j.error = msg;
+                  j.finishedAt = now;
+                }
+              }
+            }
+            this.lastFinished = Date.now();
+            continue;
+          }
+        }
+
         job.status = "running";
         job.attempts++;
         try {

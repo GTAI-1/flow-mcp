@@ -101,7 +101,7 @@ server.registerTool(
   {
     title: "Queue Flow generations",
     description:
-      "Queue one clip or image per scene in the open Flow project. Runs one at a time with human-like pauses and spends the user's Google AI credits (per video, at 720p: Omni 1.2 Flash 3 a second up to 10 s and 6 a second after, so 30 for 10 s and 60 for 15 s; at 360p a third of that; Veo 3.1 Lite 10; images 0). Each scene is checked against max_credits using Flow's own quote before anything is spent. Returns job ids immediately; use flow_wait for results.",
+      "Queue one clip or image per scene in the open Flow project using Flow's normal composer (Flow Agent off). Before queueing video scenes, always confirm with the user: video model, clip length (`duration`), generation resolution (`360p`/`720p`), `download_quality` (`original`/`720p`/`1080p`/`upscaled`), quantity (`scenes` count and `variants` x1-x4), `concurrency` (1-4), and expected credits. Defaults to one at a time with human-like pauses, or set `concurrency` (2-4) to overlap independent non-chained scenes while still checking Flow's upfront max_credits quote on every scene. Returns job ids immediately; use flow_wait for results.",
     inputSchema: shapes.generate,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },

@@ -8,7 +8,7 @@ import { KOKORO_DEFAULT_VOICE, KOKORO_MB, KOKORO_VOICES, kokoroReady, speakWithK
 import { extractFirstFrame, extractFrameAt, extractLastFrame } from "./chain.js";
 import { burnCaptions, captionedName, captionSetup, previewCaptions, transcribe } from "./captions.js";
 import { presenter } from "./presenter.js";
-import { characterLook, createCharacter, createProject, downloadAsset, downloadCollection, trashAsset, editCharacter, getFlowState, listAssets, forgetCharacter, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
+import { characterLook, createCharacter, createProject, downloadAsset, downloadCollection, trashAsset, editCharacter, getFlowState, listAssets, forgetCharacter, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration, runParallelGenerations } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
 import { BIN, COMPUTER, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
@@ -17,6 +17,10 @@ export const OUTPUT_ROOT = process.env.FLOW_MCP_OUTPUT ?? join(homedir(), "flow-
 const words = (s: string) => s.split(/[^a-z0-9]+/i).filter((w) => w.length > 3).map((w) => w.toLowerCase());
 
 export const projectDir = (project: string) => resolve(OUTPUT_ROOT, project.replace(/[^\w.-]+/g, "_"));
+
+const downloadQualitySchema = z
+  .enum(["original", "720p", "1080p", "upscaled"])
+  .describe("'original' downloads the generated resolution; '720p' or '1080p' picks that size from Flow's menu; 'upscaled' picks Flow's best available upscale (note: 360p -> 720p may cost 1 credit on some clips and is checked against max_credits).");
 
 const sceneSchema = z.object({
   prompt: z.string().min(1).describe("Full English prompt for one clip: action, shot and camera move, location, style, light, sound."),
@@ -50,7 +54,7 @@ const sceneSchema = z.object({
     .describe(
       "Reference media: absolute image paths, or 'asset:<title>' for media or characters already in the Flow project. Flow's COMPOSER takes references OR first/last frames on a video scene, never both, so with frames set these are skipped and the job says so. Flow itself can do both via agent mode (save the last frame, Animate it, then add the character).",
     ),
-  download_quality: z.enum(["original", "upscaled"]).optional().describe("'upscaled' fetches 1080p video / 2K image (free, slower). Default original."),
+  download_quality: downloadQualitySchema.optional(),
   retries: z.number().int().min(0).max(3).default(1).describe("Automatic retries when Flow itself reports the generation failed."),
   technique: z.string().optional().describe("Id from flow_techniques (e.g. 'orbit-360'); its exact phrase is appended to the prompt. One per scene."),
   on_screen_text: z
@@ -124,6 +128,15 @@ export const shapes = {
   generate: {
     project: z.string().min(1).describe("Folder name for the downloaded clips, e.g. 'HotelPromo'."),
     scenes: z.array(sceneSchema).min(1).max(100),
+    concurrency: z
+      .number()
+      .int()
+      .min(1)
+      .max(4)
+      .optional()
+      .describe(
+        "How many independent scenes Flow may render at the same time through the normal composer (Flow Agent off). Default 1 (or FLOW_MCP_CONCURRENCY). Chained scenes (chain_previous / reference_previous) always stay serial.",
+      ),
   },
   wait: {
     job_ids: z.array(z.string()).optional().describe("Job ids from a queued call, or the task_id of a call that answered still_working. Default: every queued job."),
@@ -135,7 +148,7 @@ export const shapes = {
   download: {
     project: z.string().min(1).describe("Local folder name under the output root."),
     assets: z.array(z.string().min(1)).max(30).default([]).describe("Titles (or title prefixes) from flow_assets, in the order they should be numbered."),
-    quality: z.enum(["original", "upscaled"]).default("original"),
+    quality: downloadQualitySchema.default("original"),
     collection: z
       .string()
       .min(1)
@@ -293,7 +306,7 @@ export const shapes = {
     project: z.string().min(1).describe("Folder name for the downloaded images."),
     scenes: z.array(z.string().min(1)).min(1).max(50).describe("One image description per scene, in order."),
     aspect_ratio: z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]).default("16:9"),
-    download_quality: z.enum(["original", "upscaled"]).optional(),
+    download_quality: downloadQualitySchema.optional(),
     references: z
       .array(
         z.object({
@@ -336,7 +349,7 @@ export const shapes = {
     acknowledge_cost: z
       .literal(true)
       .describe("Must be true. Flow shows no quote for edits, so max_credits cannot protect you: a 4 s clip cost 20 credits when measured. The real cost is reported on the finished job."),
-    download_quality: z.enum(["original", "upscaled"]).optional(),
+    download_quality: downloadQualitySchema.optional(),
   },
   continue_shot: {
     project: z.string().min(1).describe("Local folder for the new clip."),
@@ -357,7 +370,7 @@ export const shapes = {
     acknowledge_cost: z
       .literal(true)
       .describe("Must be true. Agent mode shows no credit quote before it runs, so max_credits cannot protect you; the real cost is reported on the finished job."),
-    download_quality: z.enum(["original", "upscaled"]).optional(),
+    download_quality: downloadQualitySchema.optional(),
     force: z
       .boolean()
       .optional()
@@ -484,7 +497,7 @@ export const VOICES = [
 const BUSY = "A generation is running in the Flow tab. Wait for it to finish (flow_wait), then retry.";
 
 export class LocalCore implements Core {
-  private queue: JobQueue = new JobQueue(async (job) => {
+  private async prepareJobInputs(job: Job): Promise<void> {
     const { chain_from, reference_from } = job.params;
     if (reference_from) {
       const still = this.queue.get(reference_from)?.files.find((f) => /\.(jpe?g|png|webp)$/i.test(f));
@@ -505,18 +518,27 @@ export class LocalCore implements Core {
       if (!clip) throw new Error(`chain_previous: the previous scene (${chain_from}) produced no video, so this scene was skipped.`);
       job.params.first_frame = await extractLastFrame(clip);
     }
-    if (job.params.continue_from) return runContinue(job);
-    if (job.params.agent_scenes) return runAgentBatch(job);
-    if (job.params.edit_asset) return runEdit(job);
-    return runGeneration(job);
-  });
+  }
+
+  private queue: JobQueue = new JobQueue(
+    async (job) => {
+      await this.prepareJobInputs(job);
+      if (job.params.continue_from) return runContinue(job);
+      if (job.params.agent_scenes) return runAgentBatch(job);
+      if (job.params.edit_asset) return runEdit(job);
+      return runGeneration(job);
+    },
+    async (jobs, concurrency) => {
+      await runParallelGenerations(jobs, concurrency, (job) => this.prepareJobInputs(job));
+    },
+  );
 
   async status({ detailed }: Args<"status">) {
     const flow = await getFlowState(detailed && !this.queue.busy);
     return { flow, pacing: this.queue.pausedReason, output_root: OUTPUT_ROOT, jobs: this.queue.list().map(jobView) };
   }
 
-  async generate({ project, scenes }: Args<"generate">) {
+  async generate({ project, scenes, concurrency }: Args<"generate">) {
     const invalid = scenes.findIndex((s, i) => s.chain_previous && (i === 0 || s.first_frame || s.type === "image"));
     if (invalid >= 0) {
       throw new Error(`Scene ${invalid + 1}: chain_previous needs a preceding video scene in the same call and cannot be combined with first_frame.`);
@@ -564,6 +586,7 @@ export class LocalCore implements Core {
           prompt: `${textFirst}${scene.prompt.trim().replace(/\.?$/, ".")}${phrase ? ` ${phrase}` : ""}${lock}${inherit}${textLast}`,
           chain_from: chain_previous ? jobs[i - 1].id : undefined,
           reference_from: reference_previous ? jobs[i - 1].id : undefined,
+          concurrency,
           output_dir,
           file_stem: `scene-${String(offset + i + 1).padStart(2, "0")}`,
         }),

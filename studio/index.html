@@ -226,7 +226,10 @@ audio{width:100%;margin-top:8px;filter:invert(1) hue-rotate(180deg)}
             <div><label class="f">Frame</label><div class="seg" data-seg="f_aspect"></div></div>
             <div><label class="f">Takes per frame</label><div class="seg" data-seg="f_variants"></div></div>
           </div>
-          <label class="f">Engine</label><div class="seg" data-seg="f_engine"></div>
+          <div class="grid2">
+            <div><label class="f">Engine</label><div class="seg" data-seg="f_engine"></div></div>
+            <div><label class="f">Parallel · exact mode</label><div class="seg" data-seg="f_concurrency"></div></div>
+          </div>
           <div class="phrase" id="f_engineNote"></div>
         </div>
         <h2 style="margin-top:18px">Frames <small id="f_count"></small></h2>
@@ -257,8 +260,9 @@ audio{width:100%;margin-top:8px;filter:invert(1) hue-rotate(180deg)}
           </div>
           <div class="grid2">
             <div><label class="f">Takes per shot</label><div class="seg" data-seg="s_variants"></div></div>
-            <div><label class="f">Max credits per shot</label><input type="number" id="s_max" min="0" value="25"></div>
+            <div><label class="f">Parallel · non-chained</label><div class="seg" data-seg="s_concurrency"></div></div>
           </div>
+          <label class="f">Max credits per shot</label><input type="number" id="s_max" min="0" value="25">
         </div>
         <h2 style="margin-top:18px">Shots <small id="s_count"></small></h2>
         <div id="s_scenes"></div>
@@ -457,13 +461,15 @@ const VIDEO_COST = { "Omni 1.2 Flash": omni12, "Omni 1.1 Flash": { "360p": { 4: 
 const blank = () => ({ prompt: "", technique: "", chain: false, match: false, first: null, last: null, refs: [] });
 const DEFAULTS = {
   tab: "cast",
-  frames: { project: "MyFilm", aspect: "16:9", variants: 1, engine: "exact", scenes: [blank()] },
-  shots: { project: "MyFilm", model: "Omni 1.2 Flash", aspect: "16:9", duration: 8, resolution: "720p", variants: 1, quality: "original", max: 25, scenes: [blank()] },
+  frames: { project: "MyFilm", aspect: "16:9", variants: 1, concurrency: 1, engine: "exact", scenes: [blank()] },
+  shots: { project: "MyFilm", model: "Omni 1.2 Flash", aspect: "16:9", duration: 8, resolution: "720p", variants: 1, concurrency: 1, quality: "original", max: 25, scenes: [blank()] },
   narrate: { project: "MyFilm", engine: "kokoro", kokoroVoice: "am_michael", speed: 100, geminiVoice: "Charon", text: "", style: "" },
   cut: { project: "MyFilm", music: null, voiceover: null, hold: true, clips: [] },
   captions: { video: null, style: "bold", position: "bottom", size: 100, colors: {}, text: "" },
 };
 const S = Object.assign(structuredClone(DEFAULTS), JSON.parse(localStorage.getItem("flow-studio-v2") || "{}"));
+S.frames.concurrency ??= 1;
+S.shots.concurrency ??= 1;
 const save = () => localStorage.setItem("flow-studio-v2", JSON.stringify(S));
 if (!["kokoro", "gemini"].includes(S.narrate.engine)) S.narrate.engine = "kokoro"; // the computer-voice engine is gone
 let TECH = [], VOICES = { kokoro: [], gemini: [] }, CAST = [], LIB = [], GAL = [], castImage = null, pickTarget = null, busy = false;
@@ -494,11 +500,21 @@ const SEGS = {
   f_aspect: { get: () => S.frames.aspect, set: (v) => (S.frames.aspect = v), opts: ["16:9", "9:16", "1:1", "4:3", "3:4"] },
   f_variants: { get: () => S.frames.variants, set: (v) => (S.frames.variants = +v), opts: [1, 2, 3, 4] },
   f_engine: { get: () => S.frames.engine, set: (v) => (S.frames.engine = v), opts: ["exact", "agent"], labels: { exact: "One by one", agent: "Flow agent · all at once" } },
+  f_concurrency: { get: () => S.frames.concurrency, set: (v) => (S.frames.concurrency = +v), opts: [1, 2, 3, 4] },
   s_aspect: { get: () => S.shots.aspect, set: (v) => (S.shots.aspect = v), opts: ["16:9", "9:16"] },
   s_duration: { get: () => S.shots.duration, set: (v) => (S.shots.duration = +v), get opts() { return durations(); } },
   s_resolution: { get: () => S.shots.resolution, set: (v) => (S.shots.resolution = v), opts: ["360p", "720p"] },
-  s_quality: { get: () => S.shots.quality, set: (v) => (S.shots.quality = v), opts: ["original", "upscaled"], labels: { original: "720p", upscaled: "1080p" } },
+  s_quality: {
+    get: () => S.shots.quality,
+    set: (v) => (S.shots.quality = v),
+    opts: ["original", "upscaled"],
+    get labels() {
+      const low = S.shots.model.startsWith("Omni") && S.shots.resolution === "360p";
+      return low ? { original: "360p", upscaled: "720p" } : { original: "720p", upscaled: "1080p" };
+    },
+  },
   s_variants: { get: () => S.shots.variants, set: (v) => (S.shots.variants = +v), opts: [1, 2, 3, 4] },
+  s_concurrency: { get: () => S.shots.concurrency, set: (v) => (S.shots.concurrency = +v), opts: [1, 2, 3, 4] },
   cap_pos: { get: () => (typeof S.captions.position === "string" ? S.captions.position : ""), set: (v) => { S.captions.position = v; capPreviewSoon(); }, opts: ["bottom", "middle", "top"], labels: { bottom: "Bottom", middle: "Middle", top: "Top" } },
   cap_letters: { get: () => capLetters(S.captions.style), set: (v) => { (S.captions.letters ??= {})[S.captions.style] = v; capPreviewSoon(); }, opts: ["as_said", "capitals", "lowercase"], labels: { as_said: "Normal", capitals: "CAPS", lowercase: "lower" } },
   n_engine: { get: () => S.narrate.engine, set: (v) => (S.narrate.engine = v), opts: ["kokoro", "gemini"], labels: { kokoro: "Kokoro", gemini: "Google AI Studio" } },
@@ -507,7 +523,7 @@ function renderSegs() {
   for (const [key, cfg] of Object.entries(SEGS)) {
     const host = $(`[data-seg="${key}"]`); if (!host) continue;
     const omni = S.shots.model.startsWith("Omni");
-    const off = (key === "s_duration" || key === "s_resolution") && !omni;
+    const off = ((key === "s_duration" || key === "s_resolution") && !omni) || (key === "f_concurrency" && S.frames.engine === "agent");
     host.innerHTML = cfg.opts.map((o) => `<button type="button" data-v="${o}" class="${String(cfg.get()) === String(o) ? "on" : ""}" ${off ? "disabled" : ""}>${cfg.labels?.[o] ?? o}</button>`).join("");
   }
 }
@@ -1088,7 +1104,7 @@ $("#roll").onclick = async () => {
   }));
   const cost = video ? list.reduce((n, s) => n + sceneCost(s), 0) : 0;
   if (cost > 0 && !confirm(`Queue ${scenes.length} shot(s) for about ${cost} credits?`)) return;
-  try { await api("generate", { project: cfg.project, scenes }); toast(video ? "Rolling." : "Rendering frames."); poll(); } catch (err) { toast(err.message, true); }
+  try { await api("generate", { project: cfg.project, scenes, concurrency: cfg.concurrency }); toast(video ? "Rolling." : "Rendering frames."); poll(); } catch (err) { toast(err.message, true); }
 };
 
 /* ---------- monitor + gallery ---------- */
