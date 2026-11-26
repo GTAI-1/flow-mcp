@@ -243,7 +243,10 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
   language setting is never changed, and prompts can be written in any language.
 - Environment variables: `GEMINI_API_KEY`, `FLOW_MCP_PORT` (8787), `FLOW_MCP_OUTPUT`,
   `FLOW_MCP_HOME`, `FLOW_MCP_CDP_PORT` (9333), `FLOW_MCP_CHROME`, `FLOW_MCP_PAUSE_MIN_S`,
-  `FLOW_MCP_PAUSE_MAX_S`.
+  `FLOW_MCP_PAUSE_MAX_S`, `FLOW_MCP_PROFILE` (the signed-in Chrome profile, for a second server with its own
+  `FLOW_MCP_HOME`), `FLOW_MCP_TAB_LOCK`, and `FLOW_MCP_AGREE_UPLOAD_RIGHTS=1`, which lets the server answer
+  "I agree" to Flow's "Rights to use this image" question. Set it only when every image the server uploads is
+  yours to use; without it, answer that question in the Flow window yourself.
 
 ## If something goes wrong
 

@@ -37,6 +37,7 @@ export interface AssembleOptions {
   // A long Extend chain redraws the mark each hop, until it has a thick outline and a fatter diamond shape that the normal
   // star mask misses (The Last Delivery, 2026-11-01: an outline stayed at 72 and 88 s). Pixels added around a diamond mask.
   watermark_margin?: number;
+  sharpen?: number;
   // Hold the last frame this long at the end, fading to black over its last `fade` seconds.
   end_hold?: { seconds: number; fade?: number };
   size?: string;
@@ -448,7 +449,10 @@ export async function assemble(o: AssembleOptions): Promise<{ output: string; cl
   );
   infos.forEach((info, i) => {
     const freeze = hold > 0.05 && i === infos.length - 1 ? `,tpad=stop_mode=clone:stop_duration=${hold.toFixed(2)}` : "";
-    const base = `[${i}:v]${windows[i].crop}scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,setpts=PTS-STARTPTS${Math.abs(windows[i].saturation - 1) > 0.005 ? `,hue=s=${windows[i].saturation.toFixed(3)}` : ""}`;
+    // Lanczos keeps edges cleaner than the default bicubic when 720p clips are blown up to a 1080p master; `sharpen`
+    // adds a light unsharp mask on top (0.3-0.6 is "light").
+    const sharp = (o.sharpen ?? 0) > 0 ? `,unsharp=5:5:${Math.min(1.5, o.sharpen!).toFixed(2)}:5:5:0` : "";
+    const base = `[${i}:v]${windows[i].crop}scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1${sharp},fps=24,setpts=PTS-STARTPTS${Math.abs(windows[i].saturation - 1) > 0.005 ? `,hue=s=${windows[i].saturation.toFixed(3)}` : ""}`;
     const end = `${freeze}[v${i}]`;
     if (blurs[i] > 0) {
       // Blurred copy on top, fading out over soften seconds: the clip opens as soft as the one before ends.

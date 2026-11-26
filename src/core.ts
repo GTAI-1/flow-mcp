@@ -10,6 +10,7 @@ import { burnCaptions, captionedName, captionSetup, previewCaptions, transcribe 
 import { presenter } from "./presenter.js";
 import { characterLook, createCharacter, createProject, downloadAsset, downloadCollection, trashAsset, editCharacter, getFlowState, listAssets, forgetCharacter, listCharacters, rememberCharacter, runAgentBatch, runContinue, runEdit, runGeneration } from "./flow.js";
 import { JobQueue, type Job } from "./queue.js";
+import { flowTabGate, flowTabInUse, withFlowTab } from "./tablock.js";
 import { BIN, COMPUTER, moveToBin } from "./platform.js";
 import { TECHNIQUES, techniqueById } from "./techniques.js";
 
@@ -238,6 +239,7 @@ export const shapes = {
       .boolean()
       .optional()
       .describe("Paint out the sparkle mark Google's video models put in the bottom-right corner, found automatically and filled from the pixels around it (no crop). The invisible SynthID mark stays, and platforms still expect an AI-content label."),
+    sharpen: z.number().min(0).max(1.5).optional().describe("Light sharpening after the upscale to the film size (unsharp mask amount; 0.3-0.6 is light). Clips are always scaled with lanczos."),
     watermark_margin: z.number().min(0).max(40).optional().describe("With remove_watermark: grow the mask by this many pixels and make it a diamond. Use about 10 after a long Extend chain, where the mark has been redrawn thicker. Look at the corner afterwards."),
   },
   transcribe: {
@@ -509,10 +511,11 @@ export class LocalCore implements Core {
     if (job.params.agent_scenes) return runAgentBatch(job);
     if (job.params.edit_asset) return runEdit(job);
     return runGeneration(job);
-  });
+  }, flowTabGate);
 
   async status({ detailed }: Args<"status">) {
-    const flow = await getFlowState(detailed && !this.queue.busy);
+    // The detailed view opens Flow's account panel, so not while any flow-mcp process is driving the window.
+    const flow = await getFlowState(detailed && !this.queue.busy && !flowTabInUse());
     return { flow, pacing: this.queue.pausedReason, output_root: OUTPUT_ROOT, jobs: this.queue.list().map(jobView) };
   }
 
@@ -536,10 +539,21 @@ export class LocalCore implements Core {
       const phrase = technique ? techniqueById(technique)!.phrase : "";
       // A referenced character must come out identical, not merely similar, so the scene says so explicitly. The
       // wording stays medium-neutral: the same lock has to serve a flat cartoon character and a photoreal avatar.
+      // A picture is not a character: flow-mcp's own uploads ("fm-<job>-ref1.jpg", reused by the Aurora catalog for its
+      // later styles) and anything named like a file would otherwise get a lock about a face, eyes and hair.
+      // Flow titles every generated still with a short sentence ("Woman packs Santa Claus figurine"); reused as a
+      // reference, that is a picture too - a lock would tell Flow to copy the whole scene. Names run to three words
+      // ("Mina the barista"), and may carry accents ("Dona Lúcia").
+      const picture = (n: string) =>
+        /^fm-/i.test(n) ||
+        /\.(jpe?g|png|webp|gif|heic|heif|avif|bmp|tiff?|mp4|mov|webm)$/i.test(n) ||
+        n.split(/\s+/).length > 3 ||
+        // runGeneration renames each finished tile to "<project>-<file stem>" ("Natal-Familia-scene-01-v2").
+        /-(scene|clip|edit)-\d+(-v\d+)?$/i.test(n);
       const cast = (scene.reference_images ?? [])
         .filter((r) => r.startsWith("asset:"))
         .map((r) => r.slice(6).trim())
-        .filter((n) => characterLook(n) !== undefined || /^[\w .'-]{1,60}$/.test(n));
+        .filter((n) => characterLook(n) !== undefined || (/^[\p{L}\p{N} .'-]{1,60}$/u.test(n) && !picture(n)));
       // With an outfit the lock still pins face, hair and build, but the clothes come from the scene: otherwise the
       // saved look (Skye's denim shirt) fights a costume the prompt asks for.
       const lock = cast.length
@@ -624,28 +638,36 @@ export class LocalCore implements Core {
     return { jobs: jobs.map(jobView) };
   }
 
+  // A call that drives the Flow page outside the queue: refused while this process's queue runs a job, or while another
+  // flow-mcp process holds the Flow window (no waiting: the caller is told who has it), and it holds the window itself.
+  private direct<T>(what: string, fn: () => Promise<T>): Promise<T> {
+    if (this.queue.busy) return Promise.reject(new Error(BUSY));
+    return withFlowTab(what, fn, { waitMs: 0 });
+  }
+
   async assets({ kind }: Args<"assets">) {
-    if (this.queue.busy) throw new Error(BUSY);
-    return (await listAssets()).filter((a) => !kind || a.kind === kind).map(({ name, kind }) => ({ name, kind }));
+    const all = await this.direct("flow_assets", () => listAssets());
+    return all.filter((a) => !kind || a.kind === kind).map(({ name, kind }) => ({ name, kind }));
   }
 
   async download({ project, assets, quality, collection }: Args<"download">) {
-    if (this.queue.busy) throw new Error(BUSY);
     if (!assets.length && !collection) throw new Error("Name the assets to download, or a collection.");
-    const dir = projectDir(project);
-    mkdirSync(dir, { recursive: true });
-    const files: string[] = collection ? await downloadCollection(collection, dir) : [];
-    // Numbering from 1 every call overwrote clips fetched earlier - it destroyed a finished shot once. Carry on from
-    // the highest clip-NN already on disk instead.
-    let next = Math.max(0, ...readdirSync(dir).map((f) => Number(f.match(/^clip-(\d+)/)?.[1] ?? 0))) + 1;
-    for (const name of assets) {
-      try {
-        files.push(...(await downloadAsset(name, join(dir, `clip-${String(next++).padStart(2, "0")}`), quality)));
-      } catch (err) {
-        throw new Error(`${err instanceof Error ? err.message : err} (downloaded so far: ${files.length})`);
+    return this.direct("flow_download", async () => {
+      const dir = projectDir(project);
+      mkdirSync(dir, { recursive: true });
+      const files: string[] = collection ? await downloadCollection(collection, dir) : [];
+      // Numbering from 1 every call overwrote clips fetched earlier - it destroyed a finished shot once. Carry on from
+      // the highest clip-NN already on disk instead.
+      let next = Math.max(0, ...readdirSync(dir).map((f) => Number(f.match(/^clip-(\d+)/)?.[1] ?? 0))) + 1;
+      for (const name of assets) {
+        try {
+          files.push(...(await downloadAsset(name, join(dir, `clip-${String(next++).padStart(2, "0")}`), quality)));
+        } catch (err) {
+          throw new Error(`${err instanceof Error ? err.message : err} (downloaded so far: ${files.length})`);
+        }
       }
-    }
-    return { dir, files };
+      return { dir, files };
+    });
   }
 
   async assemble({ project, voice_lines, ...rest }: Args<"assemble">) {
@@ -767,20 +789,17 @@ export class LocalCore implements Core {
   }
 
   async trash({ name }: Args<"trash">) {
-    if (this.queue.busy) throw new Error(BUSY);
-    return trashAsset(name);
+    return this.direct("flow_trash", () => trashAsset(name));
   }
 
   async new_project({ title }: Args<"new_project">) {
-    if (this.queue.busy) throw new Error(BUSY);
-    const made = await createProject(title);
+    const made = await this.direct("flow_new_project", () => createProject(title));
     return { ...made, note: "The Flow window now has this empty project open; every generation goes into it. Characters belong to a project, so make them again here." };
   }
 
   async character(a: Args<"character">) {
-    if (this.queue.busy) throw new Error(BUSY);
     if (!a.image && !a.describe) throw new Error("Pass either `describe` (Flow draws the portrait) or `image`.");
-    const made = await createCharacter(a);
+    const made = await this.direct("flow_character", () => createCharacter(a));
     // Every scene quotes the saved description in its character lock, so a character made from a picture must not
     // inherit an older description saved under the same name: it described someone else (a "Maya" with a ponytail and
     // a mustard sweater, when the new picture showed loose hair and a grey tee).
@@ -791,8 +810,7 @@ export class LocalCore implements Core {
   }
 
   async character_edit({ name, change, look }: Args<"character_edit">) {
-    if (this.queue.busy) throw new Error(BUSY);
-    const out = await editCharacter(name, change);
+    const out = await this.direct("flow_character_edit", () => editCharacter(name, change));
     // Every scene that references the character quotes this description in its character lock, so it has to describe
     // the NEW look - "deep navy coat" left in it would argue with a portrait whose coat is now red.
     if (look) rememberCharacter(name, look);
@@ -801,8 +819,7 @@ export class LocalCore implements Core {
   }
 
   async characters() {
-    if (this.queue.busy) throw new Error(BUSY);
-    return (await listCharacters()).map((name) => ({ name, use_as: `asset:${name}` }));
+    return (await this.direct("flow_characters", () => listCharacters())).map((name) => ({ name, use_as: `asset:${name}` }));
   }
 
   // Panel only: deliberately NOT registered as an MCP tool, so a key typed into Flow Studio never reaches Claude.

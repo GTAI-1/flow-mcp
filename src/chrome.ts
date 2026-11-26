@@ -16,7 +16,9 @@ export const inEnglish = (url: string): string => {
 };
 const FLOW_HOSTS = /^https:\/\/(flow\.google\.com|labs\.google\/fx)/;
 export const HOME_DIR = process.env.FLOW_MCP_HOME ?? join(homedir(), ".flow-mcp");
-export const PROFILE_DIR = join(HOME_DIR, "chrome-profile");
+// A second flow-mcp with its own HOME (e.g. a watcher on another port) names the signed-in profile here, so that if it
+// ever has to launch Chrome itself it opens that one and not an empty, signed-out profile under its own HOME.
+export const PROFILE_DIR = process.env.FLOW_MCP_PROFILE || join(HOME_DIR, "chrome-profile");
 export const CDP_PORT = Number(process.env.FLOW_MCP_CDP_PORT ?? 9333);
 const CDP_URL = `http://127.0.0.1:${CDP_PORT}`;
 

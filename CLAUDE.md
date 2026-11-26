@@ -742,3 +742,89 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   scene), tile menu and the Download submenu (1K/2K; 4K disabled). The left menu of a project with no videos or
   uploads shows no Videos/Uploads entries, plus a new `Create tool`. Checked with a test MCP: lengths quoted 21
   (Omni 1.2 7 s 720p), 14 (12 s 360p) and 10 (Omni 1.1 6 s) with max_credits 0, and a free image made end to end; then a 5-image agent batch (5 of 5 from the agent, in order, agent off and confirm back on Always afterwards, 0 credits) and one paid Omni 1.2 Flash clip, 3 s at 360p for 3 credits (the user's OK): 360x640, 3.0 s with sound, clean at 8 frames a second.
+- WINDOWS 11, AURORA CATALOG (2026-11-25, images only, 0 credits): flow-mcp ran on a real PC - image jobs with
+  uploaded reference photos, `asset:` reuse of those uploads and 1K downloads all worked. Two Flow changes met there:
+  (1) the composer's agent switch is now named "Flow Agent" (a switch with aria-pressed, icon "spark") and the agent's
+  settings sit behind their own "Agent settings" icon button beside it - the same rename as the FLOW UPDATE above, met
+  here before 770e001 was merged. Both sides had written an agentToggle(); the merge keeps one, scoped to
+  flow-base-prompt-box, and setAgentSettings accepts "Settings" or "Agent settings" in any case. (2) After setFiles, Flow
+  asks "Rights to use this image" (Cancel / I agree) and the upload never starts until it is answered - a job waited
+  out its 90 s with the dialog open. "I agree" is a statement about the user's rights to the picture, so uploadAsset
+  only presses it in a process started with FLOW_MCP_AGREE_UPLOAD_RIGHTS=1 (the Aurora watcher sets it: its uploads
+  are the shop's own piece photos, which the user approved on 2026-11-25). Any other process leaves the question to the
+  user in the Flow window and, if nobody answers before the upload times out, presses Cancel and says why
+  (`node scripts/check-upload-rights.mjs`). The filechooser wait is 20 s.
+- A SECOND flow-mcp FOR A WATCHER (the Aurora catalog watcher, N8N Croche/Aurora Semijoias - Vertical/catalogo-fotos):
+  it spawns dist/index.js with FLOW_MCP_PORT=8799 and its own FLOW_MCP_HOME, so it never touches the 8787 owner's
+  queue. Its pace is the default 25-70 s: at 8-15 s Flow flagged unusual activity (below). PROFILE_DIR is
+  FLOW_MCP_PROFILE when set, else HOME/chrome-profile, so the watcher passes the signed-in ~/.flow-mcp/chrome-profile
+  (it also opens Chrome itself first on CDP 9333). Any client that gives flow-mcp its own HOME must pass
+  FLOW_MCP_PROFILE, or a Chrome launched by it opens an EMPTY, signed-out profile (`node scripts/check-profile.mjs`).
+- FAILED TILES LOOKED FINISHED + "UNUSUAL ACTIVITY" (2026-11-25, Windows, the Aurora catalog watcher). Flow now titles a
+  failed tile with the PROMPT (in 2026-09 its aria-label was empty), so TILE_ID_JS gave it the id "title:<prompt>": a job
+  took its own failure for a finished id-less still and tried to download it ("Flow's tile menu did not open" - a failed
+  tile has no More options, only Retry / Reuse prompt / Delete), and when the same prompt failed again its new error
+  tile looked already known, so the job waited out its 180 s ("Timed out ... waiting for Flow to finish"). Both happened
+  on one earring: 2 of 5 styles lost, 9 minutes wasted. Failed tiles now get NO id, freshMedia never takes one, and
+  waitForNewMedia counts failures by position (newErrorTiles counts every id-less failure above the first known tile, so
+  it takes that count first and only treats a rise as new; older failures at the top of the grid are otherwise a false
+  alarm). The failures were Flow's ANTI-AUTOMATION check: ".error-message-text" = "We noticed some unusual activity. Note
+  that browser extensions that modify the page may cause issues. Please visit the Help Center for more information."
+  (not charged; buttons Retry / Reuse prompt / Delete), on 4 of 7 stills in ~15 minutes, at the watcher's 8-15 s pace,
+  after a day of catalog runs. Such a failure is never retried (FLAGGED): the job stops with Flow's words and "stop
+  sending jobs for a while". Do NOT work around this check (rules above): slow down and let it clear. Agent batches:
+  their "N tile(s) failed" note can now include older failures at the top of the grid (cosmetic).
+  `node scripts/check-error-tiles.mjs` (after a build) replays all of it on a stand-in grid in its own headless Chrome:
+  before the fix it got the finished-still mistake, the 12 s timeout and a plain failure taken as finished instead of
+  retried; after, all four pass (the flagged one stops in 2 s).
+- locator.isVisible({ timeout }) IGNORES its timeout and answers at once (Playwright documents the option as ignored).
+  Four checks relied on it: the tile menu's Download and Rename items, renameTile's More options, and Retry on a failed
+  tile. Right after a click a menu is not always on the page yet, so a menu that opened a moment late was taken for one
+  that never opened, and its invisible cdk backdrop then swallowed the retry's click. visibleWithin() (waitFor visible)
+  replaces all four, and a failed download attempt clears showing backdrops before the next.
+  `node scripts/check-tile-menus.mjs` drives Download and Rename on a stand-in with menus 0 and 400 ms late over a
+  cdk-style backdrop: all four failed before, pass after. (Without the backdrop the stand-in hid the bug.) This was NOT
+  the cause of the catalog failures above, though it produces the same message.
+- LEFT MENU (read live, read-only, 2026-11-25): All media, Images, Characters, Scenes, Uploads, Library (with its own
+  add button), Tools (with "Create tool"), Trash, Collapse. No "Videos" because that project has no videos yet: the
+  FLOW UPDATE above saw Videos and Uploads show only once a project holds some.
+- AFTER A FLAG THE QUEUE STOPS (2026-11-25, final review of the Aurora watcher): a job that fails with Flow's "unusual
+  activity" refusal now cancels every job still waiting in that process's queue (queue.ts holdAfterFlag), each with
+  "Not started: Flow flagged unusual activity on job <id> ... flow_retry this job". Before, the rest of the batch kept
+  being sent into the same refusal. A job already running cannot be stopped. `node scripts/check-queue-flagged.mjs`.
+- ONE FLOW WINDOW, TWO PROCESSES (2026-11-25): Claude Desktop's flow-mcp (8787) and the watcher's (8799) both drive the
+  Chrome on CDP 9333, and two of them in one tab at once mix up prompts, "before" snapshots and downloads. src/tablock.ts
+  is a lock file every process finds at the same place (~/.flow-mcp/tab-<CDP port>.lock, FLOW_MCP_TAB_LOCK overrides):
+  queued jobs wait their turn (the job's progress says "waiting for another flow-mcp process (pid, port: job)"), up to
+  30 min, and keep the 25 s minimum pause across processes (tab-<port>.lock.last); page-driving direct calls (assets,
+  download, trash, new_project, character, character_edit, characters) refuse at once and name who has the window; a
+  detailed flow_status skips the account panel while anyone holds it. A holder heartbeats every 20 s; a lock whose pid
+  is gone, or with no heartbeat for 2 min, is taken over. Only processes running this code take part: Claude's own
+  connector does once the user restarts Claude. `node scripts/check-tab-lock.mjs` (7 checks, real processes).
+- PICKER SEARCH + TITLES AS REFERENCES (2026-11-25, Christmas stills): the ingredients picker's `Asset list` is a
+  virtual scroller, so in a ~60-item project an older still ("Woman packs Santa Claus figurine") was never mounted and
+  attachAsset said it was not there. The picker has a `Search assets` textbox (mapped live: one exact hit per title,
+  characters too, e.g. "Crochê Natal Character"); attachAsset now types the name into it first. And a Flow-made still
+  reused as "asset:<its title>" is a picture: titles over three words no longer get the CHARACTER LOCK, and names may
+  carry accents ("asset:Dona Lúcia" does). Not explained yet: one run ended in an image's /edit/<uuid> view with Start
+  generation disabled. That project's character "Crochê Natal" was missing from flow_characters ([]).
+- SLOWER PACE + SHARED COOLDOWN (2026-11-26, the user's call after the flags above): the pause between generations
+  is now 60-150 s by default (was 25-70; FLOW_MCP_PAUSE_MIN_S/_MAX_S still override), and the cross-process gap in
+  tablock uses the same random pause, not just the minimum. A Flow "unusual activity" refusal writes
+  ~/.flow-mcp/tab-<port>.lock.flagged; for FLOW_MCP_FLAG_COOLDOWN_MIN (default 60) no process starts a generation
+  (FlagCooldown: the job is cancelled with "Not started ... before HH:MM"). Before this, another session kept sending
+  into the refusal an hour after it. Checks must point FLOW_MCP_TAB_LOCK at a scratch path, or they write the real
+  cooldown file (check-queue-flagged did once; removed). Verified live: one free still x2 in the Christmas project,
+  done in ~60 s, no refusal. Only processes on this code follow it: Claude's own connector after a restart.
+- VEO "AUDIO GENERATION FAILED" (2026-11-26, Christmas film, Veo 3.1 - Fast I2V, Portuguese dialogue): one scene
+  (an older woman asking "Foi você que fez?" over a gift) failed 3 times with `.error-message-text` "Audio generation
+  failed. Please try a different prompt or send feedback." - after rewording the voice and after switching the start
+  frame - never charged; the same scene with NO dialogue went through first time. The other five clips with lines
+  were fine. Treat it as a refusal of that line, not a transient error: offer the silent take after the second failure.
+  Renamed tiles "<project>-scene-NN[-vN]" are pictures (no CHARACTER LOCK). flow_assemble now always scales with
+  lanczos and takes `sharpen` (unsharp amount, 0.4 used). Film: Natal-Familia-Video/natal-em-familia-1080p.mp4,
+  6 x 8 s, 49 s, -14 LUFS, 120 credits. Speech check on this PC: python faster_whisper "small" (no whisper-cli here).
+- A PICTURE IS NOT A CHARACTER: generate's CHARACTER LOCK used to treat every "asset:<name>" that looked like a name as
+  a character, including flow-mcp's own uploads ("asset:fm-<job>-ref1.jpg", reused by the Aurora catalog for styles
+  02-05), so jewelry photos were told to keep "the same face, same eyes, same hair". Names starting "fm-" or ending in
+  an image/video extension are pictures now and leave the prompt as written. `node scripts/check-prompts.mjs`.
