@@ -816,6 +816,14 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   into the refusal an hour after it. Checks must point FLOW_MCP_TAB_LOCK at a scratch path, or they write the real
   cooldown file (check-queue-flagged did once; removed). Verified live: one free still x2 in the Christmas project,
   done in ~60 s, no refusal. Only processes on this code follow it: Claude's own connector after a restart.
+- VEO "AUDIO GENERATION FAILED" (2026-11-26, Christmas film, Veo 3.1 - Fast I2V, Portuguese dialogue): one scene
+  (an older woman asking "Foi você que fez?" over a gift) failed 3 times with `.error-message-text` "Audio generation
+  failed. Please try a different prompt or send feedback." - after rewording the voice and after switching the start
+  frame - never charged; the same scene with NO dialogue went through first time. The other five clips with lines
+  were fine. Treat it as a refusal of that line, not a transient error: offer the silent take after the second failure.
+  Renamed tiles "<project>-scene-NN[-vN]" are pictures (no CHARACTER LOCK). flow_assemble now always scales with
+  lanczos and takes `sharpen` (unsharp amount, 0.4 used). Film: Natal-Familia-Video/natal-em-familia-1080p.mp4,
+  6 x 8 s, 49 s, -14 LUFS, 120 credits. Speech check on this PC: python faster_whisper "small" (no whisper-cli here).
 - A PICTURE IS NOT A CHARACTER: generate's CHARACTER LOCK used to treat every "asset:<name>" that looked like a name as
   a character, including flow-mcp's own uploads ("asset:fm-<job>-ref1.jpg", reused by the Aurora catalog for styles
   02-05), so jewelry photos were told to keep "the same face, same eyes, same hair". Names starting "fm-" or ending in

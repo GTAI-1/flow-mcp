@@ -239,6 +239,7 @@ export const shapes = {
       .boolean()
       .optional()
       .describe("Paint out the sparkle mark Google's video models put in the bottom-right corner, found automatically and filled from the pixels around it (no crop). The invisible SynthID mark stays, and platforms still expect an AI-content label."),
+    sharpen: z.number().min(0).max(1.5).optional().describe("Light sharpening after the upscale to the film size (unsharp mask amount; 0.3-0.6 is light). Clips are always scaled with lanczos."),
     watermark_margin: z.number().min(0).max(40).optional().describe("With remove_watermark: grow the mask by this many pixels and make it a diamond. Use about 10 after a long Extend chain, where the mark has been redrawn thicker. Look at the corner afterwards."),
   },
   transcribe: {
@@ -544,7 +545,11 @@ export class LocalCore implements Core {
       // reference, that is a picture too - a lock would tell Flow to copy the whole scene. Names run to three words
       // ("Mina the barista"), and may carry accents ("Dona Lúcia").
       const picture = (n: string) =>
-        /^fm-/i.test(n) || /\.(jpe?g|png|webp|gif|heic|heif|avif|bmp|tiff?|mp4|mov|webm)$/i.test(n) || n.split(/\s+/).length > 3;
+        /^fm-/i.test(n) ||
+        /\.(jpe?g|png|webp|gif|heic|heif|avif|bmp|tiff?|mp4|mov|webm)$/i.test(n) ||
+        n.split(/\s+/).length > 3 ||
+        // runGeneration renames each finished tile to "<project>-<file stem>" ("Natal-Familia-scene-01-v2").
+        /-(scene|clip|edit)-\d+(-v\d+)?$/i.test(n);
       const cast = (scene.reference_images ?? [])
         .filter((r) => r.startsWith("asset:"))
         .map((r) => r.slice(6).trim())

@@ -4,7 +4,7 @@ export const PLAYBOOK = {
     "Call flow_status first. If it returns a hint, relay it to the user and stop.",
     "Plan the whole piece as scenes of one shot each, then send them in ONE flow_generate call so file numbering and chaining work.",
     "Tell the user the expected credit total before queueing anything that costs credits.",
-    "Call flow_wait repeatedly until finished is true; scenes run one at a time with 25-70 s pauses.",
+    "Call flow_wait repeatedly until finished is true; scenes run one at a time with 60-150 s pauses (any flow-mcp process), and after Flow reports \"unusual activity\" nothing is sent for 60 min.",
     "To put the spoken words on screen: FIRST call flow_transcribe on the film (with `language`), show the user the words, flag anything that looks misheard (names especially, and words run together), propose the fixes, and wait for the user to confirm or correct them. Only then call flow_captions once, passing the agreed words as `text` (style bold for short-form, clean for subtitles).",
     "If an image batch finishes with \"still failed: scene ...\" in its note, call flow_retry with its job id: only those images are made again, under their own scene numbers.",
     "No call blocks for more than about 45 s. A reply with still_working and a task_id means Flow is still busy with it: pass the task_id to flow_wait, and never repeat the call.",
