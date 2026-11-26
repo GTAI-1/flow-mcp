@@ -801,6 +801,21 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   detailed flow_status skips the account panel while anyone holds it. A holder heartbeats every 20 s; a lock whose pid
   is gone, or with no heartbeat for 2 min, is taken over. Only processes running this code take part: Claude's own
   connector does once the user restarts Claude. `node scripts/check-tab-lock.mjs` (7 checks, real processes).
+- PICKER SEARCH + TITLES AS REFERENCES (2026-11-25, Christmas stills): the ingredients picker's `Asset list` is a
+  virtual scroller, so in a ~60-item project an older still ("Woman packs Santa Claus figurine") was never mounted and
+  attachAsset said it was not there. The picker has a `Search assets` textbox (mapped live: one exact hit per title,
+  characters too, e.g. "Crochê Natal Character"); attachAsset now types the name into it first. And a Flow-made still
+  reused as "asset:<its title>" is a picture: titles over three words no longer get the CHARACTER LOCK, and names may
+  carry accents ("asset:Dona Lúcia" does). Not explained yet: one run ended in an image's /edit/<uuid> view with Start
+  generation disabled. That project's character "Crochê Natal" was missing from flow_characters ([]).
+- SLOWER PACE + SHARED COOLDOWN (2026-11-26, the user's call after the flags above): the pause between generations
+  is now 60-150 s by default (was 25-70; FLOW_MCP_PAUSE_MIN_S/_MAX_S still override), and the cross-process gap in
+  tablock uses the same random pause, not just the minimum. A Flow "unusual activity" refusal writes
+  ~/.flow-mcp/tab-<port>.lock.flagged; for FLOW_MCP_FLAG_COOLDOWN_MIN (default 60) no process starts a generation
+  (FlagCooldown: the job is cancelled with "Not started ... before HH:MM"). Before this, another session kept sending
+  into the refusal an hour after it. Checks must point FLOW_MCP_TAB_LOCK at a scratch path, or they write the real
+  cooldown file (check-queue-flagged did once; removed). Verified live: one free still x2 in the Christmas project,
+  done in ~60 s, no refusal. Only processes on this code follow it: Claude's own connector after a restart.
 - A PICTURE IS NOT A CHARACTER: generate's CHARACTER LOCK used to treat every "asset:<name>" that looked like a name as
   a character, including flow-mcp's own uploads ("asset:fm-<job>-ref1.jpg", reused by the Aurora catalog for styles
   02-05), so jewelry photos were told to keep "the same face, same eyes, same hair". Names starting "fm-" or ending in

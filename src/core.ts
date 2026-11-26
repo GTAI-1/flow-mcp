@@ -540,11 +540,15 @@ export class LocalCore implements Core {
       // wording stays medium-neutral: the same lock has to serve a flat cartoon character and a photoreal avatar.
       // A picture is not a character: flow-mcp's own uploads ("fm-<job>-ref1.jpg", reused by the Aurora catalog for its
       // later styles) and anything named like a file would otherwise get a lock about a face, eyes and hair.
-      const picture = (n: string) => /^fm-/i.test(n) || /\.(jpe?g|png|webp|gif|heic|heif|avif|bmp|tiff?|mp4|mov|webm)$/i.test(n);
+      // Flow titles every generated still with a short sentence ("Woman packs Santa Claus figurine"); reused as a
+      // reference, that is a picture too - a lock would tell Flow to copy the whole scene. Names run to three words
+      // ("Mina the barista"), and may carry accents ("Dona Lúcia").
+      const picture = (n: string) =>
+        /^fm-/i.test(n) || /\.(jpe?g|png|webp|gif|heic|heif|avif|bmp|tiff?|mp4|mov|webm)$/i.test(n) || n.split(/\s+/).length > 3;
       const cast = (scene.reference_images ?? [])
         .filter((r) => r.startsWith("asset:"))
         .map((r) => r.slice(6).trim())
-        .filter((n) => characterLook(n) !== undefined || (/^[\w .'-]{1,60}$/.test(n) && !picture(n)));
+        .filter((n) => characterLook(n) !== undefined || (/^[\p{L}\p{N} .'-]{1,60}$/u.test(n) && !picture(n)));
       // With an outfit the lock still pins face, hair and build, but the clothes come from the scene: otherwise the
       // saved look (Skye's denim shirt) fights a costume the prompt asks for.
       const lock = cast.length

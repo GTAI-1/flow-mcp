@@ -141,16 +141,51 @@ function readFileSafe(path: string): string {
   }
 }
 
+// The pause between two generations, in ANY flow-mcp process (Flow's check for automated traffic sees the account).
+// 25-70 s was flagged on 2026-11-25 after a day of catalog runs, so the default is now 60-150 s, closer to a person
+// looking at each result before asking for the next. FLOW_MCP_PAUSE_MIN_S / _MAX_S override it.
+export const PAUSE_MIN_MS = Number(process.env.FLOW_MCP_PAUSE_MIN_S ?? 60) * 1000;
+export const PAUSE_MAX_MS = Math.max(PAUSE_MIN_MS, Number(process.env.FLOW_MCP_PAUSE_MAX_S ?? 150) * 1000);
+export const randomPause = (): number => PAUSE_MIN_MS + Math.random() * (PAUSE_MAX_MS - PAUSE_MIN_MS);
+
+// After Flow says "unusual activity", the advice is to stop for a while. That used to be per process: another session
+// kept sending into the same refusal an hour later. The time of the last refusal is now shared through a file next to
+// the lock, and no process starts a generation until the cooldown (FLOW_MCP_FLAG_COOLDOWN_MIN, default 60) is over.
+const FLAGGED_AT = `${LOCK}.flagged`;
+const COOLDOWN_MS = Number(process.env.FLOW_MCP_FLAG_COOLDOWN_MIN ?? 60) * 60_000;
+export class FlagCooldown extends Error {}
+export function recordFlag(): void {
+  mkdirSync(dirname(FLAGGED_AT), { recursive: true });
+  writeFileSync(FLAGGED_AT, String(Date.now()));
+}
+/** Milliseconds left before generations may start again after Flow's refusal (0 when none is pending). */
+export function flagCooldownLeft(): number {
+  const at = Number(readFileSafe(FLAGGED_AT)) || 0;
+  return Math.max(0, at + COOLDOWN_MS - Date.now());
+}
+function checkCooldown(): void {
+  const left = flagCooldownLeft();
+  if (!left) return;
+  const until = new Date(Date.now() + left).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  throw new FlagCooldown(
+    `Not started: Flow refused a generation as automated traffic ${Math.round((COOLDOWN_MS - left) / 60_000)} min ago, ` +
+      `so no flow-mcp process sends anything before ${until} (${Math.ceil(left / 60_000)} min). Retry this job after that.`,
+  );
+}
+
 // The gate every queued job goes through (LocalCore's queue): it waits its turn for the window, says so on the job
-// while it waits, and keeps the generation pause across processes.
-const PAUSE_MIN_MS = Number(process.env.FLOW_MCP_PAUSE_MIN_S ?? 25) * 1000;
+// while it waits, keeps the generation pause across processes, and holds off while a flag cooldown runs.
 const WAITING = "waiting for another flow-mcp process";
-export const flowTabGate = (job: Job, run: () => Promise<string[]>): Promise<string[]> =>
-  withFlowTab(
+export const flowTabGate = (job: Job, run: () => Promise<string[]>): Promise<string[]> => {
+  checkCooldown();
+  return withFlowTab(
     `job ${job.id} (${job.params.type})`,
     () => {
       if (job.progress?.startsWith(WAITING)) job.progress = undefined;
+      // Checked again: a refusal may have landed in another process while this one waited for the window.
+      checkCooldown();
       return run();
     },
-    { gapMs: PAUSE_MIN_MS, onWait: (holder) => (job.progress = `${WAITING} (${holder}) to finish with the Flow window`) },
+    { gapMs: randomPause(), onWait: (holder) => (job.progress = `${WAITING} (${holder}) to finish with the Flow window`) },
   );
+};

@@ -543,6 +543,14 @@ export async function attachAsset(page: Page, opener: Locator, assetName: string
     await pause(page, 1000);
   }
   await list.waitFor({ state: "visible", timeout: 10_000 });
+  // The list is a virtual scroller: in a project with ~60 items an older still is never mounted, so it was "not
+  // found" (2026-11-25, "Woman packs Santa Claus figurine"). The picker's own "Search assets" box filters it in
+  // (mapped live: one exact hit per title, characters included). Frame pickers may have no search box.
+  const search = page.getByRole("textbox", { name: "Search assets" });
+  if (await search.isVisible().catch(() => false)) {
+    await search.fill(assetName.slice(0, 80));
+    await pause(page, 1500);
+  }
   let option = optionByName(list, assetName);
   // Voices, characters and avatars live behind their own tabs, so look there when "All" does not have it.
   if (!(await option.isVisible().catch(() => false))) {

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { FlagCooldown, randomPause, recordFlag } from "./tablock.js";
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
@@ -56,9 +57,7 @@ export interface Job {
 export type JobRunner = (job: Job) => Promise<string[]>;
 
 // Flow is driven like a careful person would: one generation at a time, with a
-// randomised pause between them.
-const PAUSE_MIN_MS = Number(process.env.FLOW_MCP_PAUSE_MIN_S ?? 25) * 1000;
-const PAUSE_MAX_MS = Number(process.env.FLOW_MCP_PAUSE_MAX_S ?? 70) * 1000;
+// randomised pause between them (shared with the other processes' gate, see tablock.ts).
 // Flow's check for automated traffic ("We noticed some unusual activity", see FLAGGED in flow.ts). Once it has fired,
 // sending the next job only adds to what it saw, so the jobs still waiting are not started.
 const FLAGGED = /unusual activity/i;
@@ -143,7 +142,7 @@ export class JobQueue {
         const job = this.list().find((j) => j.status === "queued");
         if (!job) return;
         if (this.lastFinished) {
-          const pause = PAUSE_MIN_MS + Math.random() * (PAUSE_MAX_MS - PAUSE_MIN_MS);
+          const pause = randomPause();
           const remaining = this.lastFinished + pause - Date.now();
           if (remaining > 0) {
             this.pausedReason = `pacing: next generation in ${Math.ceil(remaining / 1000)}s`;
@@ -164,7 +163,13 @@ export class JobQueue {
           // is re-queued here. Timeouts are never retried automatically: they may still have spent credits.
           const retryable = /agent finished without creating/i.test(job.error);
           job.status = retryable && job.attempts <= (job.params.retries ?? 1) ? "queued" : "failed";
-          if (FLAGGED.test(job.error)) this.holdAfterFlag(job);
+          if (err instanceof FlagCooldown) {
+            job.status = "cancelled";
+            this.holdAfterFlag(job);
+          } else if (FLAGGED.test(job.error)) {
+            recordFlag();
+            this.holdAfterFlag(job);
+          }
         }
         job.finishedAt = new Date().toISOString();
         this.lastFinished = Date.now();

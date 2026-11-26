@@ -39,7 +39,9 @@ function check(name, ok, detail) {
   if (!ok) failed++;
 }
 
-for (const ref of ["asset:fm-ab12cd34-ref1.jpg", "asset:IMG_5143.HEIC", "asset:peca.png"]) {
+const lucia = await promptFor("asset:Dona Lúcia");
+check("asset:Dona Lúcia (accented name) is a character", /CHARACTER LOCK — Dona Lúcia must match/.test(lucia), JSON.stringify(lucia));
+for (const ref of ["asset:fm-ab12cd34-ref1.jpg", "asset:IMG_5143.HEIC", "asset:peca.png", "asset:Woman packs Santa Claus figurine"]) {
   const prompt = await promptFor(ref);
   check(`${ref} is a picture: the prompt stays as written`, prompt === `${PROMPT}.`, JSON.stringify(prompt));
 }
