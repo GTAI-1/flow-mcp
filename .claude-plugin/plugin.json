@@ -1,0 +1,11 @@
+{
+  "name": "flow-mcp",
+  "version": "0.1.0",
+  "description": "Drives Google Flow (images and video) in a dedicated Chrome profile, using your Flow credits.",
+  "mcpServers": {
+    "flow": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/start.mjs"]
+    }
+  }
+}

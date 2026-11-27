@@ -8,7 +8,12 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "login": "node dist/login.js",
-    "studio": "node dist/studio.js"
+    "studio": "node dist/studio.js",
+    "web": "node dist/web.js",
+    "web:setup": "node dist/web.js setup",
+    "web:pair": "node dist/web.js pair",
+    "web:logout": "node dist/web.js logout",
+    "web:service": "node scripts/web-service.mjs"
   },
   "keywords": [],
   "author": "",
@@ -20,11 +25,13 @@
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "express": "^5.3.0",
     "kokoro-js": "^1.2.1",
     "playwright-core": "^1.63.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^26.6.2",
     "typescript": "^7.0.2"
   }
