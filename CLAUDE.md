@@ -742,3 +742,22 @@ The preview tool could not read the project while it lived in ~/Desktop; check t
   scene), tile menu and the Download submenu (1K/2K; 4K disabled). The left menu of a project with no videos or
   uploads shows no Videos/Uploads entries, plus a new `Create tool`. Checked with a test MCP: lengths quoted 21
   (Omni 1.2 7 s 720p), 14 (12 s 360p) and 10 (Omni 1.1 6 s) with max_credits 0, and a free image made end to end; then a 5-image agent batch (5 of 5 from the agent, in order, agent off and confirm back on Always afterwards, 0 credits) and one paid Omni 1.2 Flash clip, 3 s at 360p for 3 credits (the user's OK): 360x640, 3.0 s with sound, clean at 8 frames a second.
+
+- WEB CONNECTOR (built 2026-11-25, `npm run web`; src/web.ts, web-auth.ts, web-policy.ts): a small tool set over
+  Streamable HTTP + OAuth for claude.ai / Claude Design; stdio mode unchanged. Proven first with a throwaway probe:
+  Claude Design called a custom connector, got an image result as a temp file and uploaded it as a design asset
+  (copying it to /mnt/user-data/outputs first). A quick-tunnel URL with a secret path and JSON replies showed
+  "Couldn't reach" (initialize 200, then nothing); a new host, plain /mcp and SSE connected (which change fixed it is
+  unknown). claude.ai probes `server/discover` (2026-07-28), gets 400 from the SDK and falls back fine; a lone
+  `initialize` with nothing after it also happens on connections that work. Access needs a one-time code from
+  `npm run web:pair`; tools take only ids (`ref:` inside the shared folders, `result:`), never paths; video is
+  Omni 1.2 Flash with max_credits = the computed price; over 25 per clip or 100 per day (this connector's own ledger,
+  not other flow-mcp use) needs "Allow" in a dialog on the Mac. green_screen lays a still on #00B140 exactly like
+  the owner's existing mascot still-preparation script (SSIM 1.0). Verified in isolation: OAuth, refusals, byte-identical reference download.
+  NOT yet verified: a generation through it, the Mac dialog, claude.ai over Tailscale Funnel, and whether Design can
+  take a full-size picture or a video from a tool result.
+  UPDATE (same day): live through Tailscale Funnel at the owner's *.ts.net address + /mcp (kept out of this file)
+  (`tailscale funnel --bg 8790`), kept running by `npm run web:service -- install|restart|uninstall` (LaunchAgent
+  local.flow-mcp.web; restart it after a build; log ~/.flow-mcp/web/web.log). One free image through the web tools
+  with the canonical still as reference came back on-model on a flat green that was #07AB4A, not the #00B140 asked
+  for: key on the measured colour. Public checks: 401 without token, Studio routes 404.

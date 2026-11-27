@@ -12,6 +12,9 @@ Claude / Codex ──stdio──> flow-mcp ──Chrome DevTools Protocol──>
 ```
 
 **MCP** = Model Context Protocol, the standard that lets Claude use outside tools.
+Want a full walkthrough, including the web connector for claude.ai and how to work on the code? See
+[TUTORIAL.md](TUTORIAL.md).
+
 New here? [GETTING-STARTED.md](GETTING-STARTED.md) takes you from nothing to your first video, step by step, and
 [OVERVIEW.md](OVERVIEW.md) explains what it does in plain English, with no code names.
 
@@ -264,6 +267,8 @@ build."* Then fully quit and reopen your assistant app so it loads the new versi
 ---
 
 ## Licence and risk
+
+Released under the [ISC License](LICENSE).
 
 This automates Flow's web interface. It can break whenever Google changes that interface, and
 automated use may be against Google's terms of service. Use it on your own account, at your own
